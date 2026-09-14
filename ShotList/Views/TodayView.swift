@@ -48,15 +48,18 @@ struct TodayView: View {
 
     // MARK: - 数据
 
-    private var todayRecorded: [Shot] { store.shots.filter { $0.status() == .shotToday } }
+    private var todayRecorded: [Shot] { store.todayRecordedShots }
     private var earlierRecorded: [Shot] { store.shots.filter { $0.status() == .shotEarlier } }
-    private var pendingShots: [Shot] { store.shots.filter { !$0.hasClip } }
-    private var nextPending: Shot? { pendingShots.first }
+    /// 从未拍过的镜头 ——「还没拍」统计块与「未拍」筛选共用这个含义，
+    /// 它与「今日已拍」「往日已拍」一起构成不重不漏的三分。
+    private var neverShot: [Shot] { store.shots.filter { !$0.hasClip } }
+    /// 今天还没拍的镜头（含往日拍过的，今天都可以补）——今日页的进度与提示用它
+    private var nextTodayPending: Shot? { store.todayPendingShots.first }
 
     private var filteredShots: [Shot] {
         switch filter {
         case .all: return store.shots
-        case .pending: return pendingShots
+        case .pending: return neverShot
         case .recorded: return store.shots.filter(\.hasClip)
         }
     }
@@ -93,7 +96,7 @@ struct TodayView: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    if let next = nextPending {
+                    if let next = nextTodayPending {
                         Label("下一个：镜头 \(next.paddedNumber)", systemImage: "arrow.right.circle.fill")
                             .font(.footnote)
                             .foregroundStyle(Color.accentColor)
@@ -125,7 +128,7 @@ struct TodayView: View {
                 filterTarget: .recorded
             )
             statTile(
-                value: pendingShots.count,
+                value: neverShot.count,
                 status: .notShot,
                 caption: "还没拍",
                 filterTarget: .pending

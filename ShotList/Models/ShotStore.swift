@@ -51,14 +51,27 @@ final class ShotStore: ObservableObject {
     /// 全部片段数量（一个镜头可能有好几条）
     var clipCount: Int { shots.reduce(0) { $0 + $1.clipCount } }
 
-    /// 今日已拍摄的镜头数量
-    var todayRecordedCount: Int {
+    /// 今日已拍摄的镜头（以最近一条片段的拍摄日期为准）
+    var todayRecordedShots: [Shot] {
         let today = Date()
-        return shots.filter { $0.status(relativeTo: today) == .shotToday }.count
+        return shots.filter { $0.status(relativeTo: today) == .shotToday }
     }
 
+    /// 今日仍未拍摄的镜头。
+    ///
+    /// 含「从未拍过」与「往日拍过」两类——站在今天的角度，两者都还欠一条。
+    /// 今日页的进度环、「下一个」提示与标签栏徽标都走这一个口径，
+    /// 免得出现「进度 0%，却提示今天都拍完了」这种自相矛盾的界面。
+    var todayPendingShots: [Shot] {
+        let today = Date()
+        return shots.filter { $0.status(relativeTo: today) != .shotToday }
+    }
+
+    /// 今日已拍摄的镜头数量
+    var todayRecordedCount: Int { todayRecordedShots.count }
+
     /// 今日仍未拍摄的镜头数量
-    var todayPendingCount: Int { shots.count - todayRecordedCount }
+    var todayPendingCount: Int { todayPendingShots.count }
 
     /// 全部片段的总时长（秒）
     var totalDuration: TimeInterval {

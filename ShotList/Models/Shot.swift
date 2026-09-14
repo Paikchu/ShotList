@@ -49,6 +49,17 @@ nonisolated struct ShotClip: Identifiable, Codable, Hashable {
     }
 }
 
+/// 片段集合的取「最新一条」规则。
+///
+/// 缩略图、播放默认条、导出主素材都走这里，保证全应用只有一个口径。
+/// 时间戳并列时取数组里靠后的一条：片段是按拍摄先后追加的，靠后的才是更晚拍的，
+/// 而 `max(by:)` 在并列时返回的是**第一个**最大值，直接用会把老片段当成主素材。
+nonisolated extension Array where Element == ShotClip {
+    var latestByRecordedAt: ShotClip? {
+        reversed().max { $0.recordedAt < $1.recordedAt }
+    }
+}
+
 /// 一条分镜记录。
 ///
 /// 编号 `number` 决定拍摄顺序，同时也是导出时视频文件名与清单的前缀，
@@ -131,7 +142,7 @@ nonisolated extension Shot {
 
     /// 最近拍的那一条。卡片缩略图、播放与导出主素材都以它为准。
     var latestClip: ShotClip? {
-        clips.max { $0.recordedAt < $1.recordedAt }
+        clips.latestByRecordedAt
     }
 
     /// 两位编号，例如 01、02

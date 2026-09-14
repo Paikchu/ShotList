@@ -158,6 +158,7 @@ struct ExportView: View {
             contentsRow("01_无人机缓慢上升.mov", "每个镜头最新的一条，按编号前缀命名")
             contentsRow("备用片段/01-1_….mov", "同一个镜头更早拍的片段")
             contentsRow("分镜清单.csv", "编号、描述、状态，以及每条片段的时长与文件名")
+            contentsRow("分镜文字内容指南.md", "镜头文字内容与素材的对照表，可直接交给 AI 剪辑")
             contentsRow("导出说明.txt", "解压、导入剪映、传到电脑的步骤")
         } header: {
             SectionHeader(title: "压缩包里有什么", systemImage: "doc.text.magnifyingglass")
