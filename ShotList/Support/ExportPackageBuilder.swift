@@ -295,7 +295,7 @@ enum ExportPackageBuilder {
         分镜助手 · 导出说明
         ============================
 
-        导出时间：\(Date().formatted(Date.FormatStyle(date: .long, time: .shortened).locale(AppLocale.current)))
+        导出时间：\(SLDateText.monthDayTime(Date()))
         导出范围：\(scope.title)
         镜头数量：\(shotCount)
         视频片段：\(exported.count)

@@ -73,7 +73,7 @@ struct TodayView: View {
 
     private var dateHeader: some View {
         VStack(alignment: .leading, spacing: SLSpacing.tiny) {
-            Text(Date().formatted(.dateTime.year().month().day().weekday(.wide).locale(AppLocale.current)))
+            Text(SLDateText.monthDayWeekday(Date()))
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(.primary)
             Text("下面是每个镜头今天的拍摄状态，点一下就能补拍。")

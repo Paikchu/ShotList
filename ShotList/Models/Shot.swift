@@ -29,18 +29,12 @@ struct ShotClip: Identifiable, Codable, Hashable {
     /// 「0:12」形式的时长文本
     var durationText: String? { SLTimecode.text(for: duration) }
 
-    /// 拍摄时间文本（完整，用于导出清单）
-    var recordedAtText: String? {
-        let style = Date.FormatStyle(date: .abbreviated, time: .shortened)
-            .locale(AppLocale.current)
-        return recordedAt.formatted(style)
-    }
+    /// 拍摄时间文本，例如「9月14日 22:14」。用于导出清单与无障碍朗读。
+    var recordedAtText: String? { SLDateText.monthDayTime(recordedAt) }
 
     /// 紧凑的相对时间，例如「今天 22:14」「昨天 21:46」「9月13日 21:46」
     func shortRecordedAtText(relativeTo now: Date = Date(), calendar: Calendar = .current) -> String {
-        let time = recordedAt.formatted(
-            Date.FormatStyle().hour().minute().locale(AppLocale.current)
-        )
+        let time = SLDateText.time(recordedAt)
 
         if calendar.isDate(recordedAt, inSameDayAs: now) { return "今天 \(time)" }
         if let yesterday = calendar.date(byAdding: .day, value: -1, to: now),
@@ -48,12 +42,7 @@ struct ShotClip: Identifiable, Codable, Hashable {
             return "昨天 \(time)"
         }
 
-        var dayStyle = Date.FormatStyle()
-        if calendar.component(.year, from: recordedAt) != calendar.component(.year, from: now) {
-            dayStyle = dayStyle.year()
-        }
-        dayStyle = dayStyle.month(.defaultDigits).day(.defaultDigits).locale(AppLocale.current)
-        return "\(recordedAt.formatted(dayStyle)) \(time)"
+        return "\(SLDateText.monthDay(recordedAt, relativeTo: now, calendar: calendar)) \(time)"
     }
 }
 
@@ -178,6 +167,56 @@ extension Shot {
     func status(relativeTo date: Date = Date(), calendar: Calendar = .current) -> ShotStatus {
         guard let latest = latestClip else { return .notShot }
         return calendar.isDate(latest.recordedAt, inSameDayAs: date) ? .shotToday : .shotEarlier
+    }
+}
+
+// MARK: - 日期格式化
+
+/// 日期文本统一走这里，卡片、面板与导出清单保持同一套写法。
+///
+/// 年份是不常变化的信息，日常翻看时属于噪声，因此**同年一律不写年份**，
+/// 只有跨年时才补上——既短，又不会产生歧义。
+enum SLDateText {
+    /// 「22:14」
+    static func time(_ date: Date) -> String {
+        date.formatted(Date.FormatStyle().hour().minute().locale(AppLocale.current))
+    }
+
+    /// 「9月14日」；跨年时是「2025年9月14日」
+    ///
+    /// 月份用 `.wide` 而不是 `.defaultDigits`：后者在中文下会输出 `9/14` 这种数字写法。
+    static func monthDay(
+        _ date: Date,
+        relativeTo now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> String {
+        var style = Date.FormatStyle()
+        if calendar.component(.year, from: date) != calendar.component(.year, from: now) {
+            style = style.year()
+        }
+        return date.formatted(
+            style.month(.wide).day().locale(AppLocale.current)
+        )
+    }
+
+    /// 「9月14日 22:14」
+    static func monthDayTime(
+        _ date: Date,
+        relativeTo now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> String {
+        "\(monthDay(date, relativeTo: now, calendar: calendar)) \(time(date))"
+    }
+
+    /// 「9月14日 星期一」
+    static func monthDayWeekday(_ date: Date) -> String {
+        let day = date.formatted(
+            Date.FormatStyle().month(.wide).day().locale(AppLocale.current)
+        )
+        let weekday = date.formatted(
+            Date.FormatStyle().weekday(.wide).locale(AppLocale.current)
+        )
+        return "\(day) \(weekday)"
     }
 }
 
