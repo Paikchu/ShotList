@@ -82,6 +82,12 @@ struct ClipPlayerScreen: View {
         .onDisappear {
             player?.pause()
             player = nil
+            // 播放期间把音频会话切成了 .playback，退出时必须归还音频焦点，
+            // 否则别的 App 的音乐在离开本页后不会恢复。
+            try? AVAudioSession.sharedInstance().setActive(
+                false,
+                options: .notifyOthersOnDeactivation
+            )
         }
     }
 }

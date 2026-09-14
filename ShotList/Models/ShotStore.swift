@@ -41,6 +41,7 @@ final class ShotStore: ObservableObject {
         createDirectoryIfNeeded(supportDirectory)
         createDirectoryIfNeeded(clipsDirectory)
         load()
+        refreshStorageStats()
     }
 
     // MARK: - 统计
@@ -78,16 +79,18 @@ final class ShotStore: ObservableObject {
         shots.reduce(0) { $0 + $1.totalDuration }
     }
 
-    /// 全部片段占用空间（字节）
-    var totalClipBytes: Int64 {
-        shots.reduce(into: Int64(0)) { total, shot in
-            for clip in shot.clips {
-                guard let url = clipURL(for: clip) else { continue }
-                let values = try? url.resourceValues(forKeys: [.fileSizeKey])
-                total += Int64(values?.fileSize ?? 0)
-            }
-        }
-    }
+    /// 全部片段占用空间（字节）。
+    ///
+    /// 这是**缓存值**，由 `refreshStorageStats()` 在启动与数据变更时刷新。
+    /// 视图每次重绘都会读它，若在这里现算，一次重绘就要跨 N 个片段发系统调用
+    /// （导出页连无障碍值要读两遍，就是 2×N 次）。
+    @Published private(set) var totalClipBytes: Int64 = 0
+
+    /// 磁盘上实际存在的片段文件名。
+    ///
+    /// `clipURL(for:)` 被视图高频调用，每次都 `fileExists` 太贵，
+    /// 改为在刷新统计时扫一遍目录缓存下来。
+    private var existingClipFileNames: Set<String> = []
 
     /// 拍摄进度 0…1
     var progress: Double {
@@ -112,8 +115,8 @@ final class ShotStore: ObservableObject {
 
     /// 某个片段的磁盘位置
     func clipURL(for clip: ShotClip) -> URL? {
-        let url = clipsDirectory.appendingPathComponent(clip.fileName, isDirectory: false)
-        return fileManager.fileExists(atPath: url.path) ? url : nil
+        guard existingClipFileNames.contains(clip.fileName) else { return nil }
+        return clipsDirectory.appendingPathComponent(clip.fileName, isDirectory: false)
     }
 
     /// 某个分镜最近一条片段的磁盘位置（卡片缩略图、播放默认取这条）
@@ -190,13 +193,17 @@ final class ShotStore: ObservableObject {
 
     /// 按列表顺序重新编号，并让磁盘上的片段文件名跟着更新，
     /// 这样「文件」App 里看到的序号与应用内的分镜顺序始终一致。
-    func normalize() {
+    ///
+    /// - Returns: 是否有编号被改动（调用方据此决定要不要落盘）。
+    @discardableResult
+    func normalize() -> Bool {
         var renumbered = false
         for index in shots.indices where shots[index].number != index + 1 {
             shots[index].number = index + 1
             renumbered = true
         }
         if renumbered { syncClipFileNames() }
+        return renumbered
     }
 
     /// 拖拽排序
@@ -230,6 +237,7 @@ final class ShotStore: ObservableObject {
         try? fileManager.removeItem(at: clipsDirectory)
         createDirectoryIfNeeded(clipsDirectory)
         shots.removeAll()
+        ThumbnailLoader.shared.removeAll()
         persist()
     }
 
@@ -241,7 +249,10 @@ final class ShotStore: ObservableObject {
     func addClip(from sourceURL: URL, duration: TimeInterval?, to shotID: Shot.ID) throws {
         guard let index = index(of: shotID) else { return }
 
-        let fileName = makeClipFileName(number: shots[index].number)
+        let fileName = makeClipFileName(
+            number: shots[index].number,
+            fileExtension: Self.fileExtension(ofFileName: sourceURL.lastPathComponent)
+        )
         let destination = clipsDirectory.appendingPathComponent(fileName, isDirectory: false)
 
         if fileManager.fileExists(atPath: destination.path) {
@@ -282,22 +293,58 @@ final class ShotStore: ObservableObject {
 
     // MARK: - 持久化
 
+    /// 扫一遍片段目录，刷新「磁盘上存在哪些片段」与「占用空间」两个缓存。
+    ///
+    /// 只在启动、数据变更、以及从后台回到前台（用户可能在「文件」App 里删过
+    /// 片段）时调用。视图读到的都是缓存值，`body` 里不再做同步文件 I/O。
+    func refreshStorageStats() {
+        let urls = (try? fileManager.contentsOfDirectory(
+            at: clipsDirectory,
+            includingPropertiesForKeys: [.fileSizeKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+
+        var sizes: [String: Int64] = [:]
+        sizes.reserveCapacity(urls.count)
+        for url in urls {
+            // 目录枚举时已经预取了 fileSize，这里再读一次命中的是缓存，不发系统调用
+            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            sizes[url.lastPathComponent] = Int64(size)
+        }
+
+        existingClipFileNames = Set(sizes.keys)
+        totalClipBytes = shots.reduce(into: Int64(0)) { total, shot in
+            for clip in shot.clips { total += sizes[clip.fileName] ?? 0 }
+        }
+    }
+
+    /// 从磁盘读取。
+    ///
+    /// 片段文件可能已被用户从「文件」App 里删掉，编号也可能被外部改乱，
+    /// 这里做一次一致性校正，**校正过就立刻落盘**：只改内存不写回的话，
+    /// 磁盘上的文件名与 JSON 记录会一直对不上，下次启动按「文件不存在」
+    /// 过滤就会让片段在界面上凭空消失（文件其实还在磁盘上）。
     private func load() {
         guard let data = try? Data(contentsOf: metadataURL),
               let decoded = try? JSONDecoder().decode([Shot].self, from: data) else {
             return
         }
 
-        // 片段文件可能已被用户从「文件」App 里删除，这里做一次一致性校正
+        var didRepair = false
+
         shots = decoded.map { shot in
             var fixed = shot
-            fixed.clips = shot.clips.filter { clip in
+            let existing = shot.clips.filter { clip in
                 let url = clipsDirectory.appendingPathComponent(clip.fileName, isDirectory: false)
                 return fileManager.fileExists(atPath: url.path)
             }
+            if existing.count != shot.clips.count { didRepair = true }
+            fixed.clips = existing
             return fixed
         }
-        normalize()
+
+        if normalize() { didRepair = true }
+        if didRepair { persist() }
     }
 
     private func persist() {
@@ -305,6 +352,7 @@ final class ShotStore: ObservableObject {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         guard let data = try? encoder.encode(shots) else { return }
         try? data.write(to: metadataURL, options: .atomic)
+        refreshStorageStats()
     }
 
     private func createDirectoryIfNeeded(_ url: URL) {
@@ -315,18 +363,24 @@ final class ShotStore: ObservableObject {
     // MARK: - 文件名
 
     /// 生成一个不重名的片段文件名，形如「镜头01_20260914_120001.mov」
-    private func makeClipFileName(number: Int) -> String {
+    private func makeClipFileName(number: Int, fileExtension: String) -> String {
         let token = Self.timestampToken()
-        var candidate = Self.clipFileName(number: number, token: token)
+        var candidate = Self.clipFileName(number: number, token: token, fileExtension: fileExtension)
         var attempt = 2
         while fileManager.fileExists(atPath: clipsDirectory.appendingPathComponent(candidate).path) {
-            candidate = Self.clipFileName(number: number, token: "\(token)-\(attempt)")
+            candidate = Self.clipFileName(
+                number: number,
+                token: "\(token)-\(attempt)",
+                fileExtension: fileExtension
+            )
             attempt += 1
         }
         return candidate
     }
 
     /// 编号变化后同步磁盘上的文件名。改名失败时保留原名，不会丢文件。
+    ///
+    /// 扩展名跟着文件自己走：导入的 mp4 换编号之后仍然是 mp4。
     private func syncClipFileNames() {
         for shotIndex in shots.indices {
             let number = shots[shotIndex].number
@@ -334,7 +388,11 @@ final class ShotStore: ObservableObject {
                 let current = shots[shotIndex].clips[clipIndex].fileName
                 guard let token = Self.token(from: current) else { continue }
 
-                let expected = Self.clipFileName(number: number, token: token)
+                let expected = Self.clipFileName(
+                    number: number,
+                    token: token,
+                    fileExtension: Self.fileExtension(ofFileName: current)
+                )
                 guard expected != current else { continue }
 
                 let source = clipsDirectory.appendingPathComponent(current, isDirectory: false)
@@ -352,16 +410,28 @@ final class ShotStore: ObservableObject {
         }
     }
 
-    private static func clipFileName(number: Int, token: String) -> String {
-        String(format: "%@%02d_%@.mov", clipNamePrefix, number, token)
+    private static func clipFileName(number: Int, token: String, fileExtension: String) -> String {
+        String(format: "%@%02d_%@.%@", clipNamePrefix, number, token, fileExtension)
     }
 
-    /// 从「镜头01_20260914_120001.mov」里取出时间戳部分
+    /// 从「镜头01_20260914_120001.mov」里取出时间戳部分（不含扩展名）
     private static func token(from fileName: String) -> String? {
         guard fileName.hasPrefix(clipNamePrefix),
               let separator = fileName.firstIndex(of: "_") else { return nil }
-        let token = fileName[fileName.index(after: separator)...]
-        return token.isEmpty ? nil : String(token)
+        var token = String(fileName[fileName.index(after: separator)...])
+        if let dot = token.lastIndex(of: ".") {
+            token = String(token[token.startIndex..<dot])
+        }
+        return token.isEmpty ? nil : token
+    }
+
+    /// 文件名里的扩展名；没有扩展名时按 `mov` 兜底。
+    ///
+    /// 不写死扩展名，是为了让相册导入的 mp4 一直保持 mp4——
+    /// 容器与扩展名不符的文件交给剪映可能打不开。
+    private static func fileExtension(ofFileName fileName: String) -> String {
+        let ext = (fileName as NSString).pathExtension.lowercased()
+        return ext.isEmpty ? "mov" : ext
     }
 
     private func removeClipFiles(of shot: Shot) {
@@ -373,6 +443,9 @@ final class ShotStore: ObservableObject {
     private func removeFile(named fileName: String) {
         let url = clipsDirectory.appendingPathComponent(fileName, isDirectory: false)
         try? fileManager.removeItem(at: url)
+        // 文件名带着时间戳，删掉之后同一个路径有可能被新片段用上；
+        // 缓存里的旧图必须一起清掉，否则新片段会显示上一个视频的首帧
+        ThumbnailLoader.shared.invalidate(for: url)
     }
 
     private static func timestampToken() -> String {

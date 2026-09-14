@@ -166,6 +166,15 @@ nonisolated extension Shot {
     /// 最近一条的时长文本
     var durationText: String? { latestClip?.durationText }
 
+    /// 主素材（最近一条）的文件扩展名。
+    ///
+    /// 相册导入的视频保留原本的扩展名（mov、mp4…），导出命名必须跟着走，
+    /// 不能一律写成 `.mov`，否则容器与扩展名不符。没有片段时按 `mov` 兜底。
+    var mainFileExtension: String {
+        let ext = ((latestClip?.fileName ?? "") as NSString).pathExtension.lowercased()
+        return ext.isEmpty ? "mov" : ext
+    }
+
     /// 最近一条的拍摄时间文本（完整）
     var recordedAtText: String? { latestClip?.recordedAtText }
 

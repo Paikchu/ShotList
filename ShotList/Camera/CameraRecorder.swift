@@ -24,7 +24,9 @@ nonisolated struct MainOnly<T>: @unchecked Sendable {
 ///   `isTorchAvailable`、`isTorchOn`）显式标注 `@MainActor`，只有主线程能读写，
 ///   队列侧一律经 `onMain` 回来；
 /// - **会话状态**（`session`、`movieOutput`、`videoInput`、`audioInput`、
-///   `isConfigured`、`completion`）只在 `sessionQueue` 上访问；
+///   `isConfigured`）只在 `sessionQueue` 上访问 —— 开录与停录也不例外，
+///   这样它们与切摄像头、改旋转角度共享同一条串行队列，不会并发改连接；
+/// - **录制回调**（`completion`）只在主线程读写，由 `onMain` 交回。
 /// - **主线程资源**（`previewLayer`、旋转协调器、计时器）只在主线程访问。
 ///
 /// 后两类由 `@unchecked Sendable` 兜住。之所以不拆成 actor：`AVCaptureSession`
@@ -142,11 +144,12 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
     func stop() {
         stopTimer()
         recordingStart = nil
-        if movieOutput.isRecording { movieOutput.stopRecording() }
         stopObservingInterruptions()
 
         sessionQueue.async { [weak self] in
             guard let self else { return }
+            // movieOutput 属于会话状态，收尾也留在 sessionQueue 上做
+            if self.movieOutput.isRecording { self.movieOutput.stopRecording() }
             if self.session.isRunning { self.session.stopRunning() }
             self.deactivateAudioSession()
         }
@@ -176,10 +179,18 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
 
     // MARK: - 录制
 
+    /// 开始录制。
+    ///
+    /// 界面状态（`status`、`isRecording`）在主线程判、在主线程置位，
+    /// **会话状态一律交给 `sessionQueue`**：`movieOutput` 的归属地在那里，
+    /// 与 `switchCamera` / `updateRotation` 对连接的修改排在同一条串行队列上，
+    /// 不会并发抢同一个连接。
+    ///
+    /// `isRecording` 刻意留在主线程**同步**置位（而不是等队列确认后再回主线程），
+    /// 否则连点两次录制按钮会在两次点击之间留下空档，同时启动两段录制。
     @MainActor
     func startRecording(completion: @MainActor @escaping (Result<URL, Error>) -> Void) {
-        guard status == .ready, !isRecording, !movieOutput.isRecording else { return }
-        guard movieOutput.connection(with: .video) != nil else { return }
+        guard status == .ready, !isRecording else { return }
 
         self.completion = completion
         let url = FileManager.default.temporaryDirectory
@@ -188,12 +199,29 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
         isRecording = true
         startTimer()
         Haptics.impact(.medium)
-        movieOutput.startRecording(to: url, recordingDelegate: self)
+
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            // 会话侧确认能录。确认不了就把刚才乐观置位的界面状态回滚回去。
+            guard !self.movieOutput.isRecording,
+                  self.movieOutput.connection(with: .video) != nil else {
+                self.onMain {
+                    self.isRecording = false
+                    self.stopTimer()
+                    self.elapsed = 0
+                    self.completion = nil
+                }
+                return
+            }
+            self.movieOutput.startRecording(to: url, recordingDelegate: self)
+        }
     }
 
     func stopRecording() {
-        guard movieOutput.isRecording else { return }
-        movieOutput.stopRecording()
+        sessionQueue.async { [weak self] in
+            guard let self, self.movieOutput.isRecording else { return }
+            self.movieOutput.stopRecording()
+        }
     }
 
     // MARK: - 摄像头切换 / 补光
@@ -425,7 +453,9 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
 
     /// 来电、闹钟等打断时先把已拍的内容保存下来
     @objc private func sessionWasInterrupted(_ notification: Notification) {
-        if movieOutput.isRecording { stopRecording() }
+        // 通知可能投递在任意线程上，这里不能直接读 movieOutput——
+        // stopRecording() 自己会跳回 sessionQueue 并判断是否需要收尾
+        stopRecording()
     }
 
     @objc private func sessionInterruptionEnded(_ notification: Notification) {
@@ -436,7 +466,7 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
     }
 
     @objc private func sessionRuntimeError(_ notification: Notification) {
-        if movieOutput.isRecording { stopRecording() }
+        stopRecording()
         onMain {
             self.status = .unavailable("相机被系统中断，请关闭后重新打开。")
         }
@@ -445,7 +475,10 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
 
 // MARK: - 录制回调
 
-extension CameraRecorder: AVCaptureFileOutputRecordingDelegate {
+/// 必须显式标 `nonisolated`：默认主协程隔离下，extension 会自己落在主协程上，
+/// 而录制回调是从 `sessionQueue` 上把 `self` 交给 AVFoundation 的，
+/// 主协程隔离的一致性在这种上下文里用不了。
+nonisolated extension CameraRecorder: AVCaptureFileOutputRecordingDelegate {
 
     func fileOutput(
         _ output: AVCaptureFileOutput,
@@ -506,6 +539,9 @@ enum CameraError: LocalizedError {
 }
 
 /// `AVFileOutputErrorUserInfoKey` 目前没有对应的 Swift 常量，这里显式声明。
-private enum AVFileOutputErrorUserInfoKey {
+///
+/// 标 `nonisolated` 是必需的：录制回调在 `sessionQueue` 一侧读它，
+/// 而默认主协程隔离下，文件级的静态属性本来归属主协程。
+private nonisolated enum AVFileOutputErrorUserInfoKey {
     static let recordingSuccessfullyFinished = "AVErrorRecordingSuccessfullyFinishedKey"
 }

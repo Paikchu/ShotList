@@ -44,8 +44,15 @@ struct CameraCaptureView: View {
         .preferredColorScheme(.dark)
         .task { await bootstrap() }
         .onChange(of: scenePhase) { _, phase in
-            // 切到后台、来电等场景先把已经拍到的部分保存下来
-            if phase != .active, recorder.isRecording { recorder.stopRecording() }
+            switch phase {
+            case .active:
+                // 用户可能刚去「设置」里改了摄像头权限，回到前台重新读一次，
+                // 免得界面还停在「权限已关闭」，非要关掉相机重进
+                refreshAuthorization()
+            default:
+                // 切到后台、来电等场景先把已经拍到的部分保存下来
+                if recorder.isRecording { recorder.stopRecording() }
+            }
         }
         .onDisappear {
             recorder.stop()
@@ -397,6 +404,26 @@ struct CameraCaptureView: View {
         authorization = AVCaptureDevice.authorizationStatus(for: .video)
         switch authorization {
         case .authorized:
+            recorder.start()
+        case .notDetermined:
+            showsPrePermission = true
+        default:
+            break
+        }
+    }
+
+    /// 回到前台时重新读一次权限，并把界面切到对应分支。
+    ///
+    /// `authorization` 是 `@State`，只在首次进入与用户点了授权按钮时更新；
+    /// 用户去系统设置里改完权限再切回来，不重读就会一直停在旧状态。
+    private func refreshAuthorization() {
+        let current = AVCaptureDevice.authorizationStatus(for: .video)
+        guard current != authorization else { return }
+
+        authorization = current
+        switch current {
+        case .authorized:
+            showsPrePermission = false
             recorder.start()
         case .notDetermined:
             showsPrePermission = true

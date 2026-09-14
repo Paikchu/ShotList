@@ -95,9 +95,13 @@ struct ClipThumbnailView: View {
             return
         }
         image = nil
-        ThumbnailLoader.shared.thumbnail(for: url) { loaded in
-            image = loaded
-        }
+
+        let loaded = await ThumbnailLoader.shared.thumbnail(for: url)
+
+        // `.task(id: url)` 在 url 变化时会取消上一个任务。被取消说明这张图
+        // 已经不是当前要显示的那张了，迟到的结果必须丢掉，否则会盖住新图。
+        guard !Task.isCancelled else { return }
+        image = loaded
     }
 }
 

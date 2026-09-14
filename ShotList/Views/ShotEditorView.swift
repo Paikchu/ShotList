@@ -21,9 +21,16 @@ struct ShotEditorView: View {
         1...max(1, store.shots.count)
     }
 
-    /// 与导出结果同一套命名规则：边打字边看到最终文件名
+    /// 与导出结果同一套命名规则：边打字边看到最终文件名。
+    ///
+    /// 扩展名取自该镜头主素材的真实格式（相册导入的 mp4 导出后仍是 mp4），
+    /// 没有片段时按 mov 兜底。
     private var previewFileName: String {
-        ExportPackageBuilder.mainFileName(number: number, note: note)
+        ExportPackageBuilder.mainFileName(
+            number: number,
+            note: note,
+            fileExtension: store.shot(withID: shot.id)?.mainFileExtension ?? "mov"
+        )
     }
 
     var body: some View {

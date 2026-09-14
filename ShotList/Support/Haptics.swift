@@ -26,7 +26,12 @@ enum Haptics {
 
 /// 视频元数据读取。无状态，因此不属于主协程。
 nonisolated enum VideoMetadata {
-    /// 读取视频时长（秒）
+    /// 读取视频时长（秒）。
+    ///
+    /// `@concurrent` 不能省：默认主协程隔离下，裸的 `nonisolated async` 会留在
+    /// 调用方所在的主协程上，`AVURLAsset` 的构造与后续解析就都压在主线程。
+    /// 与本文件里 `decodeThumbnail` 走的是同一条规则。
+    @concurrent
     static func duration(of url: URL) async -> TimeInterval? {
         let asset = AVURLAsset(url: url)
         guard let duration = try? await asset.load(.duration) else { return nil }
@@ -38,13 +43,17 @@ nonisolated enum VideoMetadata {
 
 /// 视频首帧缩略图加载器，带内存缓存，避免列表滚动时重复解码。
 ///
-/// 隔离域是刻意固定的：缓存只由主线程读写，解码（真正耗时的部分）用
-/// `@concurrent` 丢到后台线程，完成后再回主线程写缓存并回调。
+/// 隔离域是刻意固定的：缓存与在途任务表只由主线程读写，解码（真正耗时的部分）
+/// 用 `@concurrent` 丢到后台线程，完成后再回主线程写缓存。
 @MainActor
 final class ThumbnailLoader {
     static let shared = ThumbnailLoader()
 
     private let cache = NSCache<NSString, UIImage>()
+
+    /// 正在解码的任务。列表滚动时同一张图会被多张卡片同时请求，
+    /// 复用同一个任务可以避免重复解码同一帧。
+    private var inFlight: [String: Task<UIImage?, Never>] = [:]
 
     private init() {
         cache.countLimit = 60
@@ -54,25 +63,43 @@ final class ThumbnailLoader {
         cache.object(forKey: url.path as NSString)
     }
 
-    /// 生成缩略图并在主线程回调；命中缓存时立即回调
-    func thumbnail(for url: URL, completion: @escaping (UIImage?) -> Void) {
+    /// 生成缩略图。命中缓存、或同一张图已有任务在跑时，直接复用结果。
+    ///
+    /// 调用方在 `await` 之后必须自行判断是否已经被取消（`Task.isCancelled`）：
+    /// url 变了说明这张图已经不是当前要显示的那张，迟到的结果要丢掉。
+    func thumbnail(for url: URL) async -> UIImage? {
         let key = url.path as NSString
         if let cached = cache.object(forKey: key) {
-            completion(cached)
-            return
+            return cached
         }
 
-        Task {
-            let image = await Self.decodeThumbnail(for: url)
-            if let image {
-                cache.setObject(image, forKey: key)
-            }
-            completion(image)
+        let path = key as String
+        if let running = inFlight[path] {
+            return await running.value
         }
+
+        let task = Task<UIImage?, Never> { await Self.decodeThumbnail(for: url) }
+        inFlight[path] = task
+
+        let image = await task.value
+        // 从 await 恢复到清表之间没有挂起点，主协程上这一段是原子的，
+        // 不会误删刚建好的新任务
+        inFlight[path] = nil
+        if let image {
+            cache.setObject(image, forKey: key)
+        }
+        return image
     }
 
     func invalidate(for url: URL) {
         cache.removeObject(forKey: url.path as NSString)
+        inFlight[url.path] = nil
+    }
+
+    /// 清空全部缓存（清空所有分镜时调用）
+    func removeAll() {
+        cache.removeAllObjects()
+        inFlight.removeAll()
     }
 
     /// 解码首帧。`@concurrent` 保证它离开主线程；

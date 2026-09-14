@@ -4,6 +4,7 @@ import SwiftUI
 @main
 struct ShotListApp: App {
     @StateObject private var store = ShotStore()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
@@ -15,6 +16,11 @@ struct ShotListApp: App {
                     // 导出包只是中间产物（体积约等于全部视频），只对生成它的那次
                     // 会话有意义，跨启动没有保留价值——不清就会一直堆着。
                     ExportPackageBuilder.cleanUp()
+                }
+                .onChange(of: scenePhase) { _, phase in
+                    // 用户可能在「文件」App 里删掉了片段，回到前台重新扫一次，
+                    // 免得界面上还挂着早就不存在的视频
+                    if phase == .active { store.refreshStorageStats() }
                 }
         }
     }

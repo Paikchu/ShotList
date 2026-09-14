@@ -162,7 +162,11 @@ nonisolated enum ExportPackageBuilder {
             for (offset, clip) in available.enumerated() {
                 let takeIndex = offset + 1
                 let isMain = clip.id == latest.id
-                let fileName = Self.exportedFileName(for: shot, takeIndex: isMain ? nil : takeIndex)
+                let fileName = Self.exportedFileName(
+                    for: shot,
+                    takeIndex: isMain ? nil : takeIndex,
+                    fileExtension: Self.fileExtension(ofFileName: clip.fileName)
+                )
 
                 let destination: URL
                 let exportedPath: String
@@ -305,16 +309,27 @@ nonisolated enum ExportPackageBuilder {
     /// 主素材的文件名，例如「01_无人机缓慢上升.mov」。
     ///
     /// 编辑页拿它做实时预览，导出时走的是同一个函数，规则改动两边一起变。
-    static func mainFileName(number: Int, note: String) -> String {
-        String(format: "%02d_%@.mov", number, sanitize(note))
+    /// 扩展名由调用方给出（取自片段本身）：相册导入的 mp4 不该在这里被写成 `.mov`。
+    static func mainFileName(number: Int, note: String, fileExtension: String = "mov") -> String {
+        String(format: "%02d_%@.%@", number, sanitize(note), fileExtension)
     }
 
     /// 主素材（最新一条）不加序号后缀，备用片段带「-第几条」后缀
-    private static func exportedFileName(for shot: Shot, takeIndex: Int?) -> String {
+    private static func exportedFileName(
+        for shot: Shot,
+        takeIndex: Int?,
+        fileExtension: String
+    ) -> String {
         if let takeIndex {
-            return String(format: "%02d-%d_%@.mov", shot.number, takeIndex, sanitize(shot.fileNameBase))
+            return String(format: "%02d-%d_%@.%@", shot.number, takeIndex, sanitize(shot.fileNameBase), fileExtension)
         }
-        return mainFileName(number: shot.number, note: shot.fileNameBase)
+        return mainFileName(number: shot.number, note: shot.fileNameBase, fileExtension: fileExtension)
+    }
+
+    /// 导出命名沿用源文件的扩展名，保证容器与扩展名一致
+    private static func fileExtension(ofFileName fileName: String) -> String {
+        let ext = (fileName as NSString).pathExtension.lowercased()
+        return ext.isEmpty ? "mov" : ext
     }
 
     /// 去掉文件名里不安全的字符，同时保留中文
