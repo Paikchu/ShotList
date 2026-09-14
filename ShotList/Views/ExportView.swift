@@ -167,14 +167,40 @@ struct ExportView: View {
 
     private var contentsSection: some View {
         Section {
-            contentsRow("01_无人机缓慢上升.mov", "每个镜头最新的一条，按编号前缀命名；扩展名跟随源文件")
-            contentsRow("备用片段/01-1_….mov", "同一个镜头更早拍的片段")
+            contentsRow(exampleMainFileName, "每个镜头最新的一条，按编号前缀命名；扩展名跟随源文件")
+            contentsRow(exampleAlternateFileName, "同一个镜头更早拍的片段")
             contentsRow("分镜清单.csv", "编号、描述、状态，以及每条片段的时长与文件名")
             contentsRow("分镜文字内容指南.md", "镜头文字内容与素材的对照表，可直接交给 AI 剪辑")
             contentsRow("导出说明.txt", "解压、导入剪映、传到电脑的步骤")
         } header: {
             SectionHeader(title: "压缩包里有什么", systemImage: "doc.text.magnifyingglass")
         }
+    }
+
+    // MARK: - 压缩包内容示例
+
+    /// 示例文件名取自真实的分镜，而不是写死的文案：
+    /// 有已拍镜头就用它的实际命名，随拍摄动态变化；一个分镜都没有时退回通用占位。
+    private var exampleShot: Shot? {
+        store.shots.first { $0.hasClip } ?? store.shots.first
+    }
+
+    /// 主素材示例，例如「01_无人机缓慢上升.mov」。
+    /// 复用导出时的命名函数，页面展示与实际打包结果永远一致。
+    private var exampleMainFileName: String {
+        guard let shot = exampleShot else { return "01_镜头描述.mov" }
+        return ExportPackageBuilder.mainFileName(
+            number: shot.number,
+            note: shot.fileNameBase,
+            fileExtension: shot.mainFileExtension
+        )
+    }
+
+    /// 备用片段示例，例如「备用片段/01-1_….mov」，编号与主素材示例保持一致。
+    private var exampleAlternateFileName: String {
+        let padded = exampleShot?.paddedNumber ?? "01"
+        let ext = (exampleMainFileName as NSString).pathExtension
+        return "备用片段/\(padded)-1_….\(ext)"
     }
 
     private func contentsRow(_ name: String, _ caption: String) -> some View {
