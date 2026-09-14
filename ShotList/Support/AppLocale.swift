@@ -6,6 +6,6 @@ import Foundation
 /// 「Monday, Sep 14, 2026」这种和界面语言不一致的显示，
 /// 因此把格式化区域固定为简体中文。
 /// 将来接入多语言时，把这里改回 `Locale.current` 即可。
-enum AppLocale {
+nonisolated enum AppLocale {
     static let current = Locale(identifier: "zh-Hans-CN")
 }

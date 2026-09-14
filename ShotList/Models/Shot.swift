@@ -5,7 +5,10 @@ import SwiftUI
 /// 同一个镜头可以反复拍（「这条没过，再拍一条」），每次拍摄都会追加一个
 /// `ShotClip`，而不是把上一条覆盖掉。拍完之后在应用里对比，或者整个导出到
 /// 剪映里挑。
-struct ShotClip: Identifiable, Codable, Hashable {
+///
+/// 模型整体是 `nonisolated`：它是纯值类型，读它不该要求主线程。
+/// 只有真正绑定界面的东西才归属主协程。
+nonisolated struct ShotClip: Identifiable, Codable, Hashable {
     var id: UUID
     /// 视频文件名（位于「分镜视频」目录内）
     var fileName: String
@@ -50,7 +53,7 @@ struct ShotClip: Identifiable, Codable, Hashable {
 ///
 /// 编号 `number` 决定拍摄顺序，同时也是导出时视频文件名与清单的前缀，
 /// 因此在列表内始终按数组顺序连续编号（1、2、3…）。
-struct Shot: Identifiable, Codable, Hashable {
+nonisolated struct Shot: Identifiable, Codable, Hashable {
     var id: UUID
     /// 镜头编号，从 1 开始连续编号
     var number: Int
@@ -81,7 +84,7 @@ struct Shot: Identifiable, Codable, Hashable {
 
 // MARK: - 兼容旧版本数据
 
-extension Shot {
+nonisolated extension Shot {
     private enum LegacyKeys: String, CodingKey {
         case title
         case clipFileName
@@ -119,7 +122,7 @@ extension Shot {
 
 // MARK: - 派生属性
 
-extension Shot {
+nonisolated extension Shot {
     /// 这个镜头是否至少拍过一条
     var hasClip: Bool { !clips.isEmpty }
 
@@ -176,7 +179,7 @@ extension Shot {
 ///
 /// 年份是不常变化的信息，日常翻看时属于噪声，因此**同年一律不写年份**，
 /// 只有跨年时才补上——既短，又不会产生歧义。
-enum SLDateText {
+nonisolated enum SLDateText {
     /// 「22:14」
     static func time(_ date: Date) -> String {
         date.formatted(Date.FormatStyle().hour().minute().locale(AppLocale.current))
@@ -223,7 +226,7 @@ enum SLDateText {
 // MARK: - 时长格式化
 
 /// 时长文本统一走这里，卡片、播放页与导出清单保持一致。
-enum SLTimecode {
+nonisolated enum SLTimecode {
     /// 「0:12」形式；没有有效时长时返回 nil
     static func text(for duration: TimeInterval?) -> String? {
         guard let duration, duration > 0 else { return nil }
@@ -238,7 +241,7 @@ enum SLTimecode {
 ///
 /// 状态始终同时用「图标 + 文字 + 颜色」三重信息表达，
 /// 保证色觉识别障碍用户同样能够区分。
-enum ShotStatus: String, CaseIterable, Identifiable {
+nonisolated enum ShotStatus: String, CaseIterable, Identifiable {
     /// 还没有拍
     case notShot
     /// 今天拍的
@@ -276,7 +279,7 @@ enum ShotStatus: String, CaseIterable, Identifiable {
     var isRecorded: Bool { self != .notShot }
 }
 
-extension Shot {
+nonisolated extension Shot {
     /// 无障碍朗读文本：一次读完编号、描述、拍摄状态与片段数量。
     var accessibilityDescription: String {
         var parts: [String] = ["镜头 \(number)"]

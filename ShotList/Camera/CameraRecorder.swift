@@ -2,13 +2,39 @@ import AVFoundation
 import Combine
 import UIKit
 
+/// 只在主线程使用的非 Sendable 值，跨隔离域往主线程带时套的壳。
+///
+/// 「安全」由调用处负责：值从产生它的线程带过来之后只在主线程使用，
+/// 中间隔着一次 dispatch，先后顺序由 GCD 保证。AVFoundation 里
+/// `AVCaptureDevice`、`Error` 这类对象都不是 `Sendable`，而它们又必须从
+/// 队列侧交到界面上，这是表达「我知道这次传递是安全的」最窄的方式——
+/// 比给整个类打开 `nonisolated(unsafe)` 要精确得多。
+nonisolated struct MainOnly<T>: @unchecked Sendable {
+    let value: T
+}
+
 /// 相机录制控制器（AVFoundation）。
 ///
-/// - 会话配置、切换摄像头等重活放在独立串行队列，避免阻塞主线程；
-/// - `@Published` 属性的更新统一回到主线程；
-/// - 没有可用摄像头时（例如 iOS 模拟器）进入 `.unavailable` 状态，
-///   由界面给出「改用相册导入」的降级路径，而不是直接报错。
-final class CameraRecorder: NSObject, ObservableObject {
+/// ## 隔离约定
+///
+/// `AVCaptureSession.startRunning()` 是阻塞调用，不能放在主线程上，因此这个类
+/// **刻意不落在主协程**，由它自己划分线程归属：
+///
+/// - **界面状态**（`status`、`isRecording`、`elapsed`、`position`、
+///   `isTorchAvailable`、`isTorchOn`）显式标注 `@MainActor`，只有主线程能读写，
+///   队列侧一律经 `onMain` 回来；
+/// - **会话状态**（`session`、`movieOutput`、`videoInput`、`audioInput`、
+///   `isConfigured`、`completion`）只在 `sessionQueue` 上访问；
+/// - **主线程资源**（`previewLayer`、旋转协调器、计时器）只在主线程访问。
+///
+/// 后两类由 `@unchecked Sendable` 兜住。之所以不拆成 actor：`AVCaptureSession`
+/// 不是 `Sendable`，一旦关进 actor 就没法交给主线程上的
+/// `AVCaptureVideoPreviewLayer` 显示预览。串行队列 + 上面的约定是这套框架的
+/// 通行做法，因此这里显式声明并逐条落实，而不是让它隐式通过。
+///
+/// 没有可用摄像头时（例如 iOS 模拟器）进入 `.unavailable` 状态，
+/// 由界面给出「改用相册导入」的降级路径，而不是直接报错。
+nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked Sendable {
 
     enum Status: Equatable {
         case idle
@@ -22,57 +48,76 @@ final class CameraRecorder: NSObject, ObservableObject {
         }
     }
 
-    // MARK: - 对外状态
+    // MARK: - 界面状态（主线程）
 
-    @Published private(set) var status: Status = .idle
-    @Published private(set) var isRecording = false
-    @Published private(set) var elapsed: TimeInterval = 0
-    @Published private(set) var position: AVCaptureDevice.Position = .back
-    @Published private(set) var isTorchAvailable = false
-    @Published private(set) var isTorchOn = false
+    @MainActor @Published private(set) var status: Status = .idle
+    @MainActor @Published private(set) var isRecording = false
+    @MainActor @Published private(set) var elapsed: TimeInterval = 0
+    @MainActor @Published private(set) var position: AVCaptureDevice.Position = .back
+    @MainActor @Published private(set) var isTorchAvailable = false
+    @MainActor @Published private(set) var isTorchOn = false
+
+    // MARK: - 会话状态（只在 sessionQueue 上访问）
 
     let session = AVCaptureSession()
-
-    // MARK: - 内部
 
     private let sessionQueue = DispatchQueue(label: "com.max.ShotList.camera.session")
     private let movieOutput = AVCaptureMovieFileOutput()
     private var videoInput: AVCaptureDeviceInput?
     private var audioInput: AVCaptureDeviceInput?
     private var isConfigured = false
-    private var timer: Timer?
     private var recordingStart: Date?
-    private var completion: ((Result<URL, Error>) -> Void)?
+    private var completion: (@MainActor (Result<URL, Error>) -> Void)?
+
+    // MARK: - 主线程资源（只在主线程访问）
+
     private weak var previewLayer: AVCaptureVideoPreviewLayer?
-    private var rotationCoordinator: AnyObject?
+    private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
     private var previewAngleObservation: NSKeyValueObservation?
     private var captureAngleObservation: NSKeyValueObservation?
+    private var timer: Timer?
 
     /// 单个镜头最长录制时长
-    private let maximumDuration: TimeInterval = 600
     private static let maximumFileSize: Int64 = 600 * 1024 * 1024
     private static let maximumDurationSeconds: Double = 600
 
+    // MARK: - 线程跳转
+
+    /// 回到主线程更新界面状态。
+    ///
+    /// 用 `assumeIsolated` 而不是 `Task { @MainActor in }`：前者是同步的，
+    /// 状态更新的顺序与入队顺序严格一致，不会被任务调度打乱。
+    private func onMain(_ work: @MainActor @escaping @Sendable () -> Void) {
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated(work)
+        }
+    }
+
     // MARK: - 生命周期
 
+    @MainActor
     func start() {
         guard status == .idle || status.isUnavailable else { return }
         status = .configuring
         observeInterruptions()
 
+        // 当前使用哪颗摄像头属于界面状态，从主线程带到队列上
+        let target = position
         sessionQueue.async { [weak self] in
             guard let self else { return }
-            switch self.configureIfNeeded() {
+            switch self.configureIfNeeded(position: target) {
             case .success:
                 self.configureAudioSession()
                 if !self.session.isRunning { self.session.startRunning() }
-                DispatchQueue.main.async {
+                self.onMain {
                     self.refreshCapabilities()
                     self.status = .ready
                     self.updateRotation()
                 }
             case .failure(let error):
-                DispatchQueue.main.async { self.status = .unavailable(error.localizedDescription) }
+                // 错误对象不是 Sendable，在主线程那一侧只需要一句可读的说明
+                let reason = error.localizedDescription
+                self.onMain { self.status = .unavailable(reason) }
             }
         }
     }
@@ -106,7 +151,7 @@ final class CameraRecorder: NSObject, ObservableObject {
             self.deactivateAudioSession()
         }
 
-        DispatchQueue.main.async {
+        onMain {
             if self.isRecording { self.isRecording = false }
             if self.isTorchOn { self.isTorchOn = false }
         }
@@ -131,7 +176,8 @@ final class CameraRecorder: NSObject, ObservableObject {
 
     // MARK: - 录制
 
-    func startRecording(completion: @escaping (Result<URL, Error>) -> Void) {
+    @MainActor
+    func startRecording(completion: @MainActor @escaping (Result<URL, Error>) -> Void) {
         guard status == .ready, !isRecording, !movieOutput.isRecording else { return }
         guard movieOutput.connection(with: .video) != nil else { return }
 
@@ -152,6 +198,7 @@ final class CameraRecorder: NSObject, ObservableObject {
 
     // MARK: - 摄像头切换 / 补光
 
+    @MainActor
     func switchCamera() {
         guard !isRecording, status == .ready else { return }
         let target: AVCaptureDevice.Position = position == .back ? .front : .back
@@ -172,8 +219,9 @@ final class CameraRecorder: NSObject, ObservableObject {
             }
             self.session.commitConfiguration()
 
-            DispatchQueue.main.async {
-                guard self.videoInput?.device.position == target else { return }
+            let didSwitch = self.videoInput?.device.position == target
+            self.onMain {
+                guard didSwitch else { return }
                 self.position = target
                 self.refreshCapabilities()
                 self.updateRotation()
@@ -183,15 +231,18 @@ final class CameraRecorder: NSObject, ObservableObject {
     }
 
     func toggleTorch() {
-        guard let device = videoInput?.device, device.hasTorch else { return }
+        // 设备的读取也必须回到 sessionQueue，videoInput 的归属地在那里
         sessionQueue.async { [weak self] in
-            guard let self else { return }
+            guard let self,
+                  let device = self.videoInput?.device,
+                  device.hasTorch,
+                  device.isTorchAvailable else { return }
             do {
                 try device.lockForConfiguration()
                 device.torchMode = device.torchMode == .on ? .off : .on
                 let isOn = device.torchMode == .on
                 device.unlockForConfiguration()
-                DispatchQueue.main.async { self.isTorchOn = isOn }
+                self.onMain { self.isTorchOn = isOn }
             } catch {
                 // 补光不可用时静默忽略，录制本身不受影响
             }
@@ -200,7 +251,7 @@ final class CameraRecorder: NSObject, ObservableObject {
 
     // MARK: - 会话配置
 
-    private func configureIfNeeded() -> Result<Void, Error> {
+    private func configureIfNeeded(position: AVCaptureDevice.Position) -> Result<Void, Error> {
         if isConfigured { return .success(()) }
 
         guard let device = Self.camera(position: position) else {
@@ -257,23 +308,38 @@ final class CameraRecorder: NSObject, ObservableObject {
         return AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position)
     }
 
+    // MARK: - 画面旋转
+
+    /// 重新计算预览与录制画面的旋转角度。
+    ///
+    /// 设备对象在 sessionQueue 上取（那是它的归属地），协调器与预览层必须回到
+    /// 主线程操作，因此中间隔着一次带壳的传递。
     private func updateRotation() {
         previewAngleObservation = nil
         captureAngleObservation = nil
         rotationCoordinator = nil
 
-        guard let layer = previewLayer, let device = videoInput?.device else { return }
+        sessionQueue.async { [weak self] in
+            guard let self, let device = self.videoInput?.device else { return }
+            let boxed = MainOnly(value: device)
+            self.onMain {
+                guard let layer = self.previewLayer else { return }
+                self.installRotation(device: boxed.value, layer: layer)
+            }
+        }
+    }
 
+    private func installRotation(device: AVCaptureDevice, layer: AVCaptureVideoPreviewLayer) {
         let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: layer)
         rotationCoordinator = coordinator
 
         previewAngleObservation = coordinator.observe(
             \.videoRotationAngleForHorizonLevelPreview,
             options: [.initial, .new]
-        ) { [weak layer] _, change in
+        ) { [weak self] _, change in
             guard let angle = change.newValue else { return }
-            DispatchQueue.main.async {
-                layer?.connection?.videoRotationAngle = angle
+            self?.onMain {
+                self?.previewLayer?.connection?.videoRotationAngle = angle
             }
         }
 
@@ -282,7 +348,8 @@ final class CameraRecorder: NSObject, ObservableObject {
             options: [.initial, .new]
         ) { [weak self] _, change in
             guard let angle = change.newValue else { return }
-            DispatchQueue.main.async {
+            // 录制的旋转角度属于会话配置，回到 sessionQueue 上设置
+            self?.sessionQueue.async { [weak self] in
                 guard let self,
                       let connection = self.movieOutput.connection(with: .video),
                       connection.isVideoRotationAngleSupported(angle) else { return }
@@ -305,14 +372,18 @@ final class CameraRecorder: NSObject, ObservableObject {
 
     // MARK: - 计时
 
+    /// 计时器跑在主 runloop 上，因此这两个方法只在主线程调用。
+    @MainActor
     private func startTimer() {
         stopTimer()
         recordingStart = Date()
         elapsed = 0
 
         let timer = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
-            guard let self, let start = self.recordingStart else { return }
-            self.elapsed = Date().timeIntervalSince(start)
+            MainActor.assumeIsolated {
+                guard let self, let start = self.recordingStart else { return }
+                self.elapsed = Date().timeIntervalSince(start)
+            }
         }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
@@ -323,25 +394,33 @@ final class CameraRecorder: NSObject, ObservableObject {
         timer = nil
     }
 
+    /// 补光能力取决于当前设备，读取在队列侧完成
     private func refreshCapabilities() {
-        let device = videoInput?.device
-        isTorchAvailable = device?.hasTorch == true && device?.isTorchAvailable == true
-        isTorchOn = device?.torchMode == .on
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            let device = self.videoInput?.device
+            let isAvailable = device?.hasTorch == true && device?.isTorchAvailable == true
+            let isOn = device?.torchMode == .on
+            self.onMain {
+                self.isTorchAvailable = isAvailable
+                self.isTorchOn = isOn
+            }
+        }
     }
 
     // MARK: - 中断处理
 
     private func observeInterruptions() {
         let center = NotificationCenter.default
-        center.addObserver(self, selector: #selector(sessionWasInterrupted), name: .AVCaptureSessionWasInterrupted, object: session)
-        center.addObserver(self, selector: #selector(sessionInterruptionEnded), name: .AVCaptureSessionInterruptionEnded, object: session)
-        center.addObserver(self, selector: #selector(sessionRuntimeError), name: .AVCaptureSessionRuntimeError, object: session)
+        center.addObserver(self, selector: #selector(sessionWasInterrupted), name: AVCaptureSession.wasInterruptedNotification, object: session)
+        center.addObserver(self, selector: #selector(sessionInterruptionEnded), name: AVCaptureSession.interruptionEndedNotification, object: session)
+        center.addObserver(self, selector: #selector(sessionRuntimeError), name: AVCaptureSession.runtimeErrorNotification, object: session)
     }
 
     private func stopObservingInterruptions() {
-        NotificationCenter.default.removeObserver(self, name: .AVCaptureSessionWasInterrupted, object: session)
-        NotificationCenter.default.removeObserver(self, name: .AVCaptureSessionInterruptionEnded, object: session)
-        NotificationCenter.default.removeObserver(self, name: .AVCaptureSessionRuntimeError, object: session)
+        NotificationCenter.default.removeObserver(self, name: AVCaptureSession.wasInterruptedNotification, object: session)
+        NotificationCenter.default.removeObserver(self, name: AVCaptureSession.interruptionEndedNotification, object: session)
+        NotificationCenter.default.removeObserver(self, name: AVCaptureSession.runtimeErrorNotification, object: session)
     }
 
     /// 来电、闹钟等打断时先把已拍的内容保存下来
@@ -358,7 +437,7 @@ final class CameraRecorder: NSObject, ObservableObject {
 
     @objc private func sessionRuntimeError(_ notification: Notification) {
         if movieOutput.isRecording { stopRecording() }
-        DispatchQueue.main.async {
+        onMain {
             self.status = .unavailable("相机被系统中断，请关闭后重新打开。")
         }
     }
@@ -373,7 +452,7 @@ extension CameraRecorder: AVCaptureFileOutputRecordingDelegate {
         didStartRecordingTo fileURL: URL,
         from connections: [AVCaptureConnection]
     ) {
-        DispatchQueue.main.async { self.isRecording = true }
+        onMain { self.isRecording = true }
     }
 
     func fileOutput(
@@ -393,14 +472,16 @@ extension CameraRecorder: AVCaptureFileOutputRecordingDelegate {
             result = .success(outputFileURL)
         }
 
-        DispatchQueue.main.async {
+        // `Error` 不是 Sendable，套壳带到主线程；随后只在主线程使用
+        let boxed = MainOnly(value: result)
+        onMain {
             self.isRecording = false
             self.stopTimer()
             self.recordingStart = nil
             self.elapsed = 0
             let handler = self.completion
             self.completion = nil
-            handler?(result)
+            handler?(boxed.value)
         }
     }
 }

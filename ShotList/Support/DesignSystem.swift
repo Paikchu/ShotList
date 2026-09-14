@@ -130,7 +130,7 @@ struct SectionHeader: View {
     }
 }
 
-extension TimeInterval {
+nonisolated extension TimeInterval {
     /// 「3 分 20 秒」形式
     var slDurationText: String {
         let total = Int(rounded())
@@ -142,7 +142,7 @@ extension TimeInterval {
     }
 }
 
-extension Int64 {
+nonisolated extension Int64 {
     /// 文件体积文本
     var slByteText: String {
         let formatter = ByteCountFormatter()

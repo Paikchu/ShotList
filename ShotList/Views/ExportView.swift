@@ -291,25 +291,21 @@ struct ExportView: View {
         let clipsDirectory = store.clipsDirectory
         let currentScope = scope
 
-        DispatchQueue.global(qos: .userInitiated).async {
-            let outcome = Result {
-                try ExportPackageBuilder.build(
-                    shots: shots,
-                    clipsDirectory: clipsDirectory,
-                    scope: currentScope
-                )
-            }
+        Task {
+            let outcome = await ExportPackageBuilder.buildOffMain(
+                shots: shots,
+                clipsDirectory: clipsDirectory,
+                scope: currentScope
+            )
 
-            DispatchQueue.main.async {
-                isBuilding = false
-                switch outcome {
-                case .success(let value):
-                    package = value
-                    Haptics.success()
-                case .failure(let error):
-                    Haptics.error()
-                    errorMessage = error.localizedDescription
-                }
+            isBuilding = false
+            switch outcome {
+            case .success(let value):
+                package = value
+                Haptics.success()
+            case .failure(let message):
+                Haptics.error()
+                errorMessage = message
             }
         }
     }

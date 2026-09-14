@@ -2,7 +2,8 @@
 
 一个纯本地单机的 iOS 应用，用来在拍 Vlog 之前把分镜列清楚、拍的时候逐条补拍、拍完统一导出。
 
-- **平台**：iOS 17.0+（原生 SwiftUI，iPhone 竖屏）
+- **平台**：iOS 26.0+（原生 SwiftUI，iPhone 竖屏）
+- **语言**：Swift 6 语言模式 + 完整严格并发检查（数据竞争在编译期拦下）
 - **网络**：零网络请求。所有分镜数据与视频只保存在这台设备上
 - **界面语言**：简体中文
 - **包标识**：`com.max.ShotList`
@@ -195,7 +196,9 @@ project.yml                          XcodeGen 工程定义（权限键、部署�
 
 ## Apple 开发标准与无障碍
 
-- **导航**：`TabView` 三个顶层标签，无抽屉菜单；`NavigationStack` 层级导航；不覆盖系统返回手势
+- **导航**：`TabView` 三个顶层标签（iOS 26 新版 `Tab` 写法），无抽屉菜单；
+  列表向下滚动时标签栏自动收起、回到顶部再展开；
+  `NavigationStack` 层级导航；不覆盖系统返回手势
 - **触控**：所有可点元素不小于 44×44pt；间距遵循 8pt 网格（4pt 仅用于细调）
 - **排版**：全部使用语义化文字样式，支持 Dynamic Type；无障碍字号下卡片自动改为上下布局
 - **颜色**：全部使用语义色与系统色；自定义强调色在资源目录里提供了深色变体
@@ -210,6 +213,39 @@ project.yml                          XcodeGen 工程定义（权限键、部署�
   二次确认并标红；关键操作配合触觉反馈；导入过程用轻量胶囊提示，不用全屏 spinner
 - **生命周期**：录制中切后台或来电会先保存已拍片段；回看结束回到取景时会切回录音模式，
   避免续拍丢声音
+
+---
+
+## 工具链与并发
+
+工程按 Xcode 26 的当前默认组合配置（见 `project.yml`）：
+
+| 设置 | 值 | 作用 |
+|---|---|---|
+| `IPHONEOS_DEPLOYMENT_TARGET` | `26.0` | 以 iOS 26 为开发基线，不再需要可用性分支 |
+| `SWIFT_VERSION` | `6.0` | Swift 6 语言模式，数据竞争在编译期检查 |
+| `SWIFT_STRICT_CONCURRENCY` | `complete` | 完整严格并发检查 |
+| `SWIFT_APPROACHABLE_CONCURRENCY` | `YES` | 贴向主协程的并发默认值 |
+| `SWIFT_DEFAULT_ACTOR_ISOLATION` | `MainActor` | 未标注隔离的代码默认落在主协程 |
+
+「默认落在主协程」意味着**纯数据与后台工作必须显式说明自己不属于主协程**，否则编译器会拦下来。
+这条规则把线程归属推到了类型签名上：
+
+- **模型**：`Shot`、`ShotClip`、`ShotStatus`、`SLDateText`、`SLTimecode`、
+  `ExportPackageBuilder` 全是 `nonisolated` 值类型 —— 读一条分镜不该要求主线程，
+  导出打包也因此能在后台跑
+- **数据仓库**：`ShotStore` 显式 `@MainActor`，是界面状态的唯一入口
+- **导出打包**：`buildOffMain` 标注 `@concurrent`，把复制视频、压缩这些重 I/O
+  真正放上后台线程；结果以 `Sendable` 的形式回传给界面
+- **缩略图**：缓存由主协程持有，首帧解码走 `@concurrent`，
+  界面拿到的永远是主线程上的 `UIImage`
+- **相机**：`AVCaptureSession.startRunning()` 是阻塞调用，不能放主线程。
+  控制器本身 `nonisolated`，自己划分三块归属 —— 界面状态显式 `@MainActor`（编译器保证只有主线程能写）、
+  会话状态只在独立串行队列上访问、预览层等主线程资源只在主线程访问；
+  跨域传递用最小的 `MainOnly` 壳标注，而不是给整个类打开不安全开关
+
+> 一个容易踩的坑：`nonisolated async` 函数在「贴主协程」模式下会**留在调用方的主线程上**，
+> 想真正离开主线程必须标注 `@concurrent`。
 
 ---
 

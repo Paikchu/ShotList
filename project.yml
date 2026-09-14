@@ -4,7 +4,7 @@ options:
   minimumXcodeGenVersion: "2.35.0"
   bundleIdPrefix: com.max
   deploymentTarget:
-    iOS: "17.0"
+    iOS: "26.0"
   createIntermediateGroups: true
   groupSortPosition: top
   generateEmptyDirectories: false
@@ -12,7 +12,7 @@ options:
 
 attributes:
   ORGANIZATIONNAME: "Max"
-  LastUpgradeCheck: "2600"
+  LastUpgradeCheck: "2660"
 
 configs:
   Debug: debug
@@ -20,16 +20,21 @@ configs:
 
 settings:
   base:
-    SWIFT_VERSION: "5.0"
-    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
-    SWIFT_STRICT_CONCURRENCY: minimal
+    # Swift 6 语言模式：数据竞争在编译期检查，而不是留到线上偶发崩溃
+    SWIFT_VERSION: "6.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "26.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    # 贴进主协程的并发默认值（Xcode 26 新建工程的默认组合）：
+    # 未标注隔离的代码默认落在主协程，后台工作必须显式说明
+    SWIFT_APPROACHABLE_CONCURRENCY: YES
+    SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
     CLANG_ENABLE_MODULES: YES
 
 targets:
   ShotList:
     type: application
     platform: iOS
-    deploymentTarget: "17.0"
+    deploymentTarget: "26.0"
     sources:
       - path: ShotList
         excludes:

@@ -24,8 +24,8 @@ enum Haptics {
     }
 }
 
-/// 视频元数据读取。
-enum VideoMetadata {
+/// 视频元数据读取。无状态，因此不属于主协程。
+nonisolated enum VideoMetadata {
     /// 读取视频时长（秒）
     static func duration(of url: URL) async -> TimeInterval? {
         let asset = AVURLAsset(url: url)
@@ -37,6 +37,10 @@ enum VideoMetadata {
 }
 
 /// 视频首帧缩略图加载器，带内存缓存，避免列表滚动时重复解码。
+///
+/// 隔离域是刻意固定的：缓存只由主线程读写，解码（真正耗时的部分）用
+/// `@concurrent` 丢到后台线程，完成后再回主线程写缓存并回调。
+@MainActor
 final class ThumbnailLoader {
     static let shared = ThumbnailLoader()
 
@@ -50,7 +54,7 @@ final class ThumbnailLoader {
         cache.object(forKey: url.path as NSString)
     }
 
-    /// 异步生成缩略图，回到主线程回调
+    /// 生成缩略图并在主线程回调；命中缓存时立即回调
     func thumbnail(for url: URL, completion: @escaping (UIImage?) -> Void) {
         let key = url.path as NSString
         if let cached = cache.object(forKey: key) {
@@ -58,12 +62,12 @@ final class ThumbnailLoader {
             return
         }
 
-        Task.detached(priority: .userInitiated) { [weak self] in
-            let image = await Self.makeThumbnail(for: url)
-            if let image, let self {
-                self.cache.setObject(image, forKey: key)
+        Task {
+            let image = await Self.decodeThumbnail(for: url)
+            if let image {
+                cache.setObject(image, forKey: key)
             }
-            await MainActor.run { completion(image) }
+            completion(image)
         }
     }
 
@@ -71,7 +75,10 @@ final class ThumbnailLoader {
         cache.removeObject(forKey: url.path as NSString)
     }
 
-    private static func makeThumbnail(for url: URL) async -> UIImage? {
+    /// 解码首帧。`@concurrent` 保证它离开主线程；
+    /// 放在这里而不是调用处，是为了让「缓存只由主线程碰」这条约束保持完整。
+    @concurrent
+    private static func decodeThumbnail(for url: URL) async -> UIImage? {
         let asset = AVURLAsset(url: url)
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
@@ -80,13 +87,7 @@ final class ThumbnailLoader {
         generator.requestedTimeToleranceAfter = CMTime(seconds: 0.4, preferredTimescale: 600)
 
         let time = CMTime(seconds: 0.2, preferredTimescale: 600)
-
-        if #available(iOS 18.0, *) {
-            guard let cgImage = try? await generator.image(at: time).image else { return nil }
-            return UIImage(cgImage: cgImage)
-        } else {
-            guard let cgImage = try? generator.copyCGImage(at: time, actualTime: nil) else { return nil }
-            return UIImage(cgImage: cgImage)
-        }
+        guard let cgImage = try? await generator.image(at: time).image else { return nil }
+        return UIImage(cgImage: cgImage)
     }
 }

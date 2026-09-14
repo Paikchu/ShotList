@@ -1,37 +1,41 @@
 import SwiftUI
 
 /// 三个顶层标签：分镜清单、今日状态、统一导出。
-/// 使用 `TabView` 而非抽屉菜单，保证功能可发现性。
+///
+/// 用 `TabView` 而不是抽屉菜单，保证功能可发现性；标签栏在列表向下滚动时
+/// 自动收起，把纵向空间让给内容，回到顶部再展开（iOS 26）。
 struct RootTabView: View {
-    enum Tab: String {
+    /// 标签标识。原始值保持稳定，换了写法也不会丢掉用户上次停留的标签。
+    enum TabSelection: String {
         case shots, today, export
     }
 
     @EnvironmentObject private var store: ShotStore
-    @SceneStorage("root.selectedTab") private var selectedTabRaw: String = Tab.shots.rawValue
+    @SceneStorage("root.selectedTab") private var selectedTabRaw: String = TabSelection.shots.rawValue
 
-    private var selectedTab: Binding<Tab> {
+    private var selectedTab: Binding<TabSelection> {
         Binding(
-            get: { Tab(rawValue: selectedTabRaw) ?? .shots },
+            get: { TabSelection(rawValue: selectedTabRaw) ?? .shots },
             set: { selectedTabRaw = $0.rawValue }
         )
     }
 
     var body: some View {
         TabView(selection: selectedTab) {
-            ShotListView()
-                .tabItem { Label("分镜", systemImage: "film.stack") }
-                .tag(Tab.shots)
+            Tab("分镜", systemImage: "film.stack", value: TabSelection.shots) {
+                ShotListView()
+            }
 
-            TodayView()
-                .tabItem { Label("今日", systemImage: "checklist") }
-                .tag(Tab.today)
-                .badge(store.todayPendingCount)
+            Tab("今日", systemImage: "checklist", value: TabSelection.today) {
+                TodayView()
+            }
+            .badge(store.todayPendingCount)
 
-            ExportView()
-                .tabItem { Label("导出", systemImage: "square.and.arrow.up") }
-                .tag(Tab.export)
+            Tab("导出", systemImage: "square.and.arrow.up", value: TabSelection.export) {
+                ExportView()
+            }
         }
+        .tabBarMinimizeBehavior(.onScrollDown)
     }
 }
 

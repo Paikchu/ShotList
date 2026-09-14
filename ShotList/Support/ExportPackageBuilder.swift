@@ -1,7 +1,7 @@
 import Foundation
 
 /// 导出范围
-enum ExportScope: String, CaseIterable, Identifiable {
+nonisolated enum ExportScope: String, CaseIterable, Identifiable {
     /// 只导出已经拍好的镜头
     case recordedOnly
     /// 导出全部分镜，未拍摄的镜头在清单里标注
@@ -18,7 +18,7 @@ enum ExportScope: String, CaseIterable, Identifiable {
 }
 
 /// 一次导出产出的文件包
-struct ExportPackage: Identifiable, Equatable {
+nonisolated struct ExportPackage: Identifiable, Equatable {
     let id: UUID
     /// 打包好的 zip 位置
     let zipURL: URL
@@ -38,6 +38,15 @@ struct ExportPackage: Identifiable, Equatable {
         parts.append(totalDuration.slDurationText)
         return parts.joined(separator: " · ")
     }
+}
+
+/// 打包结果，用于从后台线程回传到主线程。
+///
+/// 这里不能用 `Result`：`any Error` 不满足 `Sendable`，跨不过隔离边界。
+/// 失败信息在回传前退化成一段文本，界面上本来就是直接展示它。
+enum ExportOutcome: Sendable {
+    case success(ExportPackage)
+    case failure(String)
 }
 
 enum ExportError: LocalizedError {
@@ -72,10 +81,31 @@ enum ExportError: LocalizedError {
 /// └── 导出说明.txt
 /// ```
 /// 视频按编号加前缀命名，这样导入剪映后素材顺序与分镜顺序一致。
-enum ExportPackageBuilder {
+///
+/// 整个类型是 `nonisolated`：它不持有状态，只按入参算结果，
+/// 因此可以在任意线程上跑，不必占用主协程。
+nonisolated enum ExportPackageBuilder {
 
     /// 备用片段子目录名
     static let alternateFolderName = "备用片段"
+
+    /// 在后台线程打包。
+    ///
+    /// 打包要复制全部视频再压缩，属于重 I/O。用 `@concurrent` 明确要求它跑在
+    /// 后台线程——按「非隔离的 async 函数」的默认语义，它会留在调用方所在的
+    /// 主协程上，界面照样卡住。
+    @concurrent
+    static func buildOffMain(
+        shots: [Shot],
+        clipsDirectory: URL,
+        scope: ExportScope
+    ) async -> ExportOutcome {
+        do {
+            return .success(try build(shots: shots, clipsDirectory: clipsDirectory, scope: scope))
+        } catch {
+            return .failure(error.localizedDescription)
+        }
+    }
 
     static func build(
         shots: [Shot],
