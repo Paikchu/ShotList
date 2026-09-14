@@ -9,6 +9,20 @@
 
 ---
 
+## 界面
+
+| 分镜清单 | 今日拍摄状态 | 统一导出 |
+|---|---|---|
+| ![分镜清单](Docs/screenshots/01-分镜清单.png) | ![今日拍摄状态](Docs/screenshots/02-今日拍摄状态.png) | ![统一导出](Docs/screenshots/03-统一导出.png) |
+
+| 镜头操作面板 | 相机权限说明 | 无摄像头时的降级 |
+|---|---|---|
+| ![镜头操作面板](Docs/screenshots/04-镜头操作面板.png) | ![相机权限说明](Docs/screenshots/05-相机权限说明.png) | ![无摄像头降级](Docs/screenshots/06-模拟器无摄像头降级.png) |
+
+> 截图取自 iPhone 17 模拟器，画面中的视频为 `Tools/seed-simulator.py` 灌入的占位素材。
+
+---
+
 ## 功能
 
 ### 1. 录入编号 1、2、3… 的镜头分镜
