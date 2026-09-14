@@ -9,6 +9,11 @@ import SwiftUI
 struct ShotCardView: View {
     let shot: Shot
     let clipURL: URL?
+    /// 编号是否由卡片自己承担。
+    ///
+    /// 「分镜」页把编号放在左侧的时间线节点上，卡片这一行让给分镜描述，因此传 `false`；
+    /// 「今日」页没有时间线，编号仍旧由卡片承担。
+    var showsNumber: Bool = true
     var onTap: () -> Void
 
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -43,13 +48,17 @@ struct ShotCardView: View {
                 details
             }
         } else {
-            HStack(alignment: .top, spacing: SLSpacing.medium) {
+            HStack(alignment: hasTitleRow ? .top : .center, spacing: SLSpacing.medium) {
                 thumbnail(size: SLSize.thumbnail)
                 details
                 Spacer(minLength: 0)
             }
         }
     }
+
+    /// 卡片是否有主行。分镜页的编号在时间线上，没写描述时只剩一行提示，
+    /// 这一行跟缩略图居中对齐才不会吊在顶上。
+    private var hasTitleRow: Bool { showsNumber || shot.hasNote }
 
     private func thumbnail(size: CGSize) -> some View {
         ClipThumbnailView(
@@ -62,29 +71,12 @@ struct ShotCardView: View {
 
     private var details: some View {
         VStack(alignment: .leading, spacing: SLSpacing.tiny) {
-            HStack(alignment: .firstTextBaseline, spacing: SLSpacing.small) {
-                Text("镜头 \(shot.paddedNumber)")
-                    .font(.headline)
-                    .foregroundStyle(.primary)
+            if hasTitleRow {
+                titleRow
 
-                Spacer(minLength: SLSpacing.small)
-
-                if let recordedAt = shot.shortRecordedAtText {
-                    Text(recordedAt)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .layoutPriority(1)
+                if showsNumber, shot.hasNote {
+                    noteText
                 }
-            }
-
-            if shot.hasNote {
-                Text(shot.note)
-                    .font(.subheadline)
-                    .foregroundStyle(.primary)
-                    .lineLimit(3)
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
             }
 
             metaRow
@@ -92,19 +84,62 @@ struct ShotCardView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// 主行：编号（今日页）或分镜描述（分镜页），这一行整行都留给它
+    private var titleRow: some View {
+        HStack(alignment: .firstTextBaseline, spacing: SLSpacing.small) {
+            if showsNumber {
+                Text("镜头 \(shot.paddedNumber)")
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+            } else {
+                Text(shot.note)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                    .lineLimit(3)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var noteText: some View {
+        Text(shot.note)
+            .font(.subheadline)
+            .foregroundStyle(.primary)
+            .lineLimit(3)
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
     @ViewBuilder
     private var metaRow: some View {
-        if shot.hasClip {
-            if shot.clipCount > 1 {
-                Text("共 \(shot.clipCount) 段 · 总时长 \(shot.totalDuration.slDurationText)")
+        HStack(alignment: .firstTextBaseline, spacing: SLSpacing.small) {
+            if shot.hasClip {
+                if shot.clipCount > 1 {
+                    // 条数已经标在缩略图角标上，这里只补一个总数
+                    Text("总时长 \(shot.totalDuration.slDurationText)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            } else {
+                Label("点击拍摄或导入视频", systemImage: "video.badge.plus")
+                    .font(.caption)
+                    .foregroundStyle(Color.accentColor)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: SLSpacing.small)
+
+            if let recordedAt = shot.shortRecordedAtText {
+                Text(recordedAt)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
-        } else {
-            Label("点击拍摄或导入视频", systemImage: "video.badge.plus")
-                .font(.caption)
-                .foregroundStyle(Color.accentColor)
         }
     }
 }

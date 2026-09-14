@@ -4,20 +4,24 @@
 一个镜头可以有多条片段，这里给镜头 1 塞了 3 条，用来验证多片段相关的界面。
 
 用法：
-    python3 Tools/seed-simulator.py
+    python3 Tools/seed-simulator.py            # 只有一台模拟器启动时
+    python3 Tools/seed-simulator.py <UDID>     # 同时启动多台时，指定设备
 """
 import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 import uuid
 
 BUNDLE = "com.max.ShotList"
 REFERENCE_EPOCH_OFFSET = 978307200  # 2001-01-01 UTC 与 Unix epoch 的差值
 
+device = sys.argv[1] if len(sys.argv) > 1 else "booted"
+
 container = subprocess.check_output(
-    ["xcrun", "simctl", "get_app_container", "booted", BUNDLE, "data"],
+    ["xcrun", "simctl", "get_app_container", device, BUNDLE, "data"],
     text=True,
 ).strip()
 print("容器路径:", container)

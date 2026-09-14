@@ -28,6 +28,10 @@ enum SLSize {
     static let headerThumbnail = CGSize(width: 108, height: 72)
     /// 卡片上的编号徽标
     static let numberBadge: CGFloat = 32
+    /// 时间线导轨的列宽（竖线与节点都在这条列里居中）
+    static let timelineRailWidth: CGFloat = 38
+    /// 时间线上的编号节点直径
+    static let timelineNode: CGFloat = 26
     /// 相机录制按钮外径
     static let recordButton: CGFloat = 74
 }
@@ -43,6 +47,8 @@ struct NumberBadge: View {
     var body: some View {
         Text("\(number)")
             .font(.subheadline.weight(.bold).monospacedDigit())
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
             .foregroundStyle(isRecorded ? Color.white : Color.accentColor)
             .frame(width: size, height: size)
             .background {
@@ -53,6 +59,47 @@ struct NumberBadge: View {
                 Circle().strokeBorder(Color.accentColor.opacity(isRecorded ? 0 : 0.35), lineWidth: 1)
             }
             .accessibilityHidden(true)
+    }
+}
+
+/// 时间线导轨：卡片左侧的一条竖线，加一个节点。
+///
+/// 每一行画「上段竖线 + 节点 + 下段竖线」三截，一行的下段正好接上下一行的上段，
+/// 于是整份清单看起来是一条贯通到底的竖线——顺序感就来自这条不断的线。
+/// 首行不画上段、末行不画下段，让线从第一个镜头开始、到最后一个镜头结束。
+struct TimelineRail<Node: View>: View {
+    var isFirst: Bool
+    var isLast: Bool
+    /// 节点上沿距行顶的距离，用来把节点对齐到卡片里的第一行文字
+    var nodeTopPadding: CGFloat
+    @ViewBuilder var node: Node
+
+    private let lineWidth: CGFloat = 2
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if isFirst {
+                Color.clear.frame(height: nodeTopPadding)
+            } else {
+                line().frame(height: nodeTopPadding)
+            }
+
+            node
+
+            if isLast {
+                Color.clear.frame(maxHeight: .infinity)
+            } else {
+                line().frame(maxHeight: .infinity)
+            }
+        }
+        .frame(width: SLSize.timelineRailWidth)
+        .accessibilityHidden(true)
+    }
+
+    private func line() -> some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.12))
+            .frame(width: lineWidth)
     }
 }
 

@@ -17,7 +17,7 @@ struct ShotListView: View {
                 }
             }
             .navigationTitle("分镜")
-            .navigationBarTitleDisplayMode(.large)
+            .toolbarTitleDisplayMode(.inlineLarge)
             .toolbar { toolbarContent }
             .alert("删除这个分镜？", isPresented: deletionBinding, presenting: pendingDeletion) { shot in
                 Button("删除", role: .destructive) { store.delete(shot) }
@@ -39,37 +39,7 @@ struct ShotListView: View {
         List {
             Section {
                 ForEach(store.shots) { shot in
-                    ShotCardView(shot: shot, clipURL: store.clipURL(for: shot)) {
-                        Haptics.impact(.light)
-                        sheet = .options(shot)
-                    }
-                    .listRowInsets(
-                        EdgeInsets(
-                            top: SLSpacing.tiny,
-                            leading: SLSpacing.medium,
-                            bottom: SLSpacing.tiny,
-                            trailing: SLSpacing.medium
-                        )
-                    )
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button(role: .destructive) {
-                            pendingDeletion = shot
-                        } label: {
-                            Label("删除", systemImage: "trash")
-                        }
-
-                        Button {
-                            sheet = .editor(shot)
-                        } label: {
-                            Label("编辑", systemImage: "square.and.pencil")
-                        }
-                        .tint(.indigo)
-                    }
-                    .contextMenu {
-                        contextMenu(for: shot)
-                    }
+                    shotRow(shot)
                 }
                 .onMove { source, destination in
                     store.move(fromOffsets: source, toOffset: destination)
@@ -79,6 +49,67 @@ struct ShotListView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(Color(.systemGroupedBackground))
+    }
+
+    /// 一行 = 左侧时间线导轨 + 卡片。
+    ///
+    /// 行的上下内边距交给卡片自己拿捏（导轨要连着画到行边缘，才能和上下行接成一条线）。
+    private func shotRow(_ shot: Shot) -> some View {
+        HStack(alignment: .top, spacing: 0) {
+            TimelineRail(
+                isFirst: shot.id == store.shots.first?.id,
+                isLast: shot.id == store.shots.last?.id,
+                nodeTopPadding: railNodeTopPadding
+            ) {
+                NumberBadge(
+                    number: shot.number,
+                    isRecorded: shot.hasClip,
+                    size: SLSize.timelineNode
+                )
+            }
+
+            ShotCardView(
+                shot: shot,
+                clipURL: store.clipURL(for: shot),
+                showsNumber: false
+            ) {
+                Haptics.impact(.light)
+                sheet = .options(shot)
+            }
+            .padding(.vertical, SLSpacing.tiny)
+        }
+        .listRowInsets(
+            EdgeInsets(
+                top: 0,
+                leading: 0,
+                bottom: 0,
+                trailing: SLSpacing.medium
+            )
+        )
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button(role: .destructive) {
+                pendingDeletion = shot
+            } label: {
+                Label("删除", systemImage: "trash")
+            }
+
+            Button {
+                sheet = .editor(shot)
+            } label: {
+                Label("编辑", systemImage: "square.and.pencil")
+            }
+            .tint(.indigo)
+        }
+        .contextMenu {
+            contextMenu(for: shot)
+        }
+    }
+
+    /// 节点上沿距行顶的距离：行内边距 4 + 卡片内边距 16 + 首行文字半高 10 − 节点半径
+    private var railNodeTopPadding: CGFloat {
+        SLSpacing.tiny + SLSpacing.medium + 10 - SLSize.timelineNode / 2
     }
 
     @ViewBuilder
@@ -103,6 +134,25 @@ struct ShotListView: View {
             Haptics.impact(.light)
         } label: {
             Label("在下方复制一个", systemImage: "plus.square.on.square")
+        }
+
+        let index = store.index(of: shot.id)
+        if store.shots.count > 1, let index {
+            Section {
+                Button {
+                    move(from: index, to: index - 1)
+                } label: {
+                    Label("上移一位", systemImage: "arrow.up")
+                }
+                .disabled(index == 0)
+
+                Button {
+                    move(from: index, to: index + 1)
+                } label: {
+                    Label("下移一位", systemImage: "arrow.down")
+                }
+                .disabled(index == store.shots.count - 1)
+            }
         }
 
         let urls = store.clipURLs(for: shot)
@@ -151,12 +201,6 @@ struct ShotListView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        ToolbarItem(placement: .topBarLeading) {
-            if !store.shots.isEmpty {
-                EditButton()
-            }
-        }
-
         ToolbarItem(placement: .topBarTrailing) {
             Button {
                 addShot()
@@ -197,6 +241,16 @@ struct ShotListView: View {
         Haptics.impact(.light)
         let shot = store.addShot()
         sheet = .editor(shot)
+    }
+
+    /// 上下挪一位。`move(fromOffsets:toOffset:)` 的目标位置是「要插到谁前面」，
+    /// 往下挪时因为元素先被摘掉了，目标位要再往后一格。
+    private func move(from index: Int, to target: Int) {
+        Haptics.impact(.light)
+        store.move(
+            fromOffsets: IndexSet(integer: index),
+            toOffset: target > index ? target + 1 : target
+        )
     }
 
     private func addShots(count: Int) {
