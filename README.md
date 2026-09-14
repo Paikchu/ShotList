@@ -12,9 +12,9 @@
 
 ## 界面
 
-| 分镜清单 | 今日拍摄状态 | 统一导出 |
+| 分镜清单 | 历史记录 | 统一导出 |
 |---|---|---|
-| ![分镜清单](Docs/screenshots/01-分镜清单.png) | ![今日拍摄状态](Docs/screenshots/02-今日拍摄状态.png) | ![统一导出](Docs/screenshots/03-统一导出.png) |
+| ![分镜清单](Docs/screenshots/01-分镜清单.png) | ![历史记录](Docs/screenshots/08-历史记录-今天.png) | ![统一导出](Docs/screenshots/03-统一导出.png) |
 
 | 镜头面板与片段列表 | 编辑页（实时预览导出文件名） | 相机权限说明 |
 |---|---|---|
@@ -50,10 +50,16 @@
 - 每条可以单独播放、单独分享、单独删除；也可以一键清空这个镜头的全部片段
 - 卡片缩略图与导出主素材取**最新一条**，更早的片段收进导出包的「备用片段」目录
 
-### 4. 今日拍摄状态一目了然
-「今日」标签页给出日期、环形进度、三个可点击的统计块（今日已拍 / 往日已拍 / 还没拍），
-以及按状态筛选的镜头列表。点任意一张卡片就能直接补拍。
+### 4. 按日期回看拍摄记录
+「历史」标签页用系统月历选日期（最晚选到今天），选中哪天就看哪天：环形进度、
+三个可点击的统计块（当天已拍 / 其他天 / 还没拍）与按状态筛选的镜头列表。
+默认落在「当天已拍」——进来就是「这一天拍了什么」；回看历史日期时，卡片按
+**当天最新一条**片段展示，角标条数与总时长也只算当天拍下的几条。
+日历下方的箭头可以前后翻一天；选中今天时保留「下一个」补拍提示。
 状态的表达始终是「图标 + 文字 + 颜色」三重信息，不依赖颜色单独区分。
+
+![回看 9月14日](Docs/screenshots/09-历史记录-回看9月14日.png)
+![回看 9月12日 · 当天筛选](Docs/screenshots/10-历史记录-回看9月12日-当天筛选.png)
 
 ### 5. 应用内直接调用原生摄像
 点卡片 → 再拍一条，即可在当前镜头里直接录像（AVFoundation）：
@@ -164,7 +170,7 @@ ShotList/
 │   ├── CameraRecorder.swift         AVFoundation 会话、录制、前后摄、补光、中断处理
 │   └── CameraPreview.swift          预览层桥接到 SwiftUI
 ├── Views/
-│   ├── RootTabView.swift            分镜 / 今日 / 导出 三标签
+│   ├── RootTabView.swift            分镜 / 历史 / 导出 三标签
 │   ├── ShotListView.swift           分镜清单
 │   ├── ShotCardView.swift           可点击添加视频的模块卡片
 │   ├── ShotEditorView.swift         编辑分镜描述与编号
@@ -173,7 +179,7 @@ ShotList/
 │   ├── ClipThumbnailView.swift      首帧缩略图（含时长与条数角标）
 │   ├── CameraCaptureView.swift      应用内相机（含权限说明与降级路径）
 │   ├── ClipPlayerScreen.swift       整屏播放某一条片段
-│   ├── TodayView.swift              今日拍摄状态
+│   ├── HistoryView.swift            历史记录：按日期回看每天的拍摄记录
 │   └── ExportView.swift             统一导出
 ├── Support/
 │   ├── DesignSystem.swift           间距、尺寸、编号徽标、进度环、时间线导轨等基础组件
