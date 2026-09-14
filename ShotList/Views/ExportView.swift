@@ -137,7 +137,8 @@ struct ExportView: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(package.fileName)
-                        .font(.subheadline.weight(.semibold))
+                        // semibold 统一为 headline（17pt）：与其他页面的主文本同级同大
+                        .font(.headline)
                         .lineLimit(2)
                     Text(package.summary)
                         .font(.caption)
