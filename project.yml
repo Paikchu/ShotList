@@ -1,0 +1,72 @@
+name: ShotList
+
+options:
+  minimumXcodeGenVersion: "2.35.0"
+  bundleIdPrefix: com.max
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+  generateEmptyDirectories: false
+  developmentLanguage: zh-Hans
+
+attributes:
+  ORGANIZATIONNAME: "Max"
+  LastUpgradeCheck: "2600"
+
+configs:
+  Debug: debug
+  Release: release
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+    SWIFT_STRICT_CONCURRENCY: minimal
+    CLANG_ENABLE_MODULES: YES
+
+targets:
+  ShotList:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: ShotList
+        excludes:
+          - "Info.plist"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.max.ShotList
+        PRODUCT_NAME: ShotList
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        TARGETED_DEVICE_FAMILY: "1"
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+        ENABLE_PREVIEWS: YES
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: NO
+        ENABLE_USER_SCRIPT_SANDBOXING: YES
+    info:
+      path: ShotList/Info.plist
+      properties:
+        CFBundleDisplayName: 分镜助手
+        CFBundleName: ShotList
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        LSRequiresIPhoneOS: true
+        UIUserInterfaceStyle: Automatic
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        NSCameraUsageDescription: 分镜助手需要使用摄像头，才能在你的分镜里直接录制视频。
+        NSMicrophoneUsageDescription: 分镜助手需要使用麦克风，才能为分镜视频录制现场声音。
+        NSPhotoLibraryUsageDescription: 分镜助手需要访问相册，才能把已经拍好的视频导入到分镜中。
