@@ -24,3 +24,6 @@ Package.resolved
 
 # XcodeGen 生成日志
 *.xcodegen.log
+
+# 本地工作记录（项目级技能 .workbuddy/skills/ 仍可提交）
+.workbuddy/memory/
