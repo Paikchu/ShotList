@@ -141,6 +141,11 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
         }
     }
 
+    /// 关闭相机并收尾。
+    ///
+    /// 标 `@MainActor` 是因为它要碰计时器与 `recordingStart` 这两个主线程资源；
+    /// 会话侧的收尾自己会跳 `sessionQueue`，因此标注不影响它的线程语义。
+    @MainActor
     func stop() {
         stopTimer()
         recordingStart = nil
@@ -162,6 +167,9 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
 
     // MARK: - 预览层
 
+    /// 预览层、旋转协调器与计时器都只在主线程访问，因此这几个方法统一标
+    /// `@MainActor`——让签名（而不是类头的注释）来保证线程归属。
+    @MainActor
     func attachPreviewLayer(_ layer: AVCaptureVideoPreviewLayer) {
         previewLayer = layer
         layer.session = session
@@ -169,6 +177,7 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
         updateRotation()
     }
 
+    @MainActor
     func detachPreviewLayer() {
         previewAngleObservation = nil
         captureAngleObservation = nil
@@ -342,6 +351,7 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
     ///
     /// 设备对象在 sessionQueue 上取（那是它的归属地），协调器与预览层必须回到
     /// 主线程操作，因此中间隔着一次带壳的传递。
+    @MainActor
     private func updateRotation() {
         previewAngleObservation = nil
         captureAngleObservation = nil
@@ -357,6 +367,7 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
         }
     }
 
+    @MainActor
     private func installRotation(device: AVCaptureDevice, layer: AVCaptureVideoPreviewLayer) {
         let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: layer)
         rotationCoordinator = coordinator
@@ -417,6 +428,7 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
         self.timer = timer
     }
 
+    @MainActor
     private func stopTimer() {
         timer?.invalidate()
         timer = nil

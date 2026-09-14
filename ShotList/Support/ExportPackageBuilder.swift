@@ -24,7 +24,10 @@ nonisolated struct ExportPackage: Identifiable, Equatable {
     let zipURL: URL
     /// 包内片段数量
     let clipCount: Int
-    /// 未拍摄的镜头数量
+    /// 没有可导出文件的镜头数量。
+    ///
+    /// 判据是**磁盘上有没有文件**，与包内 `导出说明.txt` 的「仍待补拍的镜头」
+    /// 同源，因此两个数字永远一致。
     let pendingCount: Int
     let totalDuration: TimeInterval
     let byteCount: Int64
@@ -124,7 +127,6 @@ nonisolated enum ExportPackageBuilder {
         guard !recorded.isEmpty else { throw ExportError.noClips }
 
         let included: [Shot] = scope == .recordedOnly ? recorded : shots
-        let pending = included.filter { !$0.hasClip }
 
         let now = Date()
         let folderName = "分镜导出_\(Self.dayToken(now))"
@@ -207,6 +209,13 @@ nonisolated enum ExportPackageBuilder {
             }
         }
 
+        // 清单行是按**磁盘可用性**判的（`available.isEmpty` → 写一条无文件的行）。
+        // 界面上那句「N 个待拍」必须读同一份结果，所以这里从清单里数，
+        // 不再拿 JSON 的 `hasClip` 单独算一遍——两套判据会在「有记录、无文件」时打架。
+        let pendingCount = manifest.filter { $0.exportedPath == nil }.count
+        let clipCount = manifest.count - pendingCount
+        guard clipCount > 0 else { throw ExportError.noClips }
+
         try Self.writeManifest(manifest, to: folder)
         try Self.writeReadme(manifest: manifest, folderName: folderName, scope: scope, to: folder)
         try Self.writeTextGuide(
@@ -223,8 +232,8 @@ nonisolated enum ExportPackageBuilder {
         return ExportPackage(
             id: UUID(),
             zipURL: zipURL,
-            clipCount: manifest.filter { $0.exportedPath != nil }.count,
-            pendingCount: pending.count,
+            clipCount: clipCount,
+            pendingCount: pendingCount,
             totalDuration: totalDuration,
             byteCount: size,
             createdAt: now

@@ -12,7 +12,6 @@ import UIKit
 struct ClipThumbnailView: View {
     let url: URL?
     var size: CGSize = SLSize.thumbnail
-    var showsPlayGlyph: Bool = true
     /// 叠加在缩略图右下角的时长，例如「0:06」
     var durationText: String?
     /// 这个镜头一共拍了几条，超过 1 条时在左上角标注
@@ -26,7 +25,7 @@ struct ClipThumbnailView: View {
         picture
             .frame(width: size.width, height: size.height)
             .overlay(alignment: .center) {
-                if isRecorded, showsPlayGlyph, image != nil {
+                if isRecorded, image != nil {
                     Image(systemName: "play.circle.fill")
                         .font(.title3)
                         .symbolRenderingMode(.palette)

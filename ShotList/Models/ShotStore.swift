@@ -41,7 +41,6 @@ final class ShotStore: ObservableObject {
         createDirectoryIfNeeded(supportDirectory)
         createDirectoryIfNeeded(clipsDirectory)
         load()
-        refreshStorageStats()
     }
 
     // MARK: - 统计
@@ -81,10 +80,28 @@ final class ShotStore: ObservableObject {
 
     /// 全部片段占用空间（字节）。
     ///
+    /// 只统计**被分镜引用到**的片段，因此和旁边那几个数字（已拍镜头数、段数、
+    /// 总时长）是同一个口径。目录里的未使用文件另有 `orphanBytes`，两者相加
+    /// 才是这个目录真正占的磁盘。
+    ///
     /// 这是**缓存值**，由 `refreshStorageStats()` 在启动与数据变更时刷新。
     /// 视图每次重绘都会读它，若在这里现算，一次重绘就要跨 N 个片段发系统调用
     /// （导出页连无障碍值要读两遍，就是 2×N 次）。
     @Published private(set) var totalClipBytes: Int64 = 0
+
+    /// 目录里有、但没有任何分镜引用的文件。
+    ///
+    /// `Documents` 对「文件」App 与访达开放，用户完全可以把视频直接拖进来；
+    /// 这些文件不进 JSON，于是既不出现在界面上，也不被导出带走。它们确实占着
+    /// 磁盘，所以这里把它们找出来，交给导出页做一个清理入口——不然用户看不到
+    /// 它们，也没有任何办法回收。
+    @Published private(set) var orphanFileNames: [String] = []
+
+    /// 未使用文件占用的空间（字节）
+    @Published private(set) var orphanBytes: Int64 = 0
+
+    /// 未使用文件的数量
+    var orphanFileCount: Int { orphanFileNames.count }
 
     /// 磁盘上实际存在的片段文件名。
     ///
@@ -223,15 +240,6 @@ final class ShotStore: ObservableObject {
         persist()
     }
 
-    func deleteShots(withIDs ids: [Shot.ID]) {
-        for shot in shots where ids.contains(shot.id) {
-            removeClipFiles(of: shot)
-        }
-        shots.removeAll { ids.contains($0.id) }
-        normalize()
-        persist()
-    }
-
     /// 删除全部分镜与片段（用于「清空重来」）
     func deleteEverything() {
         try? fileManager.removeItem(at: clipsDirectory)
@@ -293,66 +301,145 @@ final class ShotStore: ObservableObject {
 
     // MARK: - 持久化
 
-    /// 扫一遍片段目录，刷新「磁盘上存在哪些片段」与「占用空间」两个缓存。
+    /// 扫一遍片段目录，把内存对齐到磁盘实况，并刷新统计缓存。
     ///
-    /// 只在启动、数据变更、以及从后台回到前台（用户可能在「文件」App 里删过
-    /// 片段）时调用。视图读到的都是缓存值，`body` 里不再做同步文件 I/O。
+    /// 这是「启动 / 数据变更 / 从后台回到前台」三处共用的入口——用户可能在
+    /// 「文件」App 里删过或拖进过文件，回到前台就该看见真实情况，而不是等到
+    /// 下次启动才自愈。
+    ///
+    /// 只在启动、数据变更、以及切回前台时调用。视图读到的都是缓存值，
+    /// `body` 里不再做同步文件 I/O。
     func refreshStorageStats() {
-        let urls = (try? fileManager.contentsOfDirectory(
-            at: clipsDirectory,
-            includingPropertiesForKeys: [.fileSizeKey],
-            options: [.skipsHiddenFiles]
-        )) ?? []
+        let snapshot = diskSnapshot()
 
-        var sizes: [String: Int64] = [:]
-        sizes.reserveCapacity(urls.count)
-        for url in urls {
-            // 目录枚举时已经预取了 fileSize，这里再读一次命中的是缓存，不发系统调用
-            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-            sizes[url.lastPathComponent] = Int64(size)
+        if reconcileClipsWithDisk(snapshot) {
+            // 校正可能改过磁盘上的文件名（重排编号会让文件跟着改名），
+            // 旧快照里的名字已经失效，得重扫一遍再算统计
+            writeMetadata()
+            applySnapshot(diskSnapshot())
+            return
         }
 
-        existingClipFileNames = Set(sizes.keys)
-        totalClipBytes = shots.reduce(into: Int64(0)) { total, shot in
-            for clip in shot.clips { total += sizes[clip.fileName] ?? 0 }
+        applySnapshot(snapshot)
+    }
+
+    /// 一次目录枚举的结果
+    private struct DiskSnapshot {
+        /// 文件名 → 字节数
+        let sizes: [String: Int64]
+        /// 目录是否枚举成功。读不到时为 `false`——此时「文件不存在」与
+        /// 「整个目录都读不到」是同一个结果，绝不能据此删记录。
+        let isComplete: Bool
+
+        static let unreadable = DiskSnapshot(sizes: [:], isComplete: false)
+    }
+
+    private func diskSnapshot() -> DiskSnapshot {
+        do {
+            let urls = try fileManager.contentsOfDirectory(
+                at: clipsDirectory,
+                includingPropertiesForKeys: [.fileSizeKey],
+                options: [.skipsHiddenFiles]
+            )
+
+            var sizes: [String: Int64] = [:]
+            sizes.reserveCapacity(urls.count)
+            for url in urls {
+                // 目录枚举时已经预取了 fileSize，这里再读一次命中的是缓存，不发系统调用
+                let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+                sizes[url.lastPathComponent] = Int64(size)
+            }
+            return DiskSnapshot(sizes: sizes, isComplete: true)
+        } catch {
+            return .unreadable
         }
     }
 
-    /// 从磁盘读取。
+    /// 把内存里的分镜对齐到磁盘：剔除文件已经不在的片段，并按需重排编号。
+    ///
+    /// **只有枚举成功时才敢动数据。** 目录读不到时（外部卷没挂上、沙盒权限异常），
+    /// 「文件不存在」与「整个目录读不到」得到的结果一模一样；按「文件不存在」
+    /// 处理会一次把全部片段记录抹掉，而磁盘上的文件一个都没少——记录删了就回不来。
+    /// 判据交给返回的 `isComplete`，不靠调用方自觉。
+    ///
+    /// - Returns: 是否改动过（调用方据此决定要不要落盘）。
+    @discardableResult
+    private func reconcileClipsWithDisk(_ snapshot: DiskSnapshot) -> Bool {
+        guard snapshot.isComplete else { return false }
+
+        var didRepair = false
+        for index in shots.indices {
+            let existing = shots[index].clips.filter { snapshot.sizes[$0.fileName] != nil }
+            guard existing.count != shots[index].clips.count else { continue }
+            shots[index].clips = existing
+            didRepair = true
+        }
+
+        if normalize() { didRepair = true }
+        return didRepair
+    }
+
+    /// 用一次枚举的结果刷新「磁盘上有哪些片段」「素材占用空间」与「未使用文件」。
+    private func applySnapshot(_ snapshot: DiskSnapshot) {
+        // 枚举失败时保留上一次的统计：宁可数字旧一点，也不要突然报 0
+        guard snapshot.isComplete else { return }
+
+        existingClipFileNames = Set(snapshot.sizes.keys)
+
+        var used: Set<String> = []
+        var materialBytes: Int64 = 0
+        for shot in shots {
+            for clip in shot.clips {
+                used.insert(clip.fileName)
+                materialBytes += snapshot.sizes[clip.fileName] ?? 0
+            }
+        }
+        totalClipBytes = materialBytes
+
+        let orphans = snapshot.sizes.keys.filter { !used.contains($0) }.sorted()
+        orphanFileNames = orphans
+        orphanBytes = orphans.reduce(into: Int64(0)) { $0 += snapshot.sizes[$1] ?? 0 }
+    }
+
+    /// 删掉目录里那些没有任何分镜引用的文件。
+    ///
+    /// - Returns: 实际删掉的数量。
+    @discardableResult
+    func removeOrphanFiles() -> Int {
+        let removed = orphanFileNames
+        for name in removed {
+            removeFile(named: name)
+        }
+        refreshStorageStats()
+        return removed.count
+    }
+
+    /// 从磁盘读取，并把内存对齐到磁盘实况。
     ///
     /// 片段文件可能已被用户从「文件」App 里删掉，编号也可能被外部改乱，
     /// 这里做一次一致性校正，**校正过就立刻落盘**：只改内存不写回的话，
     /// 磁盘上的文件名与 JSON 记录会一直对不上，下次启动按「文件不存在」
     /// 过滤就会让片段在界面上凭空消失（文件其实还在磁盘上）。
     private func load() {
-        guard let data = try? Data(contentsOf: metadataURL),
-              let decoded = try? JSONDecoder().decode([Shot].self, from: data) else {
-            return
+        if let data = try? Data(contentsOf: metadataURL),
+           let decoded = try? JSONDecoder().decode([Shot].self, from: data) {
+            shots = decoded
         }
-
-        var didRepair = false
-
-        shots = decoded.map { shot in
-            var fixed = shot
-            let existing = shot.clips.filter { clip in
-                let url = clipsDirectory.appendingPathComponent(clip.fileName, isDirectory: false)
-                return fileManager.fileExists(atPath: url.path)
-            }
-            if existing.count != shot.clips.count { didRepair = true }
-            fixed.clips = existing
-            return fixed
-        }
-
-        if normalize() { didRepair = true }
-        if didRepair { persist() }
+        // JSON 读不出来（首次启动 / 文件损坏）时 `shots` 本来就是空的，
+        // 这一步只会得出「目录里的文件都没被引用」，不会误删任何记录。
+        refreshStorageStats()
     }
 
     private func persist() {
+        writeMetadata()
+        refreshStorageStats()
+    }
+
+    private func writeMetadata() {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         guard let data = try? encoder.encode(shots) else { return }
         try? data.write(to: metadataURL, options: .atomic)
-        refreshStorageStats()
     }
 
     private func createDirectoryIfNeeded(_ url: URL) {

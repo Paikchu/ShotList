@@ -295,8 +295,6 @@ nonisolated enum ShotStatus: String, CaseIterable, Identifiable {
         case .shotEarlier: return .indigo
         }
     }
-
-    var isRecorded: Bool { self != .notShot }
 }
 
 nonisolated extension Shot {

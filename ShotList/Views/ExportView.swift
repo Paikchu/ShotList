@@ -9,6 +9,9 @@ struct ExportView: View {
     @State private var isBuilding = false
     @State private var errorMessage: String?
     @State private var showClearConfirm = false
+    /// 打开「清理未使用的文件」确认弹窗时把数量拍成一句话。
+    /// 不能等弹窗渲染时现读 `store`——那时文件已经删了，文案会变成「0 个」。
+    @State private var orphanPrompt: String?
 
     private var recordedShots: [Shot] { store.shots.filter(\.hasClip) }
 
@@ -43,6 +46,15 @@ struct ExportView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text("\(store.shots.count) 个分镜和 \(store.recordedCount) 段视频都会被删除，无法恢复。")
+        }
+        .alert("清理未使用的文件？", isPresented: orphanBinding) {
+            Button("删除", role: .destructive) {
+                store.removeOrphanFiles()
+                Haptics.warning()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text(orphanPrompt ?? "")
         }
     }
 
@@ -155,7 +167,7 @@ struct ExportView: View {
 
     private var contentsSection: some View {
         Section {
-            contentsRow("01_无人机缓慢上升.mov", "每个镜头最新的一条，按编号前缀命名")
+            contentsRow("01_无人机缓慢上升.mov", "每个镜头最新的一条，按编号前缀命名；扩展名跟随源文件")
             contentsRow("备用片段/01-1_….mov", "同一个镜头更早拍的片段")
             contentsRow("分镜清单.csv", "编号、描述、状态，以及每条片段的时长与文件名")
             contentsRow("分镜文字内容指南.md", "镜头文字内容与素材的对照表，可直接交给 AI 剪辑")
@@ -263,6 +275,24 @@ struct ExportView: View {
 
     private var maintenanceSection: some View {
         Section {
+            // 只在真有这类文件时才出现。它们占着磁盘却不属于任何分镜，
+            // 不出现这个入口的话用户看不到、也没法回收。
+            if store.orphanFileCount > 0 {
+                Button(role: .destructive) {
+                    orphanPrompt = "\(store.orphanFileCount) 个文件（\(store.orphanBytes.slByteText)）不属于任何分镜，删除后无法恢复。"
+                } label: {
+                    HStack {
+                        Label("清理未使用的文件", systemImage: "trash.slash")
+                        Spacer(minLength: SLSpacing.small)
+                        Text("\(store.orphanFileCount) 个 · \(store.orphanBytes.slByteText)")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(minHeight: SLSize.minTouchTarget)
+                }
+                .accessibilityHint("删除「分镜视频」目录里没有被任何分镜引用的文件")
+            }
+
             Button(role: .destructive) {
                 showClearConfirm = true
             } label: {
@@ -280,6 +310,13 @@ struct ExportView: View {
         Binding(
             get: { errorMessage != nil },
             set: { presented in if !presented { errorMessage = nil } }
+        )
+    }
+
+    private var orphanBinding: Binding<Bool> {
+        Binding(
+            get: { orphanPrompt != nil },
+            set: { presented in if !presented { orphanPrompt = nil } }
         )
     }
 
