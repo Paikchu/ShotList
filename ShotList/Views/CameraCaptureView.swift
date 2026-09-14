@@ -276,11 +276,6 @@ struct CameraCaptureView: View {
             }
 
             VStack(spacing: SLSpacing.small) {
-                Text(takeHint)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-
                 Button {
                     save(url, continuing: true)
                 } label: {
@@ -295,13 +290,6 @@ struct CameraCaptureView: View {
             .padding(.bottom, SLSpacing.large)
         }
         .foregroundStyle(.white)
-    }
-
-    private var takeHint: String {
-        if savedTakeCount == 0 {
-            return "这条会存成「镜头 \(shot.paddedNumber)」的第 1 条。"
-        }
-        return "这个镜头已经存了 \(savedTakeCount) 条，保存后不会覆盖它们。"
     }
 
     // MARK: - 权限与降级

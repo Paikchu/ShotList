@@ -56,8 +56,6 @@ struct ClipOptionsSheet: View {
                         }
                     } header: {
                         Text("已拍片段（\(live.clipCount)）")
-                    } footer: {
-                        Text("点一下播放，右侧「…」可以单独分享或删除。卡片缩略图与导出主素材取最新一条，更早的片段会放进导出包的「备用片段」目录。")
                     }
                 }
 
@@ -81,8 +79,6 @@ struct ClipOptionsSheet: View {
                     } label: {
                         Label("删除整个分镜", systemImage: "trash")
                     }
-                } footer: {
-                    Text("删除分镜会同时删除它已经拍好的全部片段，且无法恢复。")
                 }
             }
             .listStyle(.insetGrouped)

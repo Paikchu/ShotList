@@ -21,6 +21,11 @@ struct ShotEditorView: View {
         1...max(1, store.shots.count)
     }
 
+    /// 与导出结果同一套命名规则：边打字边看到最终文件名
+    private var previewFileName: String {
+        ExportPackageBuilder.mainFileName(number: number, note: note)
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -33,10 +38,21 @@ struct ShotEditorView: View {
                     .lineLimit(3...10)
                     .focused($isNoteFocused)
                     .accessibilityLabel("分镜描述")
+
+                    LabeledContent {
+                        Text(previewFileName)
+                            .font(.footnote.monospaced())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    } label: {
+                        Label("导出文件名", systemImage: "doc.text")
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("导出文件名")
+                    .accessibilityValue(previewFileName)
                 } header: {
                     Text("分镜描述")
-                } footer: {
-                    Text("写清这个镜头要拍什么：画面内容、运镜方式、口播要点、道具。导出时会用这段描述给视频命名。")
                 }
 
                 Section {
@@ -53,8 +69,6 @@ struct ShotEditorView: View {
                     .accessibilityValue("\(number)")
                 } header: {
                     Text("顺序")
-                } footer: {
-                    Text("编号决定拍摄顺序和导出时的文件名前缀。改为其它数字，这个镜头会被移动到对应位置。")
                 }
             }
             .navigationTitle("编辑镜头")

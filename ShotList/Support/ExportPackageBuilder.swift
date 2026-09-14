@@ -15,13 +15,6 @@ enum ExportScope: String, CaseIterable, Identifiable {
         case .everything: return "全部分镜"
         }
     }
-
-    var footnote: String {
-        switch self {
-        case .recordedOnly: return "只打包已经拍摄的片段，适合直接拖进剪映剪辑。"
-        case .everything: return "打包所有片段，并在清单里列出未拍镜头，方便补拍。"
-        }
-    }
 }
 
 /// 一次导出产出的文件包
@@ -234,13 +227,19 @@ enum ExportPackageBuilder {
         }
     }
 
+    /// 主素材的文件名，例如「01_无人机缓慢上升.mov」。
+    ///
+    /// 编辑页拿它做实时预览，导出时走的是同一个函数，规则改动两边一起变。
+    static func mainFileName(number: Int, note: String) -> String {
+        String(format: "%02d_%@.mov", number, sanitize(note))
+    }
+
     /// 主素材（最新一条）不加序号后缀，备用片段带「-第几条」后缀
     private static func exportedFileName(for shot: Shot, takeIndex: Int?) -> String {
-        let base = sanitize(shot.fileNameBase)
         if let takeIndex {
-            return String(format: "%02d-%d_%@.mov", shot.number, takeIndex, base)
+            return String(format: "%02d-%d_%@.mov", shot.number, takeIndex, sanitize(shot.fileNameBase))
         }
-        return String(format: "%02d_%@.mov", shot.number, base)
+        return mainFileName(number: shot.number, note: shot.fileNameBase)
     }
 
     /// 去掉文件名里不安全的字符，同时保留中文

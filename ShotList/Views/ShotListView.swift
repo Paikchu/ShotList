@@ -74,8 +74,6 @@ struct ShotListView: View {
                 .onMove { source, destination in
                     store.move(fromOffsets: source, toOffset: destination)
                 }
-            } footer: {
-                Text("共 \(store.shots.count) 个分镜，已经拍了 \(store.recordedCount) 个、\(store.clipCount) 段。同一镜头可以拍很多条，互不覆盖。左滑可以编辑或删除，长按卡片可以分享片段。")
             }
         }
         .listStyle(.plain)

@@ -72,17 +72,12 @@ struct TodayView: View {
     // MARK: - 头部
 
     private var dateHeader: some View {
-        VStack(alignment: .leading, spacing: SLSpacing.tiny) {
-            Text(SLDateText.monthDayWeekday(Date()))
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(.primary)
-            Text("下面是每个镜头今天的拍摄状态，点一下就能补拍。")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.top, SLSpacing.small)
-        .accessibilityElement(children: .combine)
+        Text(SLDateText.monthDayWeekday(Date()))
+            .font(.title3.weight(.semibold))
+            .foregroundStyle(.primary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, SLSpacing.small)
+            .accessibilityAddTraits(.isHeader)
     }
 
     private var progressCard: some View {

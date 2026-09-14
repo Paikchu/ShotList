@@ -92,10 +92,6 @@ struct ExportView: View {
             .pickerStyle(.segmented)
             .accessibilityLabel("导出范围")
 
-            Text(scope.footnote)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-
             Button {
                 build()
             } label: {
@@ -117,8 +113,6 @@ struct ExportView: View {
             }
         } header: {
             SectionHeader(title: "打包导出", systemImage: "shippingbox")
-        } footer: {
-            Text("会生成一个压缩包：视频按编号前缀命名，另外附一份分镜清单 CSV 和导出说明。")
         }
     }
 
@@ -156,16 +150,14 @@ struct ExportView: View {
             .accessibilityHint("在分享面板里选剪映可以直接导入，选存储到文件可以保存到云盘或本机")
         } header: {
             SectionHeader(title: "刚刚生成的导出包", systemImage: "checkmark.seal")
-        } footer: {
-            Text("分享面板里可以选「剪映」直接导入素材，选「存储到文件」保存到 iCloud 云盘或本机，也可以隔空投送到 Mac。")
         }
     }
 
     private var contentsSection: some View {
         Section {
-            contentsRow("01_无人机缓慢上升.mov", "每个镜头的最新一条，按编号前缀命名，导入剪映后顺序与分镜一致")
-            contentsRow("备用片段/01-1_….mov", "同一个镜头更早拍的片段，想换素材时再导入")
-            contentsRow("分镜清单.csv", "每个镜头的描述、状态，以及每条片段的时长与文件名")
+            contentsRow("01_无人机缓慢上升.mov", "每个镜头最新的一条，按编号前缀命名")
+            contentsRow("备用片段/01-1_….mov", "同一个镜头更早拍的片段")
+            contentsRow("分镜清单.csv", "编号、描述、状态，以及每条片段的时长与文件名")
             contentsRow("导出说明.txt", "解压、导入剪映、传到电脑的步骤")
         } header: {
             SectionHeader(title: "压缩包里有什么", systemImage: "doc.text.magnifyingglass")
@@ -228,8 +220,6 @@ struct ExportView: View {
             }
         } header: {
             SectionHeader(title: "单独分享某个镜头", systemImage: "square.and.arrow.up.on.square")
-        } footer: {
-            Text("会把这个镜头拍过的全部片段一起分享出去。")
         }
     }
 
@@ -265,8 +255,6 @@ struct ExportView: View {
             .accessibilityElement(children: .combine)
         } header: {
             SectionHeader(title: "用数据线取到电脑", systemImage: "cable.connector")
-        } footer: {
-            Text("分镜视频都放在本应用的文稿目录里，并且已经对「文件」App 和访达开放，接上数据线就能直接拖走，不必另外导出。")
         }
     }
 
@@ -281,7 +269,7 @@ struct ExportView: View {
             }
             .disabled(store.shots.isEmpty)
         } footer: {
-            Text("本应用是纯本地单机应用，所有数据只保存在这台设备上，清空之后无法恢复。")
+            Text("所有数据只保存在这台设备上。")
         }
     }
 

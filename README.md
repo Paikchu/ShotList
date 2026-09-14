@@ -15,11 +15,12 @@
 |---|---|---|
 | ![分镜清单](Docs/screenshots/01-分镜清单.png) | ![今日拍摄状态](Docs/screenshots/02-今日拍摄状态.png) | ![统一导出](Docs/screenshots/03-统一导出.png) |
 
-| 镜头面板与片段列表 | 相机权限说明 | 无摄像头时的降级 |
+| 镜头面板与片段列表 | 编辑页（实时预览导出文件名） | 相机权限说明 |
 |---|---|---|
-| ![镜头面板](Docs/screenshots/04-镜头面板与片段列表.png) | ![相机权限说明](Docs/screenshots/05-相机权限说明.png) | ![无摄像头降级](Docs/screenshots/06-模拟器无摄像头降级.png) |
+| ![镜头面板](Docs/screenshots/04-镜头面板与片段列表.png) | ![编辑页](Docs/screenshots/05-编辑页与文件名预览.png) | ![相机权限说明](Docs/screenshots/06-相机权限说明.png) |
 
-> 截图取自 iPhone 17 模拟器，画面中的视频为 `Tools/seed-simulator.py` 灌入的占位素材。
+> 「导出文件名」那一行是编辑描述时实时算出来的，和实际导出的命名走同一个函数——不需要再用一段说明文字告诉用户「描述会被用作文件名」。
+> 截图取自 iPhone 17 模拟器，画面中的视频为 `Tools/seed-simulator.py` 灌入的占位素材；无摄像头时的降级界面见 `Docs/screenshots/07-模拟器无摄像头降级.png`。
 
 ---
 
