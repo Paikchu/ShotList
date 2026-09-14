@@ -12,10 +12,12 @@ struct ShotListApp: App {
                 .environmentObject(store)
                 .environment(\.locale, AppLocale.current)
                 .task {
-                    // 清掉上一次运行留在临时目录里的导出包。
-                    // 导出包只是中间产物（体积约等于全部视频），只对生成它的那次
-                    // 会话有意义，跨启动没有保留价值——不清就会一直堆着。
-                    ExportPackageBuilder.cleanUp()
+                    // 启动时统一回收临时目录。三类东西都只对产生它的那次操作有意义，
+                    // 跨启动没有保留价值，而系统清理临时目录的时机由 iOS 决定：
+                    // 「谁产生的谁回收」，所以这里是三个调用而不是一个。
+                    ExportPackageBuilder.cleanUp()              // 导出包的中间产物
+                    CameraRecorder.cleanUpTemporaryRecordings() // 相机录制的临时片段
+                    ImportedMovie.cleanUpTemporaryImports()     // 相册导入的中转文件
                 }
                 .onChange(of: scenePhase) { _, phase in
                     // 用户可能在「文件」App 里删掉了片段，回到前台重新扫一次，

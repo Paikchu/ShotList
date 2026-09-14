@@ -59,7 +59,7 @@ enum ExportError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .noClips:
-            return "还没有拍摄任何分镜，先拍一段再导出吧。"
+            return "没有可导出的视频文件：分镜里还没有片段，或者视频已经从设备上被删掉了。"
         case .packagingFailed(let reason):
             return "打包失败：\(reason)"
         }
@@ -123,7 +123,16 @@ nonisolated enum ExportPackageBuilder {
         fileManager: FileManager = .default
     ) throws -> ExportPackage {
 
-        let recorded = shots.filter(\.hasClip)
+        // 「有东西可导」以**磁盘**为准：JSON 里记着片段、文件却已经不在磁盘上时
+        // （外部删除 / 拷贝中断 / 备份恢复），按 `hasClip` 判定会一路走到
+        // 「每个镜头都是待拍」，最后产出一个一个视频都没有的空包。
+        let recorded = shots.filter { shot in
+            shot.clips.contains { clip in
+                fileManager.fileExists(
+                    atPath: clipsDirectory.appendingPathComponent(clip.fileName, isDirectory: false).path
+                )
+            }
+        }
         guard !recorded.isEmpty else { throw ExportError.noClips }
 
         let included: [Shot] = scope == .recordedOnly ? recorded : shots

@@ -55,10 +55,20 @@ struct CameraCaptureView: View {
             }
         }
         .onDisappear {
+            // `stop()` 会摘掉录制回调：正在录的那一条就此作废，收尾回调会把
+            // 临时文件删掉，不会再回到这个已经消失的页面上执行「进入回看」
+            // （那会把音频会话切成播放模式，而归还焦点的代码早就跑完了）。
             recorder.stop()
             recorder.detachPreviewLayer()
             reviewPlayer?.pause()
             reviewPlayer = nil
+
+            // 回看到一半直接把页面关掉（下拉关闭 / 被父视图收走）时，
+            // 这条还没保存的临时片段也要一起回收
+            if let url = reviewURL {
+                try? FileManager.default.removeItem(at: url)
+                reviewURL = nil
+            }
         }
         .alert("拍摄出现问题", isPresented: errorBinding) {
             Button("好", role: .cancel) {}

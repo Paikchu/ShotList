@@ -7,16 +7,21 @@ struct TodayView: View {
     @State private var sheet: ShotSheet?
     @State private var filter: Filter = .all
 
+    /// 筛选项与上方三个统计块一一对应。
+    ///
+    /// 「今日已拍 / 往日已拍 / 还没拍」是不重不漏的三分，所以筛选项也必须是
+    /// 三档——共用一档「已拍」并集会让「点 2 个的块、列出 3 张卡片」。
     enum Filter: String, CaseIterable, Identifiable {
-        case all, pending, recorded
+        case all, today, earlier, never
 
         var id: String { rawValue }
 
         var title: String {
             switch self {
             case .all: return "全部"
-            case .pending: return "未拍"
-            case .recorded: return "已拍"
+            case .today: return "今日"
+            case .earlier: return "往日"
+            case .never: return "未拍"
             }
         }
     }
@@ -59,16 +64,18 @@ struct TodayView: View {
     private var filteredShots: [Shot] {
         switch filter {
         case .all: return store.shots
-        case .pending: return neverShot
-        case .recorded: return store.shots.filter(\.hasClip)
+        case .today: return todayRecorded
+        case .earlier: return earlierRecorded
+        case .never: return neverShot
         }
     }
 
     private var emptyFilterHint: String {
         switch filter {
         case .all: return "还没有分镜。"
-        case .pending: return "所有镜头都拍完了。"
-        case .recorded: return "还没有拍好的镜头。"
+        case .today: return "今天还没拍。"
+        case .earlier: return "往日没拍过。"
+        case .never: return "所有镜头都拍完了。"
         }
     }
 
@@ -119,19 +126,19 @@ struct TodayView: View {
                 value: todayRecorded.count,
                 status: .shotToday,
                 caption: "今日已拍",
-                filterTarget: .recorded
+                filterTarget: .today
             )
             statTile(
                 value: earlierRecorded.count,
                 status: .shotEarlier,
                 caption: "往日已拍",
-                filterTarget: .recorded
+                filterTarget: .earlier
             )
             statTile(
                 value: neverShot.count,
                 status: .notShot,
                 caption: "还没拍",
-                filterTarget: .pending
+                filterTarget: .never
             )
         }
     }

@@ -26,7 +26,8 @@ nonisolated struct MainOnly<T>: @unchecked Sendable {
 /// - **会话状态**（`session`、`movieOutput`、`videoInput`、`audioInput`、
 ///   `isConfigured`）只在 `sessionQueue` 上访问 —— 开录与停录也不例外，
 ///   这样它们与切摄像头、改旋转角度共享同一条串行队列，不会并发改连接；
-/// - **录制回调**（`completion`）只在主线程读写，由 `onMain` 交回。
+/// - **录制回调**（`completion`）只在主线程读写，由 `onMain` 交回；
+///   关相机时会被清空，收尾回调据此丢掉那段视频（连临时文件一起）。
 /// - **主线程资源**（`previewLayer`、旋转协调器、计时器）只在主线程访问。
 ///
 /// 后两类由 `@unchecked Sendable` 兜住。之所以不拆成 actor：`AVCaptureSession`
@@ -69,6 +70,15 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
     private var audioInput: AVCaptureDeviceInput?
     private var isConfigured = false
     private var recordingStart: Date?
+
+    // MARK: - 录制回调（只在主线程读写）
+
+    /// 当前这一次录制的回调。
+    ///
+    /// `startRecording` 在主线程写入，收尾回调经 `onMain` 回来读它并清空，
+    /// `stop()` 关相机时也由主线程清空——清空之后收尾回调不会再往一个已经
+    /// 消失的页面上跑（那会把音频会话切成播放模式，还会留下一个没人回收的
+    /// 临时文件，见 `stop()`）。
     private var completion: (@MainActor (Result<URL, Error>) -> Void)?
 
     // MARK: - 主线程资源（只在主线程访问）
@@ -82,6 +92,12 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
     /// 单个镜头最长录制时长
     private static let maximumFileSize: Int64 = 600 * 1024 * 1024
     private static let maximumDurationSeconds: Double = 600
+
+    /// 录制中的临时文件前缀。
+    ///
+    /// 创建（`startRecording`）与回收（`cleanUpTemporaryRecordings`）都按它认领，
+    /// 写两遍就会出现「建得出来、清不掉」的孤儿文件。
+    private static let temporaryFilePrefix = "shot-"
 
     // MARK: - 线程跳转
 
@@ -145,11 +161,17 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
     ///
     /// 标 `@MainActor` 是因为它要碰计时器与 `recordingStart` 这两个主线程资源；
     /// 会话侧的收尾自己会跳 `sessionQueue`，因此标注不影响它的线程语义。
+    ///
+    /// **关相机时会把正在录的那一条作废**：先摘掉 `completion`，收尾回调回来时
+    /// 就没有接收者了（它会顺手把文件删掉，见 `didFinishRecordingTo`）。不摘的话，
+    /// 回调会回到一个已经消失的页面上执行「进入回看」——把音频会话切成
+    /// `.playback + active`，而唯一会归还焦点的 `onDisappear` 早就跑完了。
     @MainActor
     func stop() {
         stopTimer()
         recordingStart = nil
         stopObservingInterruptions()
+        completion = nil
 
         sessionQueue.async { [weak self] in
             guard let self else { return }
@@ -203,7 +225,7 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
 
         self.completion = completion
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("shot-\(UUID().uuidString).mov", isDirectory: false)
+            .appendingPathComponent("\(Self.temporaryFilePrefix)\(UUID().uuidString).mov", isDirectory: false)
 
         isRecording = true
         startTimer()
@@ -524,9 +546,37 @@ nonisolated extension CameraRecorder: AVCaptureFileOutputRecordingDelegate {
             self.stopTimer()
             self.recordingStart = nil
             self.elapsed = 0
-            let handler = self.completion
+
+            // 没人等这条视频时（相机已经关掉，这次录制被作废）就地删掉，
+            // 不留一个谁都收不回的临时文件。文件是 AVFoundation 刚写完的，
+            // 删早了它还会再写一遍，所以只在回调里删、不在 stop() 里删。
+            guard let handler = self.completion else {
+                try? FileManager.default.removeItem(at: outputFileURL)
+                return
+            }
             self.completion = nil
-            handler?(boxed.value)
+            handler(boxed.value)
+        }
+    }
+}
+
+// MARK: - 临时文件回收
+
+nonisolated extension CameraRecorder {
+    /// 清掉上一次会话残留在临时目录里的录制文件。
+    ///
+    /// 录完的片段正常有两条去处：交给 `ShotStore` 存进「分镜视频」，或由「重拍」
+    /// 删掉。但关相机、被系统杀掉、刚起头就失败这些中断路径会留下
+    /// `shot-*.mov`，而系统什么时候清临时目录由 iOS 决定。启动时统一收一次，
+    /// 免得它们一直占着磁盘。
+    static func cleanUpTemporaryRecordings(fileManager: FileManager = .default) {
+        let root = fileManager.temporaryDirectory
+        let contents = (try? fileManager.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: nil
+        )) ?? []
+        for url in contents where url.lastPathComponent.hasPrefix(temporaryFilePrefix) {
+            try? fileManager.removeItem(at: url)
         }
     }
 }

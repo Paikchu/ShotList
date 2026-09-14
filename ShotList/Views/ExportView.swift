@@ -45,7 +45,7 @@ struct ExportView: View {
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("\(store.shots.count) 个分镜和 \(store.recordedCount) 段视频都会被删除，无法恢复。")
+            Text("\(store.shots.count) 个分镜和 \(store.clipCount) 段视频都会被删除，无法恢复。")
         }
         .alert("清理未使用的文件？", isPresented: orphanBinding) {
             Button("删除", role: .destructive) {
@@ -119,7 +119,7 @@ struct ExportView: View {
             .disabled(isBuilding || store.recordedCount == 0)
 
             if store.recordedCount == 0 {
-                Text("还没有拍好的视频。先到「分镜」里拍一段，再回来导出。")
+                Text("还没有可导出的视频。先到「分镜」里拍一段，再回来导出。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }

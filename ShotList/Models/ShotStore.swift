@@ -45,11 +45,24 @@ final class ShotStore: ObservableObject {
 
     // MARK: - 统计
 
-    /// 已经拍过的镜头数量
-    var recordedCount: Int { shots.filter(\.hasClip).count }
+    /// 「已拍」的磁盘口径：磁盘上确实存在、且被分镜引用到的素材。
+    ///
+    /// 这三个数字与 `totalClipBytes`、导出包是**同一个口径**——都来自
+    /// `refreshStorageStats()` 的那一次目录枚举。导出页读的就是它们：
+    /// 若按 JSON 里的 `hasClip` 算，一旦出现「记录还在、文件已经不在磁盘上」
+    /// （外部删除 / 拷贝中断 / 备份恢复），按钮仍然可点，最后会导出一个
+    /// 一个视频都没有的空包。
+    ///
+    /// 枚举失败时保留上一次的值（见 `applySnapshot`），不会突然报 0。
+    @Published private(set) var availableShotCount: Int = 0
+    @Published private(set) var availableClipCount: Int = 0
+    @Published private(set) var availableDuration: TimeInterval = 0
 
-    /// 全部片段数量（一个镜头可能有好几条）
-    var clipCount: Int { shots.reduce(0) { $0 + $1.clipCount } }
+    /// 已经拍过的镜头数量（以磁盘上真的有文件为准）
+    var recordedCount: Int { availableShotCount }
+
+    /// 全部片段数量（只数磁盘上真的有文件的那几条）
+    var clipCount: Int { availableClipCount }
 
     /// 今日已拍摄的镜头（以最近一条片段的拍摄日期为准）
     var todayRecordedShots: [Shot] {
@@ -73,16 +86,14 @@ final class ShotStore: ObservableObject {
     /// 今日仍未拍摄的镜头数量
     var todayPendingCount: Int { todayPendingShots.count }
 
-    /// 全部片段的总时长（秒）
-    var totalDuration: TimeInterval {
-        shots.reduce(0) { $0 + $1.totalDuration }
-    }
+    /// 全部片段的总时长（秒，只算磁盘上真的有文件的那几条）
+    var totalDuration: TimeInterval { availableDuration }
 
     /// 全部片段占用空间（字节）。
     ///
-    /// 只统计**被分镜引用到**的片段，因此和旁边那几个数字（已拍镜头数、段数、
-    /// 总时长）是同一个口径。目录里的未使用文件另有 `orphanBytes`，两者相加
-    /// 才是这个目录真正占的磁盘。
+    /// 只统计**被分镜引用到、且真的在磁盘上**的片段，因此和旁边那几个数字
+    /// （已拍镜头数、段数、总时长）是同一个口径。目录里的未使用文件另有
+    /// `orphanBytes`，两者相加才是这个目录真正占的磁盘。
     ///
     /// 这是**缓存值**，由 `refreshStorageStats()` 在启动与数据变更时刷新。
     /// 视图每次重绘都会读它，若在这里现算，一次重绘就要跨 N 个片段发系统调用
@@ -109,7 +120,7 @@ final class ShotStore: ObservableObject {
     /// 改为在刷新统计时扫一遍目录缓存下来。
     private var existingClipFileNames: Set<String> = []
 
-    /// 拍摄进度 0…1
+    /// 拍摄进度 0…1（按磁盘上真的有片段的镜头算，与导出页那几个数字同源）
     var progress: Double {
         shots.isEmpty ? 0 : Double(recordedCount) / Double(shots.count)
     }
@@ -388,13 +399,32 @@ final class ShotStore: ObservableObject {
 
         var used: Set<String> = []
         var materialBytes: Int64 = 0
+        var clipCount = 0
+        var duration: TimeInterval = 0
+        var shotCount = 0
+
         for shot in shots {
+            var hasMaterial = false
             for clip in shot.clips {
+                // 只认磁盘上真的有的文件：不在的不计段数、不计时长、不计空间。
+                // 走到这里时 `shot.clips` 通常已经与磁盘对齐（见
+                // `reconcileClipsWithDisk`），这一层判断是为了在枚举中途失败、
+                // 校正没跑成的情况下也不会给出「占用空间掉下来了、段数还挂着」
+                // 这种自相矛盾的界面。
+                guard let bytes = snapshot.sizes[clip.fileName] else { continue }
                 used.insert(clip.fileName)
-                materialBytes += snapshot.sizes[clip.fileName] ?? 0
+                materialBytes += bytes
+                duration += clip.duration ?? 0
+                clipCount += 1
+                hasMaterial = true
             }
+            if hasMaterial { shotCount += 1 }
         }
+
         totalClipBytes = materialBytes
+        availableClipCount = clipCount
+        availableDuration = duration
+        availableShotCount = shotCount
 
         let orphans = snapshot.sizes.keys.filter { !used.contains($0) }.sorted()
         orphanFileNames = orphans
