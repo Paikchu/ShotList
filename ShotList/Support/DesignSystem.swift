@@ -21,7 +21,11 @@ enum SLSize {
     /// 卡片圆角
     static let cardCornerRadius: CGFloat = 16
     /// 分镜卡片上的视频缩略图
-    static let thumbnail = CGSize(width: 92, height: 62)
+    static let thumbnail = CGSize(width: 100, height: 68)
+    /// 片段列表里的缩略图
+    static let clipRowThumbnail = CGSize(width: 84, height: 57)
+    /// 镜头面板头部的缩略图
+    static let headerThumbnail = CGSize(width: 108, height: 72)
     /// 卡片上的编号徽标
     static let numberBadge: CGFloat = 32
     /// 相机录制按钮外径
@@ -29,24 +33,6 @@ enum SLSize {
 }
 
 // MARK: - 可复用组件
-
-/// 状态徽标：图标 + 文字 + 颜色三重表达，不依赖颜色单独传达信息。
-struct StatusChip: View {
-    let status: ShotStatus
-    var compact: Bool = false
-
-    var body: some View {
-        Label(status.title, systemImage: status.symbolName)
-            .font(compact ? .caption2.weight(.semibold) : .caption.weight(.semibold))
-            .labelStyle(.titleAndIcon)
-            .foregroundStyle(status.tint)
-            .padding(.horizontal, compact ? SLSpacing.tiny + 2 : SLSpacing.small)
-            .padding(.vertical, SLSpacing.tiny)
-            .background(status.tint.opacity(0.14), in: Capsule())
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("拍摄状态：\(status.title)")
-    }
-}
 
 /// 编号徽标：已拍时填充实心，未拍时描边。
 struct NumberBadge: View {

@@ -1,22 +1,18 @@
 import SwiftUI
 
-/// 编辑镜头信息。编号即拍摄顺序，改编号会把镜头移动到对应位置。
+/// 编辑分镜。编号即拍摄顺序，改编号会把镜头移动到对应位置。
 struct ShotEditorView: View {
     let shot: Shot
 
     @EnvironmentObject private var store: ShotStore
     @Environment(\.dismiss) private var dismiss
 
-    @State private var title: String
     @State private var note: String
     @State private var number: Int
-    @FocusState private var focusedField: Field?
-
-    private enum Field { case title, note }
+    @FocusState private var isNoteFocused: Bool
 
     init(shot: Shot) {
         self.shot = shot
-        _title = State(initialValue: shot.title)
         _note = State(initialValue: shot.note)
         _number = State(initialValue: shot.number)
     }
@@ -29,24 +25,18 @@ struct ShotEditorView: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("例如：开场 · 城市天际线", text: $title, axis: .vertical)
-                        .lineLimit(1...3)
-                        .focused($focusedField, equals: .title)
-                        .submitLabel(.done)
-                        .accessibilityLabel("镜头标题")
+                    TextField(
+                        "例如：无人机缓慢上升，配一句开场旁白",
+                        text: $note,
+                        axis: .vertical
+                    )
+                    .lineLimit(3...10)
+                    .focused($isNoteFocused)
+                    .accessibilityLabel("分镜描述")
                 } header: {
-                    Text("镜头标题")
+                    Text("分镜描述")
                 } footer: {
-                    Text("留空时会显示为「镜头 \(shot.number)」。")
-                }
-
-                Section {
-                    TextField("运镜方式、口播要点、道具…", text: $note, axis: .vertical)
-                        .lineLimit(3...8)
-                        .focused($focusedField, equals: .note)
-                        .accessibilityLabel("拍摄备注")
-                } header: {
-                    Text("拍摄备注")
+                    Text("写清这个镜头要拍什么：画面内容、运镜方式、口播要点、道具。导出时会用这段描述给视频命名。")
                 }
 
                 Section {
@@ -79,16 +69,13 @@ struct ShotEditorView: View {
                 }
             }
             .onAppear {
-                if title.isEmpty && note.isEmpty {
-                    focusedField = .title
-                }
+                if note.isEmpty { isNoteFocused = true }
             }
         }
     }
 
     private func save() {
         var edited = shot
-        edited.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         edited.note = note.trimmingCharacters(in: .whitespacesAndNewlines)
         edited.number = min(max(number, numberRange.lowerBound), numberRange.upperBound)
         store.update(edited)
@@ -97,6 +84,6 @@ struct ShotEditorView: View {
 }
 
 #Preview {
-    ShotEditorView(shot: Shot(number: 2, title: "街景横摇", note: "手持稳定器，保持水平"))
+    ShotEditorView(shot: Shot(number: 2, note: "手持稳定器横摇，保持水平，速度放慢"))
         .environmentObject(ShotStore())
 }

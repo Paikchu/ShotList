@@ -17,12 +17,13 @@ enum ShotSheet: Identifiable {
 /// 需要整屏呈现的流程
 enum ShotCover: Identifiable {
     case camera(Shot)
-    case player(Shot)
+    /// 播放某一条片段（1 个镜头可能有很多条）
+    case player(shot: Shot, clip: ShotClip, index: Int)
 
     var id: String {
         switch self {
         case .camera(let shot): return "camera-\(shot.id.uuidString)"
-        case .player(let shot): return "player-\(shot.id.uuidString)"
+        case .player(_, let clip, _): return "player-\(clip.id.uuidString)"
         }
     }
 }
@@ -74,9 +75,14 @@ struct ShotFlowModifier: ViewModifier {
                         queuedImportShot = current(shot)
                         cover = nil
                     }
-                case .player(let shot):
-                    if let url = store.clipURL(for: shot) {
-                        ClipPlayerScreen(shot: current(shot), url: url)
+                case .player(let shot, let clip, let index):
+                    if let url = store.clipURL(for: clip) {
+                        ClipPlayerScreen(
+                            shot: current(shot),
+                            clip: clip,
+                            takeIndex: index,
+                            url: url
+                        )
                     } else {
                         Color.black.ignoresSafeArea()
                     }
@@ -110,7 +116,6 @@ struct ShotFlowModifier: ViewModifier {
     private func optionsSheet(for shot: Shot) -> some View {
         ClipOptionsSheet(
             shot: current(shot),
-            clipURL: store.clipURL(for: shot),
             onCapture: {
                 queuedCover = .camera(current(shot))
                 sheet = nil
@@ -119,20 +124,17 @@ struct ShotFlowModifier: ViewModifier {
                 queuedImportShot = current(shot)
                 sheet = nil
             },
-            onPlay: {
-                queuedCover = .player(current(shot))
+            onPlay: { clip in
+                let live = current(shot)
+                queuedCover = .player(
+                    shot: live,
+                    clip: clip,
+                    index: store.takeIndex(of: clip, in: live)
+                )
                 sheet = nil
             },
             onEdit: {
                 queuedSheet = .editor(current(shot))
-                sheet = nil
-            },
-            onRemoveClip: {
-                store.removeClip(for: shot.id)
-                sheet = nil
-            },
-            onDeleteShot: {
-                store.delete(shot)
                 sheet = nil
             }
         )
@@ -201,7 +203,7 @@ struct ShotFlowModifier: ViewModifier {
                 throw ImportFailure.unsupportedFormat
             }
             let duration = await VideoMetadata.duration(of: movie.url)
-            try store.attachClip(from: movie.url, duration: duration, to: shot.id)
+            try store.addClip(from: movie.url, duration: duration, to: shot.id)
             Haptics.success()
         } catch {
             Haptics.error()

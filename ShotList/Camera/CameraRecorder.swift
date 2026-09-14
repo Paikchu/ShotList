@@ -88,6 +88,8 @@ final class CameraRecorder: NSObject, ObservableObject {
     func resumeSession() {
         sessionQueue.async { [weak self] in
             guard let self, !self.session.isRunning else { return }
+            // 回看时音频会话被切成播放模式，回到取景前要切回录制模式，否则录不到声音
+            self.configureAudioSession()
             self.session.startRunning()
         }
     }

@@ -2,7 +2,9 @@ import SwiftUI
 
 /// 分镜卡片 —— 需求里的「可点击添加视频的模块」。
 ///
-/// 整张卡片是一个 `Button`，点击后弹出拍摄 / 导入 / 播放等操作。
+/// 整张卡片是一个 `Button`，点击后弹出拍摄 / 导入 / 片段管理。
+/// 卡片上只保留编号与分镜描述，时长压在缩略图上、条数标在缩略图左上角，
+/// 状态徽标不在这里重复，避免一行字旁边挂三四个标签。
 /// 在无障碍字号下改为上下布局，避免文字被挤压。
 struct ShotCardView: View {
     let shot: Shot
@@ -10,8 +12,6 @@ struct ShotCardView: View {
     var onTap: () -> Void
 
     @Environment(\.dynamicTypeSize) private var typeSize
-
-    private var status: ShotStatus { shot.status() }
 
     var body: some View {
         Button(action: onTap) {
@@ -39,16 +39,25 @@ struct ShotCardView: View {
     private var content: some View {
         if typeSize.isAccessibilitySize {
             VStack(alignment: .leading, spacing: SLSpacing.medium) {
-                ClipThumbnailView(url: clipURL, size: CGSize(width: 132, height: 88))
+                thumbnail(size: CGSize(width: 148, height: 100))
                 details
             }
         } else {
             HStack(alignment: .top, spacing: SLSpacing.medium) {
-                ClipThumbnailView(url: clipURL)
+                thumbnail(size: SLSize.thumbnail)
                 details
                 Spacer(minLength: 0)
             }
         }
+    }
+
+    private func thumbnail(size: CGSize) -> some View {
+        ClipThumbnailView(
+            url: clipURL,
+            size: size,
+            durationText: shot.durationText,
+            takeCount: shot.clipCount
+        )
     }
 
     private var details: some View {
@@ -60,23 +69,22 @@ struct ShotCardView: View {
 
                 Spacer(minLength: SLSpacing.small)
 
-                StatusChip(status: status, compact: true)
-            }
-
-            if !shot.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Text(shot.title)
-                    .font(.subheadline)
-                    .foregroundStyle(.primary)
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
+                if let recordedAt = shot.shortRecordedAtText {
+                    Text(recordedAt)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                }
             }
 
             if shot.hasNote {
                 Text(shot.note)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                    .font(.subheadline)
+                    .foregroundStyle(.primary)
+                    .lineLimit(3)
                     .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             metaRow
@@ -87,17 +95,12 @@ struct ShotCardView: View {
     @ViewBuilder
     private var metaRow: some View {
         if shot.hasClip {
-            HStack(spacing: SLSpacing.small) {
-                if let duration = shot.durationText {
-                    Label(duration, systemImage: "timer")
-                }
-                if let recordedAt = shot.recordedAtText {
-                    Text(recordedAt)
-                }
+            if shot.clipCount > 1 {
+                Text("共 \(shot.clipCount) 段 · 总时长 \(shot.totalDuration.slDurationText)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
         } else {
             Label("点击拍摄或导入视频", systemImage: "video.badge.plus")
                 .font(.caption)
@@ -110,18 +113,27 @@ struct ShotCardView: View {
     ScrollView {
         VStack(spacing: SLSpacing.medium) {
             ShotCardView(
-                shot: Shot(number: 1, title: "开场：城市天际线", note: "无人机慢速上升，配旁白"),
+                shot: Shot(number: 1, note: "无人机缓慢上升，配一句开场旁白"),
                 clipURL: nil,
                 onTap: {}
             )
             ShotCardView(
                 shot: Shot(
                     number: 2,
-                    title: "街景横摇",
-                    note: "手持稳定器，注意保持水平",
-                    clipFileName: "a.mov",
-                    recordedAt: Date(),
-                    clipDuration: 12
+                    note: "手持稳定器横摇，保持水平，速度放慢",
+                    clips: [
+                        ShotClip(fileName: "a.mov", duration: 7, recordedAt: Date()),
+                        ShotClip(fileName: "b.mov", duration: 9, recordedAt: Date())
+                    ]
+                ),
+                clipURL: nil,
+                onTap: {}
+            )
+            ShotCardView(
+                shot: Shot(
+                    number: 3,
+                    note: "手冲壶出水特写，收环境音",
+                    clips: [ShotClip(fileName: "c.mov", duration: 12, recordedAt: Date())]
                 ),
                 clipURL: nil,
                 onTap: {}

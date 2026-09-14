@@ -25,7 +25,7 @@ struct ShotListView: View {
             } message: { shot in
                 Text(
                     shot.hasClip
-                    ? "镜头 \(shot.paddedNumber) 已经拍好了视频，删除后视频也会一起消失，无法恢复。"
+                    ? "镜头 \(shot.paddedNumber) 已经拍好了 \(shot.clipCount) 段视频，删除后它们也会一起消失，无法恢复。"
                     : "镜头 \(shot.paddedNumber) 会被删除。"
                 )
             }
@@ -75,7 +75,7 @@ struct ShotListView: View {
                     store.move(fromOffsets: source, toOffset: destination)
                 }
             } footer: {
-                Text("共 \(store.shots.count) 个分镜，已经拍了 \(store.recordedCount) 个。左滑可以编辑或删除，长按卡片可以复制和分享视频。")
+                Text("共 \(store.shots.count) 个分镜，已经拍了 \(store.recordedCount) 个、\(store.clipCount) 段。同一镜头可以拍很多条，互不覆盖。左滑可以编辑或删除，长按卡片可以分享片段。")
             }
         }
         .listStyle(.plain)
@@ -88,13 +88,16 @@ struct ShotListView: View {
         Button {
             sheet = .options(shot)
         } label: {
-            Label(shot.hasClip ? "查看或替换视频" : "添加视频", systemImage: "video.badge.plus")
+            Label(
+                shot.hasClip ? "查看或继续拍" : "添加视频",
+                systemImage: "video.badge.plus"
+            )
         }
 
         Button {
             sheet = .editor(shot)
         } label: {
-            Label("编辑镜头信息", systemImage: "square.and.pencil")
+            Label("编辑分镜描述", systemImage: "square.and.pencil")
         }
 
         Button {
@@ -104,16 +107,23 @@ struct ShotListView: View {
             Label("在下方复制一个", systemImage: "plus.square.on.square")
         }
 
-        if let url = store.clipURL(for: shot) {
-            ShareLink(item: url, subject: Text("镜头 \(shot.paddedNumber) \(shot.displayTitle)")) {
-                Label("分享视频", systemImage: "square.and.arrow.up")
+        let urls = store.clipURLs(for: shot)
+        if !urls.isEmpty {
+            ShareLink(
+                items: urls,
+                subject: Text("镜头 \(shot.paddedNumber) \(shot.displayDetail)")
+            ) {
+                Label(
+                    shot.clipCount > 1 ? "分享这 \(shot.clipCount) 段视频" : "分享视频",
+                    systemImage: "square.and.arrow.up"
+                )
             }
 
             Button {
-                store.removeClip(for: shot.id)
+                store.removeAllClips(for: shot.id)
                 Haptics.warning()
             } label: {
-                Label("只删除视频", systemImage: "trash.slash")
+                Label("清空片段（保留分镜）", systemImage: "trash.slash")
             }
         }
 

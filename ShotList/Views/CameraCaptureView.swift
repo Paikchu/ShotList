@@ -28,6 +28,14 @@ struct CameraCaptureView: View {
     @State private var errorMessage: String?
     @State private var isBlinking = false
 
+    /// 这个镜头已经存了几条
+    private var savedTakeCount: Int {
+        store.shot(withID: shot.id)?.clipCount ?? 0
+    }
+
+    /// 正在回看的这一条会存成第几条
+    private var reviewTakeIndex: Int { savedTakeCount + 1 }
+
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
@@ -107,11 +115,15 @@ struct CameraCaptureView: View {
             VStack(spacing: 0) {
                 Text("镜头 \(shot.paddedNumber)")
                     .font(.subheadline.weight(.semibold))
-                if !shot.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text(shot.title)
+                if shot.hasNote {
+                    Text(shot.note)
                         .font(.caption2)
                         .opacity(0.85)
                         .lineLimit(1)
+                } else if savedTakeCount > 0 {
+                    Text("已拍 \(savedTakeCount) 条")
+                        .font(.caption2)
+                        .opacity(0.85)
                 }
             }
             .padding(.horizontal, SLSpacing.medium)
@@ -188,7 +200,7 @@ struct CameraCaptureView: View {
         .buttonStyle(.plain)
         .disabled(isSaving)
         .accessibilityLabel(recorder.isRecording ? "停止拍摄" : "开始拍摄")
-        .accessibilityHint("拍完可以回看，确认后再保存到分镜")
+        .accessibilityHint("拍完可以回看，确认后再保存。同一个镜头可以拍很多条，后拍的不会覆盖前面的。")
         .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.7), value: recorder.isRecording)
     }
 
@@ -225,10 +237,10 @@ struct CameraCaptureView: View {
                 Button("重拍") { retake() }
                     .frame(minHeight: SLSize.minTouchTarget)
                 Spacer()
-                Text("回看刚才这条")
+                Text("回看第 \(reviewTakeIndex) 条")
                     .font(.headline)
                 Spacer()
-                Button("使用这条") { save(url) }
+                Button("使用这条") { save(url, continuing: false) }
                     .fontWeight(.semibold)
                     .frame(minHeight: SLSize.minTouchTarget)
                     .disabled(isSaving)
@@ -263,12 +275,33 @@ struct CameraCaptureView: View {
                 }
             }
 
-            Text("确认这段镜头拍好了吗？")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .padding(.bottom, SLSpacing.large)
+            VStack(spacing: SLSpacing.small) {
+                Text(takeHint)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+
+                Button {
+                    save(url, continuing: true)
+                } label: {
+                    Label("保存并继续拍下一条", systemImage: "arrow.triangle.2.circlepath.camera")
+                        .frame(maxWidth: .infinity, minHeight: SLSize.minTouchTarget)
+                }
+                .buttonStyle(.bordered)
+                .disabled(isSaving)
+                .accessibilityHint("这段会存成第 \(reviewTakeIndex) 条，然后回到取景继续拍同一个镜头")
+            }
+            .padding(.horizontal, SLSpacing.medium)
+            .padding(.bottom, SLSpacing.large)
         }
         .foregroundStyle(.white)
+    }
+
+    private var takeHint: String {
+        if savedTakeCount == 0 {
+            return "这条会存成「镜头 \(shot.paddedNumber)」的第 1 条。"
+        }
+        return "这个镜头已经存了 \(savedTakeCount) 条，保存后不会覆盖它们。"
     }
 
     // MARK: - 权限与降级
@@ -439,21 +472,29 @@ struct CameraCaptureView: View {
         Haptics.impact(.light)
     }
 
-    private func save(_ url: URL) {
+    /// 把回看的这一条存进分镜。
+    ///
+    /// - Parameter continuing: `true` 表示存完不关相机，回到取景继续拍同一个镜头。
+    private func save(_ url: URL, continuing: Bool) {
         guard !isSaving else { return }
         isSaving = true
 
         Task {
             let duration = await VideoMetadata.duration(of: url)
             do {
-                try store.attachClip(from: url, duration: duration, to: shot.id)
+                try store.addClip(from: url, duration: duration, to: shot.id)
                 reviewPlayer?.pause()
                 reviewPlayer = nil
                 reviewURL = nil
-                recorder.stop()
                 isSaving = false
                 Haptics.success()
-                dismiss()
+
+                if continuing {
+                    recorder.resumeSession()
+                } else {
+                    recorder.stop()
+                    dismiss()
+                }
             } catch {
                 isSaving = false
                 Haptics.error()
@@ -476,6 +517,6 @@ struct CameraCaptureView: View {
 }
 
 #Preview {
-    CameraCaptureView(shot: Shot(number: 1, title: "开场"), onRequestImport: {})
+    CameraCaptureView(shot: Shot(number: 1, note: "无人机缓慢上升，配一句开场旁白"), onRequestImport: {})
         .environmentObject(ShotStore())
 }

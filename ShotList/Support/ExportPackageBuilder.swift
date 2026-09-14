@@ -18,8 +18,8 @@ enum ExportScope: String, CaseIterable, Identifiable {
 
     var footnote: String {
         switch self {
-        case .recordedOnly: return "只打包已经拍摄的视频文件，适合直接拖进剪映剪辑。"
-        case .everything: return "打包所有视频，并在清单里列出未拍镜头，方便补拍。"
+        case .recordedOnly: return "只打包已经拍摄的片段，适合直接拖进剪映剪辑。"
+        case .everything: return "打包所有片段，并在清单里列出未拍镜头，方便补拍。"
         }
     }
 }
@@ -29,7 +29,7 @@ struct ExportPackage: Identifiable, Equatable {
     let id: UUID
     /// 打包好的 zip 位置
     let zipURL: URL
-    /// 包内视频数量
+    /// 包内片段数量
     let clipCount: Int
     /// 未拍摄的镜头数量
     let pendingCount: Int
@@ -40,7 +40,7 @@ struct ExportPackage: Identifiable, Equatable {
     var fileName: String { zipURL.lastPathComponent }
 
     var summary: String {
-        var parts = ["\(clipCount) 个视频"]
+        var parts = ["\(clipCount) 段视频"]
         if pendingCount > 0 { parts.append("\(pendingCount) 个待拍") }
         parts.append(totalDuration.slDurationText)
         return parts.joined(separator: " · ")
@@ -61,18 +61,28 @@ enum ExportError: LocalizedError {
     }
 }
 
-/// 把分镜与视频打包成一个可分享的 zip。
+/// 把分镜与片段打包成一个可分享的 zip。
+///
+/// 一个镜头可能拍了好几条，导出时把最新的一条放在根目录当主素材，
+/// 更早的片段收进「备用片段」目录，这样导入剪映时主素材顺序干净，
+/// 想换某一条也有备份可选。
 ///
 /// 包内结构：
 /// ```
 /// 分镜导出_20260914/
-/// ├── 01_开场-城市天际线.mov
-/// ├── 02_街景-慢速横摇.mov
+/// ├── 01_无人机缓慢上升.mov      每个镜头的最新一条
+/// ├── 02_街景横摇.mov
+/// ├── 备用片段/
+/// │   ├── 01-1_无人机缓慢上升.mov  同一个镜头更早拍的
+/// │   └── 01-2_无人机缓慢上升.mov
 /// ├── 分镜清单.csv
 /// └── 导出说明.txt
 /// ```
 /// 视频按编号加前缀命名，这样导入剪映后素材顺序与分镜顺序一致。
 enum ExportPackageBuilder {
+
+    /// 备用片段子目录名
+    static let alternateFolderName = "备用片段"
 
     static func build(
         shots: [Shot],
@@ -101,30 +111,66 @@ enum ExportPackageBuilder {
         }
         defer { try? fileManager.removeItem(at: workingRoot) }
 
+        let alternateFolder = folder.appendingPathComponent(alternateFolderName, isDirectory: true)
+        var didCreateAlternateFolder = false
+
         var totalDuration: TimeInterval = 0
         var manifest: [ManifestRow] = []
 
         for shot in included {
-            guard let fileName = shot.clipFileName else {
-                manifest.append(ManifestRow(shot: shot, exportedName: nil))
-                continue
+            let available = shot.clips.filter { clip in
+                let url = clipsDirectory.appendingPathComponent(clip.fileName, isDirectory: false)
+                return fileManager.fileExists(atPath: url.path)
             }
-            let source = clipsDirectory.appendingPathComponent(fileName, isDirectory: false)
-            guard fileManager.fileExists(atPath: source.path) else {
-                manifest.append(ManifestRow(shot: shot, exportedName: nil))
+
+            guard let latest = available.max(by: { $0.recordedAt < $1.recordedAt }) else {
+                manifest.append(ManifestRow(pendingShot: shot))
                 continue
             }
 
-            let exportedName = Self.exportedFileName(for: shot)
-            let destination = folder.appendingPathComponent(exportedName, isDirectory: false)
-            do {
-                try fileManager.copyItem(at: source, to: destination)
-            } catch {
-                throw ExportError.packagingFailed(error.localizedDescription)
-            }
+            let takeTotal = available.count
 
-            totalDuration += shot.clipDuration ?? 0
-            manifest.append(ManifestRow(shot: shot, exportedName: exportedName))
+            for (offset, clip) in available.enumerated() {
+                let takeIndex = offset + 1
+                let isMain = clip.id == latest.id
+                let fileName = Self.exportedFileName(for: shot, takeIndex: isMain ? nil : takeIndex)
+
+                let destination: URL
+                let exportedPath: String
+                if isMain {
+                    destination = folder.appendingPathComponent(fileName, isDirectory: false)
+                    exportedPath = fileName
+                } else {
+                    if !didCreateAlternateFolder {
+                        do {
+                            try fileManager.createDirectory(at: alternateFolder, withIntermediateDirectories: true)
+                            didCreateAlternateFolder = true
+                        } catch {
+                            throw ExportError.packagingFailed(error.localizedDescription)
+                        }
+                    }
+                    destination = alternateFolder.appendingPathComponent(fileName, isDirectory: false)
+                    exportedPath = "\(alternateFolderName)/\(fileName)"
+                }
+
+                let source = clipsDirectory.appendingPathComponent(clip.fileName, isDirectory: false)
+                do {
+                    try fileManager.copyItem(at: source, to: destination)
+                } catch {
+                    throw ExportError.packagingFailed(error.localizedDescription)
+                }
+
+                totalDuration += clip.duration ?? 0
+                manifest.append(
+                    ManifestRow(
+                        shot: shot,
+                        clip: clip,
+                        takeIndex: takeIndex,
+                        takeTotal: takeTotal,
+                        exportedPath: exportedPath
+                    )
+                )
+            }
         }
 
         try Self.writeManifest(manifest, to: folder)
@@ -136,7 +182,7 @@ enum ExportPackageBuilder {
         return ExportPackage(
             id: UUID(),
             zipURL: zipURL,
-            clipCount: manifest.filter { $0.exportedName != nil }.count,
+            clipCount: manifest.filter { $0.exportedPath != nil }.count,
             pendingCount: pending.count,
             totalDuration: totalDuration,
             byteCount: size,
@@ -154,27 +200,47 @@ enum ExportPackageBuilder {
 
     private struct ManifestRow {
         let number: Int
-        let title: String
+        let detail: String
         let statusText: String
+        let takeText: String
         let recordedAtText: String
         let durationText: String
-        let note: String
-        let exportedName: String?
+        let exportedPath: String?
+        /// 是否是「备用片段」目录里的更早片段
+        let isAlternate: Bool
 
-        init(shot: Shot, exportedName: String?) {
+        /// 已拍片段
+        init(shot: Shot, clip: ShotClip, takeIndex: Int, takeTotal: Int, exportedPath: String) {
             self.number = shot.number
-            self.title = shot.displayTitle
+            self.detail = shot.displayDetail
             self.statusText = shot.status().title
-            self.recordedAtText = shot.recordedAtText ?? ""
-            self.durationText = shot.durationText ?? ""
-            self.note = shot.note.replacingOccurrences(of: "\n", with: " ")
-            self.exportedName = exportedName
+            self.takeText = takeTotal > 1 ? "第 \(takeIndex) 条 / 共 \(takeTotal) 条" : "第 1 条"
+            self.recordedAtText = clip.recordedAtText ?? ""
+            self.durationText = clip.durationText ?? ""
+            self.exportedPath = exportedPath
+            self.isAlternate = takeTotal > 1 && takeIndex != takeTotal
+        }
+
+        /// 还没拍的镜头
+        init(pendingShot shot: Shot) {
+            self.number = shot.number
+            self.detail = shot.displayDetail
+            self.statusText = shot.status().title
+            self.takeText = ""
+            self.recordedAtText = ""
+            self.durationText = ""
+            self.exportedPath = nil
+            self.isAlternate = false
         }
     }
 
-    private static func exportedFileName(for shot: Shot) -> String {
-        let sanitized = sanitize(shot.displayTitle)
-        return String(format: "%02d_%@.mov", shot.number, sanitized)
+    /// 主素材（最新一条）不加序号后缀，备用片段带「-第几条」后缀
+    private static func exportedFileName(for shot: Shot, takeIndex: Int?) -> String {
+        let base = sanitize(shot.fileNameBase)
+        if let takeIndex {
+            return String(format: "%02d-%d_%@.mov", shot.number, takeIndex, base)
+        }
+        return String(format: "%02d_%@.mov", shot.number, base)
     }
 
     /// 去掉文件名里不安全的字符，同时保留中文
@@ -182,21 +248,21 @@ enum ExportPackageBuilder {
         let illegal = CharacterSet(charactersIn: "/\\:*?\"<>|\n\r\t")
         let cleaned = raw.components(separatedBy: illegal).joined(separator: "-")
         let trimmed = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
-        let limited = trimmed.count > 40 ? String(trimmed.prefix(40)) : trimmed
+        let limited = trimmed.count > 24 ? String(trimmed.prefix(24)) : trimmed
         return limited.isEmpty ? "镜头" : limited
     }
 
     private static func writeManifest(_ rows: [ManifestRow], to folder: URL) throws {
-        var csv = "编号,标题,状态,拍摄时间,时长,导出文件名,备注\n"
+        var csv = "编号,分镜描述,状态,片段,拍摄时间,时长,导出文件名\n"
         for row in rows {
             let fields = [
                 String(format: "%02d", row.number),
-                row.title,
+                row.detail,
                 row.statusText,
+                row.takeText,
                 row.recordedAtText,
                 row.durationText,
-                row.exportedName ?? "",
-                row.note
+                row.exportedPath ?? ""
             ]
             csv += fields.map(Self.csvField).joined(separator: ",") + "\n"
         }
@@ -220,8 +286,10 @@ enum ExportPackageBuilder {
         scope: ExportScope,
         to folder: URL
     ) throws {
-        let recordedCount = manifest.filter { $0.exportedName != nil }.count
-        let pendingCount = manifest.count - recordedCount
+        let exported = manifest.filter { $0.exportedPath != nil }
+        let shotCount = Set(exported.map(\.number)).count
+        let alternateCount = exported.filter(\.isAlternate).count
+        let pendingRows = manifest.filter { $0.exportedPath == nil }
 
         var text = """
         分镜助手 · 导出说明
@@ -229,34 +297,44 @@ enum ExportPackageBuilder {
 
         导出时间：\(Date().formatted(Date.FormatStyle(date: .long, time: .shortened).locale(AppLocale.current)))
         导出范围：\(scope.title)
-        视频数量：\(recordedCount)
-        待拍镜头：\(pendingCount)
+        镜头数量：\(shotCount)
+        视频片段：\(exported.count)
 
         目录内容
         ----------------------------
-        * 01_xxx.mov  已拍摄的分镜视频，文件名前缀即镜头编号
-        * 分镜清单.csv 每个镜头的编号、标题、状态、时长与备注
+        * 01_xxx.mov   每个镜头的主素材，取其最新拍的一条，文件名前缀即镜头编号
+        * 备用片段/    同一个镜头更早拍的片段，命名形如 01-1_xxx.mov（第 1 条）
+        * 分镜清单.csv 每个镜头的描述、状态与每条片段的时长、文件名
         * 导出说明.txt 本文件
 
         导入剪映
         ----------------------------
         1. 解压本压缩包；
-        2. 打开剪映，新建项目后点「导入」，选择解压出的视频文件；
-        3. 全部文件按编号前缀排序，导入顺序与分镜顺序一致。
+        2. 打开剪映，新建项目后点「导入」，选择根目录下的视频文件；
+        3. 全部文件按编号前缀排序，导入顺序与分镜顺序一致；
+        4. 想换某个镜头的素材，就到「备用片段」目录里挑，不导入时它们不占时间线。
 
         导入电脑
         ----------------------------
         * 隔空投送：在本 App 的「导出」页直接把压缩包 AirDrop 到 Mac；
         * 数据线：连接 iPhone 后，在「文件」App 的「我的 iPhone / 分镜助手」
-          里可以找到全部分镜视频，直接拖到电脑即可；
+          里可以找到全部分镜片段，直接拖到电脑即可；
         * 也可以在本 App「导出」页，选择「存储到文件」保存到 iCloud 云盘。
 
         """
 
-        if pendingCount > 0 {
+        if alternateCount > 0 {
+            text += "\n备用片段（\(alternateCount) 条）\n----------------------------\n"
+            text += "主素材取每个镜头最新的一条，以下是同一个镜头更早拍的片段：\n"
+            for row in exported where row.isAlternate {
+                text += String(format: "%@  %@\n", row.exportedPath ?? "", row.detail)
+            }
+        }
+
+        if !pendingRows.isEmpty {
             text += "\n仍待补拍的镜头\n----------------------------\n"
-            for row in manifest where row.exportedName == nil {
-                text += String(format: "%02d  %@\n", row.number, row.title)
+            for row in pendingRows {
+                text += String(format: "%02d  %@\n", row.number, row.detail)
             }
         }
 

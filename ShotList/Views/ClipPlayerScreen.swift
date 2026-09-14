@@ -2,9 +2,13 @@ import AVFoundation
 import AVKit
 import SwiftUI
 
-/// 整屏播放某个分镜已经拍好的视频。
+/// 整屏播放某个镜头里的某一条片段。
 struct ClipPlayerScreen: View {
     let shot: Shot
+    /// 正在播的这一条
+    let clip: ShotClip
+    /// 它是这个镜头的第几条（从 1 开始）
+    let takeIndex: Int
     let url: URL
 
     @Environment(\.dismiss) private var dismiss
@@ -41,13 +45,20 @@ struct ClipPlayerScreen: View {
                 Spacer()
 
                 VStack(spacing: SLSpacing.tiny) {
-                    Text("镜头 \(shot.paddedNumber) · \(shot.displayTitle)")
+                    Text("镜头 \(shot.paddedNumber) · 第 \(takeIndex) 条")
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
-                    if let duration = shot.durationText {
+
+                    if shot.hasNote {
+                        Text(shot.note)
+                            .font(.caption)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.center)
+                    }
+
+                    if let duration = clip.durationText {
                         Text("时长 \(duration)")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
                     }
                 }
                 .foregroundStyle(.white)
@@ -77,7 +88,13 @@ struct ClipPlayerScreen: View {
 
 #Preview {
     ClipPlayerScreen(
-        shot: Shot(number: 1, title: "开场", clipFileName: "a.mov", recordedAt: Date(), clipDuration: 12),
+        shot: Shot(
+            number: 1,
+            note: "无人机缓慢上升，配一句开场旁白",
+            clips: [ShotClip(fileName: "a.mov", duration: 12, recordedAt: Date())]
+        ),
+        clip: ShotClip(fileName: "a.mov", duration: 12, recordedAt: Date()),
+        takeIndex: 1,
         url: URL(fileURLWithPath: "/dev/null")
     )
 }

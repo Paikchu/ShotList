@@ -56,6 +56,9 @@ struct ExportView: View {
                 VStack(alignment: .leading, spacing: SLSpacing.tiny) {
                     Text("已拍 \(store.recordedCount) / \(store.shots.count) 个镜头")
                         .font(.headline)
+                    Text("共 \(store.clipCount) 段视频")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                     Text("总时长 \(store.totalDuration.slDurationText)")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -70,7 +73,7 @@ struct ExportView: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("素材概览")
             .accessibilityValue(
-                "已经拍了 \(store.recordedCount) 个镜头，共 \(store.shots.count) 个，总时长 \(store.totalDuration.slDurationText)，占用空间 \(store.totalClipBytes.slByteText)"
+                "已经拍了 \(store.recordedCount) 个镜头，共 \(store.shots.count) 个，\(store.clipCount) 段视频，总时长 \(store.totalDuration.slDurationText)，占用空间 \(store.totalClipBytes.slByteText)"
             )
         } header: {
             SectionHeader(title: "素材概览", systemImage: "chart.pie")
@@ -145,7 +148,7 @@ struct ExportView: View {
             ShareLink(
                 item: package.zipURL,
                 subject: Text("分镜导出包"),
-                message: Text("共 \(package.clipCount) 个镜头视频")
+                message: Text("共 \(package.clipCount) 段镜头视频")
             ) {
                 Label("分享 / 存储到「文件」", systemImage: "square.and.arrow.up")
                     .frame(minHeight: SLSize.minTouchTarget)
@@ -160,8 +163,9 @@ struct ExportView: View {
 
     private var contentsSection: some View {
         Section {
-            contentsRow("01_开场-城市天际线.mov", "视频按编号前缀命名，导入剪映后顺序与分镜一致")
-            contentsRow("分镜清单.csv", "每个镜头的编号、标题、状态、时长与备注")
+            contentsRow("01_无人机缓慢上升.mov", "每个镜头的最新一条，按编号前缀命名，导入剪映后顺序与分镜一致")
+            contentsRow("备用片段/01-1_….mov", "同一个镜头更早拍的片段，想换素材时再导入")
+            contentsRow("分镜清单.csv", "每个镜头的描述、状态，以及每条片段的时长与文件名")
             contentsRow("导出说明.txt", "解压、导入剪映、传到电脑的步骤")
         } header: {
             SectionHeader(title: "压缩包里有什么", systemImage: "doc.text.magnifyingglass")
@@ -194,35 +198,48 @@ struct ExportView: View {
                         NumberBadge(number: shot.number, isRecorded: true, size: 26)
 
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(shot.displayTitle)
+                            Text(shot.displayDetail)
                                 .font(.subheadline)
                                 .lineLimit(1)
-                            HStack(spacing: SLSpacing.small) {
-                                if let duration = shot.durationText { Text(duration) }
-                                if let recordedAt = shot.recordedAtText { Text(recordedAt) }
-                            }
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                            Text(clipSummary(for: shot))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
 
                         Spacer(minLength: SLSpacing.small)
 
-                        if let url = store.clipURL(for: shot) {
+                        let urls = store.clipURLs(for: shot)
+                        if !urls.isEmpty {
                             ShareLink(
-                                item: url,
-                                subject: Text("镜头 \(shot.paddedNumber) \(shot.displayTitle)")
+                                items: urls,
+                                subject: Text("镜头 \(shot.paddedNumber) \(shot.displayDetail)")
                             ) {
                                 Image(systemName: "square.and.arrow.up")
                                     .frame(width: SLSize.minTouchTarget, height: SLSize.minTouchTarget)
                             }
-                            .accessibilityLabel("分享镜头 \(shot.number) 的视频")
+                            .accessibilityLabel(
+                                shot.clipCount > 1
+                                ? "分享镜头 \(shot.number) 的 \(shot.clipCount) 段视频"
+                                : "分享镜头 \(shot.number) 的视频"
+                            )
                         }
                     }
                 }
             }
         } header: {
-            SectionHeader(title: "单独分享某一段", systemImage: "square.and.arrow.up.on.square")
+            SectionHeader(title: "单独分享某个镜头", systemImage: "square.and.arrow.up.on.square")
+        } footer: {
+            Text("会把这个镜头拍过的全部片段一起分享出去。")
         }
+    }
+
+    /// 例如「2 段 · 共 18 秒 · 今天 22:14」
+    private func clipSummary(for shot: Shot) -> String {
+        var parts: [String] = []
+        if shot.clipCount > 1 { parts.append("\(shot.clipCount) 段") }
+        parts.append("共 \(shot.totalDuration.slDurationText)")
+        if let recordedAt = shot.shortRecordedAtText { parts.append(recordedAt) }
+        return parts.joined(separator: " · ")
     }
 
     // MARK: - 电脑
