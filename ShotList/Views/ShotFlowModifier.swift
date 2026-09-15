@@ -38,10 +38,11 @@ private enum ImportFailure: LocalizedError {
     }
 }
 
-/// 把「点开分镜 → 拍摄 / 导入 / 播放 / 编辑」的整套弹层流程封装起来，
-/// 让「分镜」和「今日」两个标签页共用同一套交互。
+/// 把「点开分镜 → 拍摄 / 导入 / 播放」的整套弹层流程封装起来，
+/// 让「分镜」和「历史」两个标签页共用同一套交互。
 ///
-/// 为了遵守「不叠模态」的原则，切换弹层时先关掉当前弹层，
+/// 描述与编号不在这里排队——它们就在镜头面板里改（`ClipOptionsSheet`），
+/// 不需要再叠一层编辑页。为了遵守「不叠模态」的原则，切换弹层时先关掉当前弹层，
 /// 再在 `onDismiss` 里呈现下一个，而不是在弹层里再套一层。
 struct ShotFlowModifier: ViewModifier {
     @Binding var sheet: ShotSheet?

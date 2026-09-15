@@ -40,7 +40,7 @@ struct RootTabView: View {
             Tab("历史", systemImage: "clock.arrow.circlepath", value: TabSelection.history) {
                 HistoryView()
             }
-            // 徽标沿用「今日」页的提醒口径：今天还欠几个镜头没拍
+            // 徽标沿用拍摄提醒的口径：今天还欠几个镜头没拍
             .badge(store.pendingShots(on: Date()).count)
 
             Tab("导出", systemImage: "square.and.arrow.up", value: TabSelection.export) {
