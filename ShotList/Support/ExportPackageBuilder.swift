@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// 导出范围
 nonisolated enum ExportScope: String, CaseIterable, Identifiable {
@@ -14,6 +15,147 @@ nonisolated enum ExportScope: String, CaseIterable, Identifiable {
         case .recordedOnly: return "仅已拍镜头"
         case .everything: return "全部分镜"
         }
+    }
+}
+
+/// 导出时的视频格式：要不要转码、转成什么格式。
+///
+/// 导入与拍摄都保留原始文件（相册导入显式要求「原片」，见 `ImportedMovie`），
+/// 所以默认导出就是原片——画质、体积、耗时都保持原样。要发给微信、或者在老设备上
+/// 播放，才需要在这一步换一个格式：**导入只做一次，导出可以按需选**，
+/// 不必为了某一次分享把库里的素材统一压一遍。
+nonisolated enum ExportTranscodeOption: String, CaseIterable, Identifiable {
+    /// 原片：不转码，直接复制
+    case original
+    /// 兼容优先：H.264，最高 1080p
+    case compatible
+    /// 体积优先：HEVC，最高 1080p
+    case compact
+
+    var id: String { rawValue }
+
+    /// 转码后统一写 QuickTime 容器，扩展名与 `MediaTranscode.containerFileType` 同一处定义
+    static var transcodeFileExtension: String { "mov" }
+
+    /// 选项持久化的键。导出页与镜头面板读同一个键，取值只有一处来源。
+    static let storageKey = "export.transcodeOption"
+
+    var title: String {
+        switch self {
+        case .original: return "原片"
+        case .compatible: return "H.264 · 1080p"
+        case .compact: return "HEVC · 1080p"
+        }
+    }
+
+    /// 选项下面那句取舍说明：写时间、体积、兼容性三者的代价
+    var detail: String {
+        switch self {
+        case .original:
+            return "直接导出原始文件，画质与体积保持原样，导出最快。"
+        case .compatible:
+            return "转成兼容性最好的格式，剪辑软件、微信、网页都能开；导出包会变小，代价是转码要花时间。"
+        case .compact:
+            return "转成更省空间的编码，同样画质体积更小；个别老设备或旧软件可能不支持。"
+        }
+    }
+
+    /// 写进 `导出说明.txt` 的格式说明
+    var documentText: String {
+        switch self {
+        case .original: return "原片（未转码）"
+        case .compatible: return "H.264 · 最高 1080p（导出时转码）"
+        case .compact: return "HEVC · 最高 1080p（导出时转码）"
+        }
+    }
+
+    /// 是否需要真的转码
+    var needsTranscode: Bool { self != .original }
+
+    /// 导出时用的扩展名：转码后统一 `mov`，不转码时沿用源文件。
+    ///
+    /// 镜头面板的文件名预览、导出页的示例名与实际打包都走这一个函数，
+    /// 否则会出现「页面上写着 .mp4、导出的却是 .mov」这种漂移。
+    func exportedFileExtension(sourceExtension: String) -> String {
+        needsTranscode ? Self.transcodeFileExtension : sourceExtension
+    }
+}
+
+/// 一次打包的输入。
+///
+/// 收成一个值而不是继续加参数：范围、格式这些「用户选了什么」每加一项，
+/// 参数列表和调用点都要跟着改一遍。
+nonisolated struct ExportRequest: Sendable, Equatable {
+    let shots: [Shot]
+    let clipsDirectory: URL
+    let scope: ExportScope
+    let option: ExportTranscodeOption
+}
+
+/// 打包进度。
+///
+/// 转码一段几十秒的素材可能要好几十秒，没有进度的话界面只剩一个转圈，
+/// 用户会以为卡死了——包越大越明显，所以进度按「第几条 / 共几条」给出。
+nonisolated struct ExportProgress: Sendable, Equatable {
+    enum Phase: Sendable, Equatable {
+        /// 正在转码下一条
+        case transcoding
+        /// 正在压缩打包
+        case packaging
+    }
+
+    let phase: Phase
+    /// 已经处理完的片段数
+    let completed: Int
+    /// 本次要处理的片段总数
+    let total: Int
+
+    var fraction: Double {
+        switch phase {
+        case .transcoding: return total > 0 ? min(1, Double(completed) / Double(total)) : 0
+        case .packaging: return 1
+        }
+    }
+
+    var text: String {
+        switch phase {
+        case .transcoding: return "正在转码 \(completed + 1) / \(total) 段"
+        case .packaging: return "正在压缩打包…"
+        }
+    }
+}
+
+/// 取消信号。
+///
+/// 打包在后台线程上跑，置位的是主协程，所以它得是个能跨线程共享的引用类型；
+/// 用原子量而不是锁，读它的地方（每段素材一次）不值得去争一把锁。
+nonisolated final class ExportCancellation: Sendable {
+    private let flag = Atomic<Bool>(false)
+
+    var isCancelled: Bool { flag.load(ordering: .relaxed) }
+
+    func cancel() { flag.store(true, ordering: .relaxed) }
+}
+
+/// 一次打包的运行上下文：进度回传 + 取消信号。
+///
+/// 打包侧与界面侧只通过这一个值联系。它自己是 `Sendable` 的，所以调用方不必
+/// 为每个参数单独标注，测试也能直接传一个空的上下文进来。
+nonisolated struct ExportRun: Sendable {
+    let cancellation: ExportCancellation
+    let publish: @Sendable (ExportProgress) async -> Void
+
+    init(
+        cancellation: ExportCancellation = ExportCancellation(),
+        publish: @Sendable @escaping (ExportProgress) async -> Void = { _ in }
+    ) {
+        self.cancellation = cancellation
+        self.publish = publish
+    }
+
+    /// 本次已作废。转码是几十秒级别的事，作废之后必须尽快停手。
+    func checkCancellation() throws {
+        if cancellation.isCancelled { throw CancellationError() }
     }
 }
 
@@ -55,12 +197,15 @@ enum ExportOutcome: Sendable {
 enum ExportError: LocalizedError {
     case noClips
     case packagingFailed(String)
+    case transcodeFailed(fileName: String, reason: String)
     case insufficientSpace(required: Int64?, available: Int64?)
 
     var errorDescription: String? {
         switch self {
         case .noClips:
             return "没有可导出的视频文件：分镜里还没有片段，或者视频已经从设备上被删掉了。"
+        case .transcodeFailed(let fileName, let reason):
+            return "转码失败：\(fileName)（\(reason)）。可以把「视频格式」改回「原片」重新导出。"
         case .insufficientSpace(let required, let available):
             if let required, let available {
                 return "设备空间不足：本次导出预计需预留 \(required.slByteText)，当前可用 \(available.slByteText)。请释放设备空间或减少要导出的素材后重试。"
@@ -96,6 +241,10 @@ enum ExportError: LocalizedError {
 /// ```
 /// 视频按编号加前缀命名，这样导入剪映后素材顺序与分镜顺序一致。
 ///
+/// 视频格式默认是**原片**（导入与拍摄都保留原始文件），需要小体积或更好的兼容性时，
+/// 由用户在导出页选一个转码格式（`ExportTranscodeOption`）——打包时逐条重编，
+/// 不转码就逐条复制。
+///
 /// 三类文本文件分工不同：`分镜清单.csv` 是给人看的表格；
 /// `导出说明.txt` 讲怎么导入剪映、怎么传到电脑；
 /// `分镜文字内容指南.md` 面向 AI——把每个镜头的文字描述与视频文件名严格绑定，
@@ -110,41 +259,52 @@ nonisolated enum ExportPackageBuilder {
 
     /// 在后台线程打包。
     ///
-    /// 打包要复制全部视频再压缩，属于重 I/O。用 `@concurrent` 明确要求它跑在
-    /// 后台线程——按「非隔离的 async 函数」的默认语义，它会留在调用方所在的
+    /// 打包要复制或转码全部视频再压缩，属于重 I/O 与重 CPU。用 `@concurrent` 明确要求
+    /// 它跑在后台线程——按「非隔离的 async 函数」的默认语义，它会留在调用方所在的
     /// 主协程上，界面照样卡住。
+    ///
+    /// `run` 里的进度回调每处理完一段素材触发一次，调用方负责把它送回主协程。
+    /// 这里每次都 `await` 完再继续，所以进度只会往前走，不会跳回去。
     @concurrent
-    static func buildOffMain(
-        shots: [Shot],
-        clipsDirectory: URL,
-        scope: ExportScope
-    ) async -> ExportOutcome {
+    static func buildOffMain(_ request: ExportRequest, run: ExportRun = ExportRun()) async -> ExportOutcome {
         do {
-            return .success(try build(shots: shots, clipsDirectory: clipsDirectory, scope: scope))
+            return .success(try await build(request, run: run))
         } catch {
             return .failure(error.localizedDescription)
         }
     }
 
+    /// 打包一次导出。
+    ///
+    /// `transcode` 可注入：单元测试里换成假实现，就能在不准备真实视频文件的前提下
+    /// 验证「选了转码就不再复制源文件」这条接线。
     static func build(
-        shots: [Shot],
-        clipsDirectory: URL,
-        scope: ExportScope,
+        _ request: ExportRequest,
+        run: ExportRun = ExportRun(),
         fileManager: FileManager = .default,
-        availableCapacity: (URL) throws -> Int64? = availableCapacity
-    ) throws -> ExportPackage {
+        availableCapacity: (URL) throws -> Int64? = availableCapacity,
+        transcode: @Sendable (URL, URL, ExportTranscodeOption) async throws -> Void = {
+            try await MediaTranscode.export(source: $0, to: $1, option: $2)
+        }
+    ) async throws -> ExportPackage {
         do {
-            return try buildChecked(shots: shots, clipsDirectory: clipsDirectory, scope: scope,
-                                    fileManager: fileManager, availableCapacity: availableCapacity)
+            return try await buildChecked(request, run: run, fileManager: fileManager,
+                                          availableCapacity: availableCapacity, transcode: transcode)
         } catch {
             throw exportFailure(error)
         }
     }
 
     private static func buildChecked(
-        shots: [Shot], clipsDirectory: URL, scope: ExportScope, fileManager: FileManager,
-        availableCapacity: (URL) throws -> Int64?
-    ) throws -> ExportPackage {
+        _ request: ExportRequest, run: ExportRun, fileManager: FileManager,
+        availableCapacity: (URL) throws -> Int64?,
+        transcode: @Sendable (URL, URL, ExportTranscodeOption) async throws -> Void
+    ) async throws -> ExportPackage {
+
+        let shots = request.shots
+        let clipsDirectory = request.clipsDirectory
+        let scope = request.scope
+        let option = request.option
 
         // 「有东西可导」以**磁盘**为准：JSON 里记着片段、文件却已经不在磁盘上时
         // （外部删除 / 拷贝中断 / 备份恢复），按 `hasClip` 判定会一路走到
@@ -162,10 +322,25 @@ nonisolated enum ExportPackageBuilder {
 
         // 按未压缩体积估算工作副本、系统临时 zip 和最终 zip 的同时占用，
         // 再留文本/压缩开销余量。这是保守预算，不是声称实际峰值固定为三倍。
-        let required = try storageBudget(for: included, clipsDirectory: clipsDirectory, fileManager: fileManager)
+        // 转码时工作副本是重编出来的，可能比源文件还大（H.264 的码率高于 HEVC），
+        // 所以这一档再放宽一份。
+        let required = try storageBudget(
+            for: included, clipsDirectory: clipsDirectory, fileManager: fileManager,
+            workingCopyMultiplier: option.needsTranscode ? 4 : 3
+        )
         if let available = try? availableCapacity(fileManager.temporaryDirectory), available < required {
             throw ExportError.insufficientSpace(required: required, available: max(0, available))
         }
+
+        // 进度分母：磁盘上真有文件、会进包的片段数
+        let totalClips = included.reduce(0) { sum, shot in
+            sum + shot.clips.filter { clip in
+                fileManager.fileExists(
+                    atPath: clipsDirectory.appendingPathComponent(clip.fileName, isDirectory: false).path
+                )
+            }.count
+        }
+        var processedClips = 0
 
         let now = Date()
         let folderName = "分镜导出_\(Self.dayToken(now))"
@@ -188,6 +363,8 @@ nonisolated enum ExportPackageBuilder {
         var manifest: [ManifestRow] = []
 
         for shot in included {
+            try run.checkCancellation()
+
             let available = shot.clips.enumerated().filter { _, clip in
                 let url = clipsDirectory.appendingPathComponent(clip.fileName, isDirectory: false)
                 return fileManager.fileExists(atPath: url.path)
@@ -201,6 +378,8 @@ nonisolated enum ExportPackageBuilder {
             let takeTotal = shot.clips.count
 
             for (offset, clip) in available {
+                try run.checkCancellation()
+
                 let takeIndex = offset + 1
                 let isMain = clip.id == latest.id
                 let fileName = Self.exportedFileName(
@@ -209,7 +388,11 @@ nonisolated enum ExportPackageBuilder {
                     // 只有一条时保持 01_xxx.mov，不加后缀。
                     takeIndex: takeTotal > 1 ? takeIndex : nil,
                     note: shot.fileNameBase,
-                    fileExtension: Self.fileExtension(ofFileName: clip.fileName)
+                    // 扩展名跟随源文件；选了转码就换成转码后的容器，
+                    // 与镜头面板、导出页示例读的是同一处规则。
+                    fileExtension: option.exportedFileExtension(
+                        sourceExtension: Self.fileExtension(ofFileName: clip.fileName)
+                    )
                 )
 
                 let destination: URL
@@ -231,11 +414,28 @@ nonisolated enum ExportPackageBuilder {
                 }
 
                 let source = clipsDirectory.appendingPathComponent(clip.fileName, isDirectory: false)
+                // 进度要在**动手之前**报：转码一段素材是几十秒级别的事，
+                // 报在后面等于整段时间界面都停在「上一条的进度」上。
+                if option.needsTranscode {
+                    await run.publish(
+                        ExportProgress(phase: .transcoding, completed: processedClips, total: totalClips)
+                    )
+                }
                 do {
-                    try fileManager.copyItem(at: source, to: destination)
+                    if option.needsTranscode {
+                        try await transcode(source, destination, option)
+                    } else {
+                        try fileManager.copyItem(at: source, to: destination)
+                    }
                 } catch {
+                    // 取消不是失败，别把它翻译成「转码失败」让用户去改格式
+                    if error is CancellationError { throw error }
+                    if option.needsTranscode {
+                        throw ExportError.transcodeFailed(fileName: fileName, reason: error.localizedDescription)
+                    }
                     throw Self.exportFailure(error)
                 }
+                processedClips += 1
 
                 totalDuration += clip.duration ?? 0
                 manifest.append(
@@ -258,12 +458,17 @@ nonisolated enum ExportPackageBuilder {
         let clipCount = manifest.count - pendingCount
         guard clipCount > 0 else { throw ExportError.noClips }
 
+        // 素材都到位了，剩下的是压缩打包
+        await run.publish(ExportProgress(phase: .packaging, completed: totalClips, total: totalClips))
+        try run.checkCancellation()
+
         try Self.writeManifest(manifest, to: folder)
-        try Self.writeReadme(manifest: manifest, folderName: folderName, scope: scope, to: folder)
+        try Self.writeReadme(manifest: manifest, folderName: folderName, scope: scope, option: option, to: folder)
         try Self.writeTextGuide(
             manifest: manifest,
             folderName: folderName,
             scope: scope,
+            option: option,
             totalDuration: totalDuration,
             to: folder
         )
@@ -287,7 +492,17 @@ nonisolated enum ExportPackageBuilder {
         return values.volumeAvailableCapacityForImportantUsage ?? values.volumeAvailableCapacity.map(Int64.init)
     }
 
-    private static func storageBudget(for shots: [Shot], clipsDirectory: URL, fileManager: FileManager) throws -> Int64 {
+    /// 估算本次导出要预留的空间。
+    ///
+    /// `workingCopyMultiplier` 是工作副本的放大系数：不转码时工作副本就是源文件
+    /// 的克隆（占 1 份），转码时是重编出来的新文件，源文件还在，且 H.264 的体积
+    /// 可能超过 HEVC 源文件，所以调高一份。两者都再叠加系统临时 zip 与最终 zip。
+    private static func storageBudget(
+        for shots: [Shot],
+        clipsDirectory: URL,
+        fileManager: FileManager,
+        workingCopyMultiplier: Int64 = 3
+    ) throws -> Int64 {
         var bytes: Int64 = 0
         var textBytes: Int64 = 0
         for shot in shots {
@@ -299,7 +514,7 @@ nonisolated enum ExportPackageBuilder {
                 textBytes += 4096
             }
         }
-        return bytes * 3 + bytes / 50 + textBytes * 3 + 16 * 1024 * 1024
+        return bytes * workingCopyMultiplier + bytes / 50 + textBytes * 3 + 16 * 1024 * 1024
     }
 
     /// 保留系统错误类型直到这里，避免嵌套的磁盘满错误提前退化成普通字符串。
@@ -458,6 +673,7 @@ nonisolated enum ExportPackageBuilder {
         manifest: [ManifestRow],
         folderName: String,
         scope: ExportScope,
+        option: ExportTranscodeOption,
         to folder: URL
     ) throws {
         let exported = manifest.filter { $0.exportedPath != nil }
@@ -471,6 +687,7 @@ nonisolated enum ExportPackageBuilder {
 
         导出时间：\(SLDateText.monthDayTime(Date()))
         导出范围：\(scope.title)
+        视频格式：\(option.documentText)
         镜头数量：\(shotCount)
         视频片段：\(exported.count)
 
@@ -553,6 +770,7 @@ nonisolated enum ExportPackageBuilder {
         manifest: [ManifestRow],
         folderName: String,
         scope: ExportScope,
+        option: ExportTranscodeOption,
         totalDuration: TimeInterval,
         to folder: URL
     ) throws {
@@ -631,6 +849,7 @@ nonisolated enum ExportPackageBuilder {
         ## 四、汇总
 
         - 导出范围：\(scope.title)
+        - 视频格式：\(option.documentText)
         - 分镜数量：\(shotCount)（已拍 \(recordedShotCount)，未拍 \(shotCount - recordedShotCount)）
         - 视频片段：\(clipCount)
         - 总时长：\(totalDuration.slDurationText)

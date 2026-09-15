@@ -24,6 +24,9 @@ struct ClipOptionsSheet: View {
     @EnvironmentObject private var store: ShotStore
     @Environment(\.dismiss) private var dismiss
 
+    /// 导出格式是用户偏好，导出页也读这个键：预览的文件名与最终导出永远同名。
+    @AppStorage(ExportTranscodeOption.storageKey) private var transcodeOption: ExportTranscodeOption = .original
+
     @State private var clipToDelete: ShotClip?
     @State private var showClearConfirm = false
     @State private var showDeleteConfirm = false
@@ -57,7 +60,9 @@ struct ClipOptionsSheet: View {
 
     /// 与导出结果同一套命名规则：边打字边看到最终文件名。
     ///
-    /// 扩展名取自该镜头主素材的真实格式（相册导入的 mp4 导出后仍是 mp4）。
+    /// 扩展名取自该镜头主素材的真实格式（相册导入的 mp4 导出后仍是 mp4）；
+    /// 导出页选了转码格式时换成转码后的容器——预览与打包读的是同一个函数，
+    /// 不会出现「预览写 .mp4、导出却是 .mov」。
     /// 镜头拍了多条时，主素材（按拍摄时间选择的最新一条）带子片段号，
     /// 与 `ExportPackageBuilder.build` 的落盘命名保持一致；只拍一条时不带。
     private var previewFileName: String {
@@ -65,7 +70,7 @@ struct ClipOptionsSheet: View {
             number: draftNumber,
             takeIndex: live.clipCount > 1 ? live.latestTakeIndex : nil,
             note: draftNote,
-            fileExtension: live.mainFileExtension
+            fileExtension: transcodeOption.exportedFileExtension(sourceExtension: live.mainFileExtension)
         )
     }
 

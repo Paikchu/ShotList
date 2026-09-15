@@ -24,6 +24,7 @@
 		4D21B8AA463B959342129383 /* ClipThumbnailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D76C58778AA070D969E3B132 /* ClipThumbnailView.swift */; };
 		5E5B618FEC440413A298DFEC /* ClipPlayerScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5E3482625A9371AE0EDE25E /* ClipPlayerScreen.swift */; };
 		672DB3A39BC93331A7F51C9F /* MediaImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 664AE32EEA99C983D3224F47 /* MediaImport.swift */; };
+		6A41F1B86754D866F2281412 /* MediaTranscode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0010E187571A3AB14ECCCC93 /* MediaTranscode.swift */; };
 		8D96CBDA644ED28662C1407A /* ExportSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40CA2B28173BD100C6752C4C /* ExportSession.swift */; };
 		982D00BF96837E1C2C3E6123 /* CameraPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0D8E14B1B286726D0AE9651 /* CameraPreview.swift */; };
 		A5BD6E9D1CF110C013181033 /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = D490D45A0FFBF3CE09903733 /* DesignSystem.swift */; };
@@ -46,6 +47,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		0010E187571A3AB14ECCCC93 /* MediaTranscode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaTranscode.swift; sourceTree = "<group>"; };
 		03F045688B89578B79D9C94A /* ExportSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportSessionTests.swift; sourceTree = "<group>"; };
 		174A3D35CA4D3F5E03135937 /* ShotStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShotStoreTests.swift; sourceTree = "<group>"; };
 		1F62FE93A71CC8A153C903AE /* ExportPackageBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportPackageBuilder.swift; sourceTree = "<group>"; };
@@ -153,6 +155,7 @@
 				40CA2B28173BD100C6752C4C /* ExportSession.swift */,
 				9073D61D5A3DF4BF61FFD7AB /* Haptics.swift */,
 				664AE32EEA99C983D3224F47 /* MediaImport.swift */,
+				0010E187571A3AB14ECCCC93 /* MediaTranscode.swift */,
 			);
 			path = Support;
 			sourceTree = "<group>";
@@ -299,6 +302,7 @@
 				1ECA56BC932E2F9FFCE63AB6 /* Haptics.swift in Sources */,
 				09C2763C7D09BF8F3BCB4EB9 /* HistoryView.swift in Sources */,
 				672DB3A39BC93331A7F51C9F /* MediaImport.swift in Sources */,
+				6A41F1B86754D866F2281412 /* MediaTranscode.swift in Sources */,
 				2E5ECD9F0FA3F8FB9CC241AF /* RootTabView.swift in Sources */,
 				35A52488473D9CF94F74EA58 /* Shot.swift in Sources */,
 				1E64696F72129E94B27A8785 /* ShotCardView.swift in Sources */,

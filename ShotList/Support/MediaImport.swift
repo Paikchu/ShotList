@@ -7,6 +7,10 @@ import UniformTypeIdentifiers
 /// `PhotosPicker` 给出的地址是系统托管的临时位置，这里立刻拷贝一份到自己的
 /// 临时目录，之后再由 `ShotStore` 接管搬进「分镜视频」目录。
 ///
+/// 拾取时显式要求 `.current`（见 `ShotFlowModifier`），拿到的是相册里的**原片**：
+/// 默认的 `.automatic` 会先转一次码，一段 4K 素材要等好几分钟，画质也会被降一档。
+/// 需要别的格式时到「导出」页按需转码，导入这一步只负责把原文件拿到手。
+///
 /// 文件名保留来源文件真实的扩展名：相册里的 mp4 被强行改名成 `.mov` 之后，
 /// 文件内容（容器）与扩展名就对不上了，导出后交给剪映可能打不开。
 struct ImportedMovie: Transferable {

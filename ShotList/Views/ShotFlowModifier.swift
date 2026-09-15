@@ -92,6 +92,16 @@ struct ShotFlowModifier: ViewModifier {
                 isPresented: $isPickerPresented,
                 selection: $pickerItem,
                 matching: .videos,
+                // 让系统直接给出相册里的**原片**。
+                //
+                // 默认的 `.automatic` 会为了「兼容」先转一次码：一段两分钟的 4K 素材
+                // 要等好几分钟，画质还会被降一档，而这段时间里 App 拿不到任何回调，
+                // 界面上只剩一个转圈。`.current` 明确要求不转码，系统只需把原文件
+                // 交出来（同卷是 APFS 克隆，几乎瞬时）。
+                //
+                // 需要小体积或更兼容的格式时，不必在这里压一遍——导出页可以按需选
+                // 格式（`ExportTranscodeOption`）：导入只做一次，导出可以反复换。
+                preferredItemEncoding: .current,
                 photoLibrary: .shared()
             )
             .onChange(of: pickerItem) { _, newValue in

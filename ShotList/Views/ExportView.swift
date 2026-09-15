@@ -5,6 +5,9 @@ struct ExportView: View {
     @EnvironmentObject private var store: ShotStore
 
     @State private var scope: ExportScope = .recordedOnly
+    /// 导出格式是**用户偏好**，不是这一次导出的临时选择：写进偏好里，
+    /// 镜头面板的文件名预览与这里读同一个键，改一处两边一致。
+    @AppStorage(ExportTranscodeOption.storageKey) private var transcodeOption: ExportTranscodeOption = .original
     @StateObject private var export = ExportSession()
     @State private var showClearConfirm = false
     /// 打开「清理未使用的文件」确认弹窗时把数量拍成一句话。
@@ -40,6 +43,7 @@ struct ExportView: View {
         }
         .onChange(of: store.shots) { _, _ in export.invalidate() }
         .onChange(of: scope) { _, _ in export.invalidate() }
+        .onChange(of: transcodeOption) { _, _ in export.invalidate() }
         .alert("导出失败", isPresented: errorBinding) {
             Button("好", role: .cancel) {}
         } message: {
@@ -112,6 +116,17 @@ struct ExportView: View {
             .pickerStyle(.segmented)
             .accessibilityLabel("导出范围")
 
+            // 默认「原片」：导入与拍摄都不转码，导出也就不该偷偷转一遍。
+            // 需要发给别人、或者要在老设备上播放时，才在这一步换格式。
+            Picker("视频格式", selection: $transcodeOption) {
+                ForEach(ExportTranscodeOption.allCases) { option in
+                    Text(option.title).tag(option)
+                }
+            }
+            .accessibilityLabel("视频格式")
+            .accessibilityValue(transcodeOption.title)
+            .accessibilityHint(transcodeOption.detail)
+
             Button {
                 build()
             } label: {
@@ -126,6 +141,10 @@ struct ExportView: View {
             }
             .disabled(export.isBuilding || store.recordedCount == 0)
 
+            if let progress = export.progress {
+                buildProgress(progress)
+            }
+
             if store.recordedCount == 0 {
                 Text("还没有可导出的视频。先到「分镜」里拍一段，再回来导出。")
                     .font(.footnote)
@@ -133,7 +152,27 @@ struct ExportView: View {
             }
         } header: {
             SectionHeader(title: "打包导出", systemImage: "shippingbox")
+        } footer: {
+            // 没有素材时不必先讲格式的取舍，先让用户去拍
+            if store.recordedCount > 0 {
+                Text(transcodeOption.detail)
+            }
         }
+    }
+
+    /// 转码一段素材要几十秒，进度得说明「动到哪了」——
+    /// 只有一个转圈的话，包越大越像卡死。
+    private func buildProgress(_ progress: ExportProgress) -> some View {
+        VStack(alignment: .leading, spacing: SLSpacing.tiny) {
+            ProgressView(value: progress.fraction)
+
+            Text(progress.text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(progress.text)
+        .accessibilityValue("已完成 \(Int(progress.fraction * 100))%")
     }
 
     private func resultSection(_ package: ExportPackage) -> some View {
@@ -198,12 +237,14 @@ struct ExportView: View {
     /// 复用导出时的命名函数，页面展示与实际打包结果永远一致：
     /// 拍了多条的镜头带子片段号（主素材条号按拍摄时间确定），只拍一条时不带。
     private var exampleMainFileName: String {
-        guard let shot = exampleShot else { return "01_镜头描述.mov" }
+        guard let shot = exampleShot else {
+            return "01_镜头描述.\(transcodeOption.exportedFileExtension(sourceExtension: "mov"))"
+        }
         return ExportPackageBuilder.exportedFileName(
             number: shot.number,
             takeIndex: shot.clipCount > 1 ? shot.latestTakeIndex : nil,
             note: shot.fileNameBase,
-            fileExtension: shot.mainFileExtension
+            fileExtension: transcodeOption.exportedFileExtension(sourceExtension: shot.mainFileExtension)
         )
     }
 
@@ -360,12 +401,19 @@ struct ExportView: View {
     private func build() {
         guard !export.isBuilding else { return }
         Haptics.impact(.light)
-        let shots = store.shots
-        let clipsDirectory = store.clipsDirectory
-        let currentScope = scope
+        // 快照这一份请求：打包期间用户改了范围或格式，结果就不该再被当成可分享的
+        let request = ExportRequest(
+            shots: store.shots,
+            clipsDirectory: store.clipsDirectory,
+            scope: scope,
+            option: transcodeOption
+        )
         Task {
-            await export.build(shots: shots, clipsDirectory: clipsDirectory, scope: currentScope,
-                               isCurrent: { store.shots == shots && scope == currentScope })
+            await export.build(request) {
+                store.shots == request.shots
+                    && scope == request.scope
+                    && transcodeOption == request.option
+            }
         }
     }
 
