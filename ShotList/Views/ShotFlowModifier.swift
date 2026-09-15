@@ -2,14 +2,16 @@ import PhotosUI
 import SwiftUI
 
 /// 可分页弹出（sheet）的流程
+///
+/// 镜头面板这一页把描述、编号、拍摄、片段都收了，所以只有它一个 sheet——
+/// 没有「再套一层的编辑器」。
 enum ShotSheet: Identifiable {
-    case options(Shot)
-    case editor(Shot)
+    /// - Parameter autoFocusNote: 打开后把光标放进描述输入框（新增 / 插入镜头走这条）
+    case options(Shot, autoFocusNote: Bool = false)
 
     var id: String {
         switch self {
-        case .options(let shot): return "options-\(shot.id.uuidString)"
-        case .editor(let shot): return "editor-\(shot.id.uuidString)"
+        case .options(let shot, _): return "options-\(shot.id.uuidString)"
         }
     }
 }
@@ -47,7 +49,6 @@ struct ShotFlowModifier: ViewModifier {
     @EnvironmentObject private var store: ShotStore
 
     @State private var cover: ShotCover?
-    @State private var queuedSheet: ShotSheet?
     @State private var queuedCover: ShotCover?
     @State private var queuedImportShot: Shot?
 
@@ -62,10 +63,8 @@ struct ShotFlowModifier: ViewModifier {
         content
             .sheet(item: $sheet, onDismiss: drainQueue) { item in
                 switch item {
-                case .options(let shot):
-                    optionsSheet(for: shot)
-                case .editor(let shot):
-                    ShotEditorView(shot: current(shot))
+                case .options(let shot, let autoFocusNote):
+                    optionsSheet(for: shot, autoFocusNote: autoFocusNote)
                 }
             }
             .fullScreenCover(item: $cover, onDismiss: drainQueue) { item in
@@ -113,9 +112,10 @@ struct ShotFlowModifier: ViewModifier {
 
     // MARK: - 子视图
 
-    private func optionsSheet(for shot: Shot) -> some View {
+    private func optionsSheet(for shot: Shot, autoFocusNote: Bool) -> some View {
         ClipOptionsSheet(
             shot: current(shot),
+            autoFocusNote: autoFocusNote,
             onCapture: {
                 queuedCover = .camera(current(shot))
                 sheet = nil
@@ -131,10 +131,6 @@ struct ShotFlowModifier: ViewModifier {
                     clip: clip,
                     index: store.takeIndex(of: clip, in: live)
                 )
-                sheet = nil
-            },
-            onEdit: {
-                queuedSheet = .editor(current(shot))
                 sheet = nil
             }
         )
@@ -171,11 +167,6 @@ struct ShotFlowModifier: ViewModifier {
 
     /// 当前弹层关闭后，接着呈现排队中的下一个
     private func drainQueue() {
-        if let next = queuedSheet {
-            queuedSheet = nil
-            DispatchQueue.main.async { sheet = next }
-            return
-        }
         if let next = queuedCover {
             queuedCover = nil
             DispatchQueue.main.async { cover = next }

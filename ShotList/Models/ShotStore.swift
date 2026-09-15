@@ -184,19 +184,30 @@ final class ShotStore: ObservableObject {
         return created
     }
 
+    /// 在某个镜头后面插入一个新镜头。
+    ///
+    /// 编号即位置，所以插入之后的所有镜头编号都会 +1，`normalize()` 会一并把
+    /// 磁盘上的片段文件名改好（`镜头03_…mov` → `镜头04_…mov`）。这是全应用
+    /// 统一的做法：拖动排序、删除、改编号走的都是同一条路。
+    ///
+    /// - Returns: 新建的镜头；传入的 id 已经不在列表里时返回 `nil`。
+    @discardableResult
+    func insertShot(below shotID: Shot.ID, note: String = "") -> Shot? {
+        guard let index = index(of: shotID) else { return nil }
+        let shot = Shot(number: index + 2, note: note)
+        shots.insert(shot, at: index + 1)
+        normalize()
+        persist()
+        return shot
+    }
+
     /// 复制一个已有分镜（不含片段）
     @discardableResult
     func duplicate(_ shot: Shot) -> Shot {
-        var copy = Shot(number: nextNumber, note: shot.note)
-        if let index = index(of: shot.id) {
-            copy.number = index + 2
-            shots.insert(copy, at: index + 1)
-        } else {
-            shots.append(copy)
-        }
-        normalize()
-        persist()
-        return copy
+        // 「复制」＝「在它后面插入一个内容相同的镜头」，共用同一处实现，
+        // 免得两条路上的重编号与改名行为悄悄走岔
+        if let copy = insertShot(below: shot.id, note: shot.note) { return copy }
+        return addShot(note: shot.note)
     }
 
     // MARK: - 改

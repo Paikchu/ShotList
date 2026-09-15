@@ -62,6 +62,28 @@ struct NumberBadge: View {
     }
 }
 
+/// 描述还没写时的占位：一道虚线。
+///
+/// 虚线在这套界面里一直是「这里还没有内容」的意思（缩略图的虚线框也是它），
+/// 所以不必写「待填写」之类的文案。分镜卡片与镜头面板头部共用这一个，
+/// 免得两处的虚线长度、疏密各走各的。
+struct NotePlaceholder: View {
+    var width: CGFloat = 96
+
+    var body: some View {
+        Path { path in
+            path.move(to: CGPoint(x: 0, y: 1))
+            path.addLine(to: CGPoint(x: width, y: 1))
+        }
+        .stroke(
+            Color.secondary.opacity(0.4),
+            style: StrokeStyle(lineWidth: 1.5, dash: [5, 4])
+        )
+        .frame(width: width, height: 2)
+        .accessibilityHidden(true)
+    }
+}
+
 /// 时间线导轨：卡片左侧的一条竖线，加一个节点。
 ///
 /// 每一行画「上段竖线 + 节点 + 下段竖线」三截，一行的下段正好接上下一行的上段，
@@ -72,6 +94,11 @@ struct TimelineRail<Node: View>: View {
     var isLast: Bool
     /// 节点上沿距行顶的距离，用来把节点对齐到卡片里的第一行文字
     var nodeTopPadding: CGFloat
+    /// 这一行是不是刚插进来的：上段竖线改用 accent，把「这条线是刚接上的」指出来。
+    ///
+    /// 只改上段、不改下段——新镜头是从上一个镜头后面「接」出来的，
+    /// 它和下面那个镜头的关系并没有变化。
+    var isHighlighted: Bool = false
     @ViewBuilder var node: Node
 
     private let lineWidth: CGFloat = 2
@@ -81,7 +108,7 @@ struct TimelineRail<Node: View>: View {
             if isFirst {
                 Color.clear.frame(height: nodeTopPadding)
             } else {
-                line().frame(height: nodeTopPadding)
+                line(highlighted: isHighlighted).frame(height: nodeTopPadding)
             }
 
             node
@@ -96,9 +123,9 @@ struct TimelineRail<Node: View>: View {
         .accessibilityHidden(true)
     }
 
-    private func line() -> some View {
+    private func line(highlighted: Bool = false) -> some View {
         Rectangle()
-            .fill(Color.primary.opacity(0.12))
+            .fill(highlighted ? Color.accentColor : Color.primary.opacity(0.12))
             .frame(width: lineWidth)
     }
 }

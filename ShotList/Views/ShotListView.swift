@@ -7,6 +7,13 @@ struct ShotListView: View {
     @State private var sheet: ShotSheet?
     @State private var pendingDeletion: Shot?
 
+    /// 刚新增的镜头，用来在列表里把它指出来（卡片 accent 描边 + 导轨上段变色）。
+    @State private var flashID: Shot.ID?
+    /// 已经插进去了、但编辑器还盖在上面——等编辑器关掉再闪。
+    /// 否则那一秒的动效全被弹层挡着，用户回来时只看到一张普通卡片。
+    @State private var pendingFlashID: Shot.ID?
+    @State private var flashTask: Task<Void, Never>?
+
     var body: some View {
         NavigationStack {
             Group {
@@ -31,24 +38,39 @@ struct ShotListView: View {
             }
         }
         .shotFlow(sheet: $sheet)
+        .onChange(of: sheet?.id) { _, newValue in
+            // 编辑器关掉了，这时候用户才真正在看列表
+            guard newValue == nil, let target = pendingFlashID else { return }
+            pendingFlashID = nil
+            flash(target)
+        }
     }
 
     // MARK: - 列表
 
     private var shotList: some View {
-        List {
-            Section {
-                ForEach(store.shots) { shot in
-                    shotRow(shot)
+        ScrollViewReader { proxy in
+            List {
+                Section {
+                    ForEach(store.shots) { shot in
+                        shotRow(shot)
+                            .id(shot.id)
+                    }
+                    .onMove { source, destination in
+                        store.move(fromOffsets: source, toOffset: destination)
+                    }
                 }
-                .onMove { source, destination in
-                    store.move(fromOffsets: source, toOffset: destination)
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(Color(.systemGroupedBackground))
+            .onChange(of: flashID) { _, newValue in
+                guard let newValue else { return }
+                withAnimation(.snappy(duration: 0.3)) {
+                    proxy.scrollTo(newValue, anchor: .center)
                 }
             }
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .background(Color(.systemGroupedBackground))
     }
 
     /// 一行 = 左侧时间线导轨 + 卡片。
@@ -59,7 +81,8 @@ struct ShotListView: View {
             TimelineRail(
                 isFirst: shot.id == store.shots.first?.id,
                 isLast: shot.id == store.shots.last?.id,
-                nodeTopPadding: railNodeTopPadding
+                nodeTopPadding: railNodeTopPadding,
+                isHighlighted: shot.id == flashID
             ) {
                 NumberBadge(
                     number: shot.number,
@@ -71,7 +94,8 @@ struct ShotListView: View {
             ShotCardView(
                 shot: shot,
                 clipURL: store.clipURL(for: shot),
-                showsNumber: false
+                showsNumber: false,
+                isNew: shot.id == flashID
             ) {
                 Haptics.impact(.light)
                 sheet = .options(shot)
@@ -94,13 +118,6 @@ struct ShotListView: View {
             } label: {
                 Label("删除", systemImage: "trash")
             }
-
-            Button {
-                sheet = .editor(shot)
-            } label: {
-                Label("编辑", systemImage: "square.and.pencil")
-            }
-            .tint(.indigo)
         }
         .contextMenu {
             contextMenu(for: shot)
@@ -124,9 +141,9 @@ struct ShotListView: View {
         }
 
         Button {
-            sheet = .editor(shot)
+            insert(below: shot)
         } label: {
-            Label("编辑分镜描述", systemImage: "square.and.pencil")
+            Label("在下方插入新镜头", systemImage: "text.insert")
         }
 
         Button {
@@ -240,7 +257,37 @@ struct ShotListView: View {
     private func addShot() {
         Haptics.impact(.light)
         let shot = store.addShot()
-        sheet = .editor(shot)
+        // 新镜头是空的，用户此刻就是要写它——直接把光标放进描述输入框
+        sheet = .options(shot, autoFocusNote: true)
+    }
+
+    /// 在某个镜头后面插入一个空白镜头，并直接进它的面板。
+    ///
+    /// 插入点之后的编号会整体 +1（编号即位置），磁盘上的片段文件名由 `normalize()`
+    /// 一并改好。面板一进来就把光标放进描述输入框，点完立刻能写，
+    /// 不用回到列表里去找刚插进来的那张卡。
+    private func insert(below shot: Shot) {
+        Haptics.impact(.light)
+        guard let created = store.insertShot(below: shot.id) else { return }
+        pendingFlashID = created.id
+        sheet = .options(created, autoFocusNote: true)
+    }
+
+    /// 把某个镜头高亮一下再收回。
+    ///
+    /// 先等一次布局再滚：新增是紧跟数据变更发生的，立刻 `scrollTo` 可能滚到旧位置上。
+    private func flash(_ id: Shot.ID) {
+        flashTask?.cancel()
+        flashTask = Task {
+            try? await Task.sleep(for: .milliseconds(50))
+            guard !Task.isCancelled else { return }
+
+            withAnimation(.easeOut(duration: 0.2)) { flashID = id }
+
+            try? await Task.sleep(for: .seconds(1.2))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.35)) { flashID = nil }
+        }
     }
 
     /// 上下挪一位。`move(fromOffsets:toOffset:)` 的目标位置是「要插到谁前面」，
@@ -255,7 +302,9 @@ struct ShotListView: View {
 
     private func addShots(count: Int) {
         Haptics.impact(.light)
-        store.addShots(count: count)
+        let created = store.addShots(count: count)
+        // 新镜头加在末尾，而用户此刻在列表顶部，不指一下不知道加在哪儿了
+        if let first = created.first { flash(first.id) }
     }
 }
 
