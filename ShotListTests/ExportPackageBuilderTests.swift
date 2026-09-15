@@ -4,6 +4,16 @@ import XCTest
 final class ExportTestFileManager: FileManager, @unchecked Sendable {
     let root: URL
     var exportedFiles: [String: Data] = [:]
+    var copyCount = 0
+    var failCopyExtension: String?
+    override func copyItem(at srcURL: URL, to dstURL: URL) throws {
+        copyCount += 1
+        if dstURL.pathExtension == failCopyExtension {
+            try Data("partial".utf8).write(to: dstURL)
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(POSIXErrorCode.ENOSPC.rawValue))
+        }
+        try super.copyItem(at: srcURL, to: dstURL)
+    }
     init(root: URL) { self.root = root; super.init() }
     override var temporaryDirectory: URL { root }
     override func removeItem(at url: URL) throws {
@@ -49,4 +59,39 @@ final class ExportPackageBuilderTests: XCTestCase {
             }
         }
     }
+    func testSpacePreflightAndRuntimeFailureCleanup() throws {
+        for mode in ["preflight", "copy", "zip", "unknown", "enough"] {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: root) }
+            let fm = ExportTestFileManager(root: root)
+            var shot = Shot(number: 1, note: "Space test")
+            shot.clips = [ShotClip(fileName: "source.mov")]
+            let source = root.appendingPathComponent("source.mov")
+            try Data("video".utf8).write(to: source)
+            fm.failCopyExtension = mode == "copy" ? "mov" : mode == "zip" ? "zip" : nil
+            let available: Int64? = mode == "preflight" ? 0 : mode == "unknown" ? nil : Int64.max
+            if mode == "unknown" || mode == "enough" {
+                let result = try ExportPackageBuilder.build(shots: [shot], clipsDirectory: root, scope: .recordedOnly, fileManager: fm, availableCapacity: { _ in available })
+                XCTAssertTrue(fm.fileExists(atPath: result.zipURL.path))
+            } else {
+                XCTAssertThrowsError(try ExportPackageBuilder.build(shots: [shot], clipsDirectory: root, scope: .recordedOnly, fileManager: fm, availableCapacity: { _ in available })) { error in
+                    guard case ExportError.insufficientSpace = error else { return XCTFail("Expected space error: \(error)") }
+                    XCTAssertTrue(error.localizedDescription.contains("释放设备空间"))
+                }
+                if mode == "preflight" { XCTAssertEqual(fm.copyCount, 0) }
+                let exportRoot = root.appendingPathComponent("ShotListExport")
+                XCTAssertTrue((try? fm.contentsOfDirectory(atPath: exportRoot.path))?.isEmpty ?? true)
+            }
+            XCTAssertEqual(try Data(contentsOf: source), Data("video".utf8))
+        }
+    }
+
+    func testNestedDiskFullErrorIsActionable() {
+        let error = NSError(domain: NSCocoaErrorDomain, code: NSFileWriteUnknownError,
+                            userInfo: [NSUnderlyingErrorKey: NSError(domain: NSCocoaErrorDomain, code: NSFileWriteOutOfSpaceError)])
+        guard case .insufficientSpace = ExportPackageBuilder.exportFailure(error) else { return XCTFail("Lost underlying disk-full error") }
+        guard case .packagingFailed = ExportPackageBuilder.exportFailure(NSError(domain: NSCocoaErrorDomain, code: NSFileReadNoPermissionError)) else { return XCTFail("Misclassified permission failure") }
+    }
+
 }

@@ -55,11 +55,17 @@ enum ExportOutcome: Sendable {
 enum ExportError: LocalizedError {
     case noClips
     case packagingFailed(String)
+    case insufficientSpace(required: Int64?, available: Int64?)
 
     var errorDescription: String? {
         switch self {
         case .noClips:
             return "没有可导出的视频文件：分镜里还没有片段，或者视频已经从设备上被删掉了。"
+        case .insufficientSpace(let required, let available):
+            if let required, let available {
+                return "设备空间不足：本次导出预计需预留 \(required.slByteText)，当前可用 \(available.slByteText)。请释放设备空间或减少要导出的素材后重试。"
+            }
+            return "导出时设备空间不足。请释放设备空间或减少要导出的素材后重试。"
         case .packagingFailed(let reason):
             return "打包失败：\(reason)"
         }
@@ -124,7 +130,20 @@ nonisolated enum ExportPackageBuilder {
         shots: [Shot],
         clipsDirectory: URL,
         scope: ExportScope,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        availableCapacity: (URL) throws -> Int64? = availableCapacity
+    ) throws -> ExportPackage {
+        do {
+            return try buildChecked(shots: shots, clipsDirectory: clipsDirectory, scope: scope,
+                                    fileManager: fileManager, availableCapacity: availableCapacity)
+        } catch {
+            throw exportFailure(error)
+        }
+    }
+
+    private static func buildChecked(
+        shots: [Shot], clipsDirectory: URL, scope: ExportScope, fileManager: FileManager,
+        availableCapacity: (URL) throws -> Int64?
     ) throws -> ExportPackage {
 
         // 「有东西可导」以**磁盘**为准：JSON 里记着片段、文件却已经不在磁盘上时
@@ -141,6 +160,13 @@ nonisolated enum ExportPackageBuilder {
 
         let included: [Shot] = scope == .recordedOnly ? recorded : shots
 
+        // 按未压缩体积估算工作副本、系统临时 zip 和最终 zip 的同时占用，
+        // 再留文本/压缩开销余量。这是保守预算，不是声称实际峰值固定为三倍。
+        let required = try storageBudget(for: included, clipsDirectory: clipsDirectory, fileManager: fileManager)
+        if let available = try? availableCapacity(fileManager.temporaryDirectory), available < required {
+            throw ExportError.insufficientSpace(required: required, available: max(0, available))
+        }
+
         let now = Date()
         let folderName = "分镜导出_\(Self.dayToken(now))"
         let workingRoot = fileManager.temporaryDirectory
@@ -148,12 +174,12 @@ nonisolated enum ExportPackageBuilder {
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         let folder = workingRoot.appendingPathComponent(folderName, isDirectory: true)
 
+        defer { try? fileManager.removeItem(at: workingRoot) }
         do {
             try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
         } catch {
-            throw ExportError.packagingFailed(error.localizedDescription)
+            throw Self.exportFailure(error)
         }
-        defer { try? fileManager.removeItem(at: workingRoot) }
 
         let alternateFolder = folder.appendingPathComponent(alternateFolderName, isDirectory: true)
         var didCreateAlternateFolder = false
@@ -197,7 +223,7 @@ nonisolated enum ExportPackageBuilder {
                             try fileManager.createDirectory(at: alternateFolder, withIntermediateDirectories: true)
                             didCreateAlternateFolder = true
                         } catch {
-                            throw ExportError.packagingFailed(error.localizedDescription)
+                            throw Self.exportFailure(error)
                         }
                     }
                     destination = alternateFolder.appendingPathComponent(fileName, isDirectory: false)
@@ -208,7 +234,7 @@ nonisolated enum ExportPackageBuilder {
                 do {
                     try fileManager.copyItem(at: source, to: destination)
                 } catch {
-                    throw ExportError.packagingFailed(error.localizedDescription)
+                    throw Self.exportFailure(error)
                 }
 
                 totalDuration += clip.duration ?? 0
@@ -254,6 +280,41 @@ nonisolated enum ExportPackageBuilder {
             byteCount: size,
             createdAt: now
         )
+    }
+
+    private static func availableCapacity(at url: URL) throws -> Int64? {
+        let values = try url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeAvailableCapacityKey])
+        return values.volumeAvailableCapacityForImportantUsage ?? values.volumeAvailableCapacity.map(Int64.init)
+    }
+
+    private static func storageBudget(for shots: [Shot], clipsDirectory: URL, fileManager: FileManager) throws -> Int64 {
+        var bytes: Int64 = 0
+        var textBytes: Int64 = 0
+        for shot in shots {
+            textBytes += Int64(shot.note.utf8.count) * 8 + 4096
+            for clip in shot.clips {
+                let url = clipsDirectory.appendingPathComponent(clip.fileName)
+                guard fileManager.fileExists(atPath: url.path) else { continue }
+                bytes += Int64(try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0)
+                textBytes += 4096
+            }
+        }
+        return bytes * 3 + bytes / 50 + textBytes * 3 + 16 * 1024 * 1024
+    }
+
+    /// 保留系统错误类型直到这里，避免嵌套的磁盘满错误提前退化成普通字符串。
+    static func exportFailure(_ error: Error) -> ExportError {
+        if let error = error as? ExportError { return error }
+        let failure = error as NSError
+        if (failure.domain == NSCocoaErrorDomain && failure.code == NSFileWriteOutOfSpaceError)
+            || (failure.domain == NSPOSIXErrorDomain && failure.code == POSIXErrorCode.ENOSPC.rawValue) {
+            return .insufficientSpace(required: nil, available: nil)
+        }
+        if let underlying = failure.userInfo[NSUnderlyingErrorKey] as? Error,
+           case .insufficientSpace = exportFailure(underlying) {
+            return .insufficientSpace(required: nil, available: nil)
+        }
+        return .packagingFailed(error.localizedDescription)
     }
 
     /// 清空历史导出包所在的临时目录。
@@ -609,6 +670,8 @@ nonisolated enum ExportPackageBuilder {
             try fileManager.removeItem(at: destination)
         }
 
+        var completed = false
+        defer { if !completed { try? fileManager.removeItem(at: destination) } }
         var coordinatorError: NSError?
         var copyError: Error?
         var didCopy = false
@@ -627,15 +690,16 @@ nonisolated enum ExportPackageBuilder {
         }
 
         if let coordinatorError {
-            throw ExportError.packagingFailed(coordinatorError.localizedDescription)
+            throw Self.exportFailure(coordinatorError)
         }
         if let copyError {
-            throw ExportError.packagingFailed(copyError.localizedDescription)
+            throw Self.exportFailure(copyError)
         }
         guard didCopy else {
             throw ExportError.packagingFailed("系统未能生成压缩包")
         }
         Self.pruneZips(in: outputDirectory, keeping: destination, fileManager: fileManager)
+        completed = true
         return destination
     }
 
