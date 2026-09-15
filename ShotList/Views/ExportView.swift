@@ -5,9 +5,7 @@ struct ExportView: View {
     @EnvironmentObject private var store: ShotStore
 
     @State private var scope: ExportScope = .recordedOnly
-    @State private var package: ExportPackage?
-    @State private var isBuilding = false
-    @State private var errorMessage: String?
+    @StateObject private var export = ExportSession()
     @State private var showClearConfirm = false
     /// 打开「清理未使用的文件」确认弹窗时把数量拍成一句话。
     /// 不能等弹窗渲染时现读 `store`——那时文件已经删了，文案会变成「0 个」。
@@ -20,8 +18,14 @@ struct ExportView: View {
             List {
                 overviewSection
                 buildSection
-                if let package {
+                if let package = export.package {
                     resultSection(package)
+                }
+                if export.isStale {
+                    Section {
+                        Text("分镜、素材或导出范围已变化，请重新生成导出包。")
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 contentsSection
                 clipsSection
@@ -34,15 +38,17 @@ struct ExportView: View {
             // 标题与右侧内容同行（inlineLarge），不单独占一行；三页起始位置一致
             .toolbarTitleDisplayMode(.inlineLarge)
         }
+        .onChange(of: store.shots) { _, _ in export.invalidate() }
+        .onChange(of: scope) { _, _ in export.invalidate() }
         .alert("导出失败", isPresented: errorBinding) {
             Button("好", role: .cancel) {}
         } message: {
-            Text(errorMessage ?? "")
+            Text(export.errorMessage ?? "")
         }
         .alert("清空所有分镜和视频？", isPresented: $showClearConfirm) {
             Button("全部清空", role: .destructive) {
                 store.deleteEverything()
-                package = nil
+                export.invalidate()
                 Haptics.warning()
             }
             Button("取消", role: .cancel) {}
@@ -112,13 +118,13 @@ struct ExportView: View {
                 HStack {
                     Label("生成导出包", systemImage: "shippingbox")
                     Spacer()
-                    if isBuilding {
+                    if export.isBuilding {
                         ProgressView().controlSize(.small)
                     }
                 }
                 .frame(minHeight: SLSize.minTouchTarget)
             }
-            .disabled(isBuilding || store.recordedCount == 0)
+            .disabled(export.isBuilding || store.recordedCount == 0)
 
             if store.recordedCount == 0 {
                 Text("还没有可导出的视频。先到「分镜」里拍一段，再回来导出。")
@@ -339,8 +345,8 @@ struct ExportView: View {
 
     private var errorBinding: Binding<Bool> {
         Binding(
-            get: { errorMessage != nil },
-            set: { presented in if !presented { errorMessage = nil } }
+            get: { export.errorMessage != nil },
+            set: { presented in if !presented { export.errorMessage = nil } }
         )
     }
 
@@ -352,32 +358,17 @@ struct ExportView: View {
     }
 
     private func build() {
-        guard !isBuilding else { return }
-        isBuilding = true
+        guard !export.isBuilding else { return }
         Haptics.impact(.light)
-
         let shots = store.shots
         let clipsDirectory = store.clipsDirectory
         let currentScope = scope
-
         Task {
-            let outcome = await ExportPackageBuilder.buildOffMain(
-                shots: shots,
-                clipsDirectory: clipsDirectory,
-                scope: currentScope
-            )
-
-            isBuilding = false
-            switch outcome {
-            case .success(let value):
-                package = value
-                Haptics.success()
-            case .failure(let message):
-                Haptics.error()
-                errorMessage = message
-            }
+            await export.build(shots: shots, clipsDirectory: clipsDirectory, scope: currentScope,
+                               isCurrent: { store.shots == shots && scope == currentScope })
         }
     }
+
 }
 
 #Preview {

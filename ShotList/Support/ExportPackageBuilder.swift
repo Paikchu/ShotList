@@ -326,20 +326,6 @@ nonisolated enum ExportPackageBuilder {
         try? fileManager.removeItem(at: root)
     }
 
-    /// 只保留最新一份 zip。
-    ///
-    /// 单次会话里连续导出多次时，历史包没有引用者（界面只展示最近一次的结果），
-    /// 每次打完新包就把同目录里的旧包删掉，一次会话最多占一份全量体积。
-    private static func pruneZips(in directory: URL, keeping current: URL, fileManager: FileManager) {
-        let contents = (try? fileManager.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: nil
-        )) ?? []
-        for url in contents where url != current && url.pathExtension == "zip" {
-            try? fileManager.removeItem(at: url)
-        }
-    }
-
     // MARK: - 内部实现
 
     private struct ManifestRow {
@@ -658,20 +644,18 @@ nonisolated enum ExportPackageBuilder {
 
     /// 使用 `NSFileCoordinator` 的系统压缩能力，把目录打成 zip。
     /// 协调器给出的临时 zip 在闭包结束后就会被删除，因此必须在闭包内完成拷贝。
-    /// 打包成功后只保留这一份，同目录下的旧包一并清掉。
+    /// 每次生成独立文件；由持有导出结果的会话回收旧包，迟到结果不能删除新包。
     private static func zip(folder: URL, folderName: String, fileManager: FileManager) throws -> URL {
         let outputDirectory = fileManager.temporaryDirectory
             .appendingPathComponent("ShotListExport", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try fileManager.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
 
         let destination = outputDirectory
             .appendingPathComponent("\(folderName)_\(Self.timeToken(Date())).zip", isDirectory: false)
-        if fileManager.fileExists(atPath: destination.path) {
-            try fileManager.removeItem(at: destination)
-        }
 
         var completed = false
-        defer { if !completed { try? fileManager.removeItem(at: destination) } }
+        defer { if !completed { try? fileManager.removeItem(at: outputDirectory) } }
         var coordinatorError: NSError?
         var copyError: Error?
         var didCopy = false
@@ -698,7 +682,6 @@ nonisolated enum ExportPackageBuilder {
         guard didCopy else {
             throw ExportError.packagingFailed("系统未能生成压缩包")
         }
-        Self.pruneZips(in: outputDirectory, keeping: destination, fileManager: fileManager)
         completed = true
         return destination
     }
