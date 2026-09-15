@@ -12,6 +12,7 @@ struct HistoryView: View {
 
     @State private var sheet: ShotSheet?
     @State private var selectedDate = Self.initialSelectedDate()
+    @State private var isCalendarExpanded = false
     /// 默认落在「当天」：历史页进来就是要看「这一天拍了什么」，
     /// 其余口径（全部 / 其他天 / 未拍）点统计块即可切换。
     @State private var filter: Filter = .thatDay
@@ -53,7 +54,9 @@ struct HistoryView: View {
                     if store.shots.isEmpty {
                         emptyState
                     } else {
-                        calendarCard
+                        if isCalendarExpanded {
+                            calendarCard
+                        }
                         dateHeader
                         progressCard
                         statRow
@@ -69,6 +72,22 @@ struct HistoryView: View {
             .navigationTitle("历史记录")
             // 标题与右侧内容同行（inlineLarge），不单独占一行；三页起始位置一致
             .toolbarTitleDisplayMode(.inlineLarge)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    if !store.shots.isEmpty {
+                        Button {
+                            isCalendarExpanded.toggle()
+                            Haptics.selection()
+                        } label: {
+                            Image(systemName: "calendar")
+                        }
+                        .tint(isCalendarExpanded ? Color.accentColor : Color.primary)
+                        .accessibilityLabel(isCalendarExpanded ? "收起日历" : "展开日历")
+                        .accessibilityValue(isCalendarExpanded ? "已展开" : "已收起")
+                        .accessibilityIdentifier("history.calendarToggle")
+                    }
+                }
+            }
         }
         .shotFlow(sheet: $sheet)
     }
