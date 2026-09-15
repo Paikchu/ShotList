@@ -68,14 +68,18 @@ enum ExportError: LocalizedError {
 
 /// 把分镜与片段打包成一个可分享的 zip。
 ///
-/// 一个镜头可能拍了好几条，导出时把最新的一条放在根目录当主素材，
+/// 一个镜头可能拍了好几条，导出时**每一条都会进包**：最新的一条放在根目录当主素材，
 /// 更早的片段收进「备用片段」目录，这样导入剪映时主素材顺序干净，
 /// 想换某一条也有备份可选。
 ///
-/// 包内结构：
+/// 命名规则：先标分镜号，再标子片段号。拍了多条的镜头，所有片段（含主素材）
+/// 都带「-第几条」后缀，例如 `01-1_…`、`01-2_…`、`01-3_…`（第 3 条是主素材）；
+/// 只拍一条的镜头保持 `01_….mov`，不带后缀。
+///
+/// 包内结构（镜头 01 拍了 3 条、镜头 02 拍了 1 条时）：
 /// ```
 /// 分镜导出_20260914/
-/// ├── 01_无人机缓慢上升.mov      每个镜头的最新一条
+/// ├── 01-3_无人机缓慢上升.mov   每个镜头的最新一条
 /// ├── 02_街景横摇.mov
 /// ├── 备用片段/
 /// │   ├── 01-1_无人机缓慢上升.mov  同一个镜头更早拍的
@@ -174,8 +178,11 @@ nonisolated enum ExportPackageBuilder {
                 let takeIndex = offset + 1
                 let isMain = clip.id == latest.id
                 let fileName = Self.exportedFileName(
-                    for: shot,
-                    takeIndex: isMain ? nil : takeIndex,
+                    number: shot.number,
+                    // 拍了多条时，主素材同样带子片段号（它是第 takeTotal 条）；
+                    // 只有一条时保持 01_xxx.mov，不加后缀。
+                    takeIndex: takeTotal > 1 ? takeIndex : nil,
+                    note: shot.fileNameBase,
                     fileExtension: Self.fileExtension(ofFileName: clip.fileName)
                 )
 
@@ -324,24 +331,29 @@ nonisolated enum ExportPackageBuilder {
         }
     }
 
-    /// 主素材的文件名，例如「01_无人机缓慢上升.mov」。
+    /// 主素材（只拍一条时）的文件名，例如「01_无人机缓慢上升.mov」。
     ///
     /// 编辑页拿它做实时预览，导出时走的是同一个函数，规则改动两边一起变。
     /// 扩展名由调用方给出（取自片段本身）：相册导入的 mp4 不该在这里被写成 `.mov`。
     static func mainFileName(number: Int, note: String, fileExtension: String = "mov") -> String {
-        String(format: "%02d_%@.%@", number, sanitize(note), fileExtension)
+        exportedFileName(number: number, takeIndex: nil, note: note, fileExtension: fileExtension)
     }
 
-    /// 主素材（最新一条）不加序号后缀，备用片段带「-第几条」后缀
-    private static func exportedFileName(
-        for shot: Shot,
+    /// 导出文件名：分镜号在前，子片段号在后。
+    ///
+    /// `takeIndex` 非 nil 时生成「01-3_描述.mov」形式（第 3 条），
+    /// 为 nil 时生成「01_描述.mov」。拍了多条的镜头，主素材与备用片段
+    /// 都带子片段号，保证三条片段在文件名上一眼可辨先后。
+    static func exportedFileName(
+        number: Int,
         takeIndex: Int?,
+        note: String,
         fileExtension: String
     ) -> String {
         if let takeIndex {
-            return String(format: "%02d-%d_%@.%@", shot.number, takeIndex, sanitize(shot.fileNameBase), fileExtension)
+            return String(format: "%02d-%d_%@.%@", number, takeIndex, sanitize(note), fileExtension)
         }
-        return mainFileName(number: shot.number, note: shot.fileNameBase, fileExtension: fileExtension)
+        return String(format: "%02d_%@.%@", number, sanitize(note), fileExtension)
     }
 
     /// 导出命名沿用源文件的扩展名，保证容器与扩展名一致
@@ -417,7 +429,8 @@ nonisolated enum ExportPackageBuilder {
 
         目录内容
         ----------------------------
-        * 01_xxx.mov          每个镜头的主素材，取其最新拍的一条，文件名前缀即镜头编号
+        * 01_xxx.mov          每个镜头最新拍的一条（主素材），文件名前缀即镜头编号；
+                              镜头拍了多条时主素材也带子片段号，形如 01-3_xxx.mov（第 3 条）
         * 备用片段/           同一个镜头更早拍的片段，命名形如 01-1_xxx.mov（第 1 条）
         * 分镜清单.csv        每个镜头的描述、状态与每条片段的时长、文件名
         * 分镜文字内容指南.md  每个镜头的文字内容与视频文件名对照表，供 AI 按分镜处理视频
@@ -511,7 +524,9 @@ nonisolated enum ExportPackageBuilder {
         ## 一、素材与分镜的对应关系
 
         - 视频文件名以两位编号开头，编号即分镜编号，与「三、镜头清单」一一对应。
-        - 根目录里的视频是每个镜头的主素材（该镜头最新拍的一条）。
+        - 分镜号后面是子片段号：拍了多条的镜头，文件名形如 01-1_…、01-2_…、01-3_…，
+          数字越大拍得越晚；只拍一条的镜头命名为 01_…，不带子片段号。
+        - 根目录里的视频是每个镜头的主素材（该镜头最新拍的一条，即子片段号最大的那条）。
         - 「备用片段」目录里是同一个镜头更早拍的片段，主素材不合适时用它替换；
           不需要替换时不要导入它们。
         - 未拍摄的镜头没有对应文件，按编号跳过，不占时间线。

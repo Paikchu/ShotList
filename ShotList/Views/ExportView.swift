@@ -168,8 +168,8 @@ struct ExportView: View {
 
     private var contentsSection: some View {
         Section {
-            contentsRow(exampleMainFileName, "每个镜头最新的一条，按编号前缀命名；扩展名跟随源文件")
-            contentsRow(exampleAlternateFileName, "同一个镜头更早拍的片段")
+            contentsRow(exampleMainFileName, "每个镜头最新的一条（主素材）；拍了多条时统一带「分镜号-子片段号」，只拍一条时命名为 01_xxx.mov")
+            contentsRow(exampleAlternateFileName, "同一个镜头更早拍的片段，子片段号越小拍得越早")
             contentsRow("分镜清单.csv", "编号、描述、状态，以及每条片段的时长与文件名")
             contentsRow("分镜文字内容指南.md", "镜头文字内容与素材的对照表，可直接交给 AI 剪辑")
             contentsRow("导出说明.txt", "解压、导入剪映、传到电脑的步骤")
@@ -186,12 +186,14 @@ struct ExportView: View {
         store.shots.first { $0.hasClip } ?? store.shots.first
     }
 
-    /// 主素材示例，例如「01_无人机缓慢上升.mov」。
-    /// 复用导出时的命名函数，页面展示与实际打包结果永远一致。
+    /// 主素材示例，例如「01-3_无人机缓慢上升.mov」。
+    /// 复用导出时的命名函数，页面展示与实际打包结果永远一致：
+    /// 拍了多条的镜头带子片段号（最新一条是第 clipCount 条），只拍一条时不带。
     private var exampleMainFileName: String {
         guard let shot = exampleShot else { return "01_镜头描述.mov" }
-        return ExportPackageBuilder.mainFileName(
+        return ExportPackageBuilder.exportedFileName(
             number: shot.number,
+            takeIndex: shot.clipCount > 1 ? shot.clipCount : nil,
             note: shot.fileNameBase,
             fileExtension: shot.mainFileExtension
         )
