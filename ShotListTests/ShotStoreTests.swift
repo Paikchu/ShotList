@@ -421,6 +421,42 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
         XCTAssertFalse(try fm.contentsOfDirectory(atPath: root.path).contains { $0.hasPrefix("import-") })
     }
 
+    /// 一次选多段视频时，按选择顺序逐段落进同一个镜头。
+    ///
+    /// 批量导入必然撞上「同一秒内连落几段」：文件名的时间戳 token 会撞车，
+    /// 只能靠后缀错开；顺序、时长与主素材都按落地的先后定。
+    @MainActor
+    func testBatchImportAppendsClipsInSelectionOrderWithoutNameCollision() async throws {
+        let (root, fm) = try fixture()
+        let store = ShotStore(fileManager: fm)
+        let shot = try XCTUnwrap(store.addShot(note: "批量导入"))
+
+        // 混着扩展名，确认每段的扩展名各随其源文件
+        let sources = ["a.mov", "b.mp4", "c.mov"].map { name -> URL in
+            let url = root.appendingPathComponent(name)
+            try? Data(name.utf8).write(to: url)
+            return url
+        }
+
+        for (index, source) in sources.enumerated() {
+            try await store.addClip(from: source, duration: TimeInterval(index + 1), to: shot.id)
+        }
+
+        let live = try XCTUnwrap(store.shot(withID: shot.id))
+        XCTAssertEqual(live.clips.map(\.duration), [1, 2, 3])
+        XCTAssertEqual(live.clips.map(\.recordedAt), live.clips.map(\.recordedAt).sorted())
+        XCTAssertEqual(live.latestTakeIndex, 3)
+
+        let names = live.clips.map(\.fileName)
+        XCTAssertEqual(Set(names).count, 3, "同一秒连落的三段不能互相覆盖")
+        XCTAssertEqual(names.map { ($0 as NSString).pathExtension }, ["mov", "mp4", "mov"])
+        for name in names {
+            XCTAssertTrue(name.hasPrefix("镜头01_"))
+            XCTAssertTrue(fm.fileExists(atPath: store.clipsDirectory.appendingPathComponent(name).path))
+        }
+        XCTAssertFalse(try fm.contentsOfDirectory(atPath: root.path).contains { $0.hasPrefix("import-") })
+    }
+
 }
 
 

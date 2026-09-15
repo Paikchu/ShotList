@@ -97,9 +97,9 @@ struct ClipOptionsSheet: View {
                     .accessibilityHint("打开相机，给这个镜头再录一条，之前拍的会保留")
 
                     Button(action: { if flushDraft() { onImport() } }) {
-                        Label(live.hasClip ? "从相册再添加一条" : "从相册导入", systemImage: "photo.on.rectangle.angled")
+                        Label(live.hasClip ? "从相册再添加" : "从相册导入", systemImage: "photo.on.rectangle.angled")
                     }
-                    .accessibilityHint("从照片图库里选一段已经拍好的视频加进来")
+                    .accessibilityHint("从照片图库里选一段或多段已经拍好的视频加进来，可以一次选多段")
                 }
 
                 Section("分镜描述") {

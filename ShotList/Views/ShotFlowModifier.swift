@@ -38,6 +38,20 @@ private enum ImportFailure: LocalizedError {
     }
 }
 
+/// 一批导入（可能有多段）的进度。
+///
+/// 带上 `id` 是为了认领：导入期间用户可能又选了一批，上一批的收尾不能改到下一批的
+/// 进度、也不能把下一批的指示器收掉——同类问题见 P2-25。
+private struct ImportBatch: Equatable {
+    let id: UUID
+    let total: Int
+    var done = 0
+
+    var text: String {
+        total > 1 ? "正在导入 \(min(done + 1, total)) / \(total)" : "正在导入视频…"
+    }
+}
+
 /// 把「点开分镜 → 拍摄 / 导入 / 播放」的整套弹层流程封装起来，
 /// 让「分镜」和「历史」两个标签页共用同一套交互。
 ///
@@ -55,9 +69,9 @@ struct ShotFlowModifier: ViewModifier {
 
     @State private var isPickerPresented = false
     @State private var pickerTarget: Shot?
-    @State private var pickerItem: PhotosPickerItem?
+    @State private var pickerItems: [PhotosPickerItem] = []
 
-    @State private var activeImports = 0
+    @State private var importBatch: ImportBatch?
     @State private var importError: String?
 
     func body(content: Content) -> some View {
@@ -90,7 +104,7 @@ struct ShotFlowModifier: ViewModifier {
             }
             .photosPicker(
                 isPresented: $isPickerPresented,
-                selection: $pickerItem,
+                selection: $pickerItems,
                 matching: .videos,
                 // 让系统直接给出相册里的**原片**。
                 //
@@ -104,11 +118,13 @@ struct ShotFlowModifier: ViewModifier {
                 preferredItemEncoding: .current,
                 photoLibrary: .shared()
             )
-            .onChange(of: pickerItem) { _, newValue in
-                guard let item = newValue, let target = pickerTarget else { return }
-                pickerItem = nil
+            .onChange(of: pickerItems) { _, newValue in
+                guard !newValue.isEmpty, let target = pickerTarget else { return }
+                // 同步取走本次选择与目标：导入任务结束不再触碰后续的选择（P2-25）。
+                let items = newValue
+                pickerItems = []
                 pickerTarget = nil
-                Task { await importMovie(item, into: target) }
+                Task { await importMovies(items, into: target) }
             }
             .alert("导入失败", isPresented: importErrorBinding) {
                 Button("好", role: .cancel) {}
@@ -116,8 +132,8 @@ struct ShotFlowModifier: ViewModifier {
                 Text(importError ?? "")
             }
             .overlay(alignment: .bottom) {
-                if activeImports > 0 {
-                    importingIndicator
+                if let batch = importBatch {
+                    importingIndicator(batch)
                 }
             }
     }
@@ -148,11 +164,13 @@ struct ShotFlowModifier: ViewModifier {
         )
     }
 
-    private var importingIndicator: some View {
+    private func importingIndicator(_ batch: ImportBatch) -> some View {
         HStack(spacing: SLSpacing.small) {
             ProgressView()
-            Text("正在导入视频…")
+            Text(batch.text)
                 .font(.subheadline)
+                // 数字跳动时胶囊宽度不跟着抖
+                .monospacedDigit()
         }
         .padding(.horizontal, SLSpacing.medium)
         .padding(.vertical, SLSpacing.small + 2)
@@ -193,23 +211,44 @@ struct ShotFlowModifier: ViewModifier {
         }
     }
 
+    /// 一次选中一到多段视频，按选择顺序连续导入同一个镜头。
+    ///
+    /// 顺序即时间：每段落地时取当前时间，所以后选的更新，仍然是主素材。
+    /// 单段失败不打断后面的——已经落地的片段都算数，最后统一报一次。
     @MainActor
-    private func importMovie(_ item: PhotosPickerItem, into shot: Shot) async {
-        withAnimation { activeImports += 1 }
+    private func importMovies(_ items: [PhotosPickerItem], into shot: Shot) async {
+        let batch = ImportBatch(id: UUID(), total: items.count)
+        withAnimation { importBatch = batch }
         defer {
-            withAnimation { activeImports -= 1 }
+            // 只收回自己那一批的指示器：期间可能已经开了新的一批（P2-25 同类）
+            if importBatch?.id == batch.id {
+                withAnimation { importBatch = nil }
+            }
         }
 
-        do {
+        // 一段一段来、失败不打断：推进本身在 MovieImporter 里，单独有测试
+        let failures = await MovieImporter.run(items) { index in
+            if importBatch?.id == batch.id { importBatch?.done = index }
+        } onEach: { item in
             guard let movie = try await item.loadTransferable(type: ImportedMovie.self) else {
                 throw ImportFailure.unsupportedFormat
             }
             try await movie.save(to: store, shotID: shot.id)
-            Haptics.success()
-        } catch {
-            Haptics.error()
-            importError = "没能导入这段视频：\(error.localizedDescription)"
         }
+
+        if failures.isEmpty {
+            Haptics.success()
+        } else {
+            Haptics.error()
+            importError = importFailureMessage(failures, of: items.count)
+        }
+    }
+
+    private func importFailureMessage(_ failures: [String], of total: Int) -> String {
+        let reason = failures.first ?? ""
+        if total == 1 { return "没能导入这段视频：\(reason)" }
+        if failures.count == total { return "这 \(total) 段都没能导入：\(reason)" }
+        return "有 \(failures.count) 段没能导入，其余 \(total - failures.count) 段已加入：\(reason)"
     }
 }
 

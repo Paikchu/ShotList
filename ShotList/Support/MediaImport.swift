@@ -57,6 +57,35 @@ nonisolated extension ImportedMovie {
     }
 }
 
+// MARK: - 批量导入的推进
+
+/// 批量导入的推进逻辑：与相册、与具体文件类型都无关，只保证「一段一段来、失败不打断」。
+///
+/// 单独抽出来是为了能验证：顺序有没有变、中间某一段失败后面还继不继续、失败算得准不准。
+/// 相册选片那一步没法自动化，这条逻辑至少要有自己的证据。
+enum MovieImporter {
+    /// 按顺序逐段执行，收集每一段的失败原因。
+    ///
+    /// - Parameter onProgress: 每段**开始前**回调，参数是这一段的下标（从 0 开始）。
+    /// - Returns: 失败原因（本地化描述），按发生顺序；成功的段不出现在里面。
+    static func run<Item>(
+        _ items: [Item],
+        onProgress: (Int) -> Void = { _ in },
+        onEach: (Item) async throws -> Void
+    ) async -> [String] {
+        var failures: [String] = []
+        for (index, item) in items.enumerated() {
+            onProgress(index)
+            do {
+                try await onEach(item)
+            } catch {
+                failures.append(error.localizedDescription)
+            }
+        }
+        return failures
+    }
+}
+
 /// 明确在通用执行器上复制；取消或失败时回收半成品，调用者只会拿到完整文件。
 nonisolated final class MediaFileCopy: @unchecked Sendable {
     static let shared = MediaFileCopy(fileManager: .default)
