@@ -57,7 +57,7 @@ struct ShotFlowModifier: ViewModifier {
     @State private var pickerTarget: Shot?
     @State private var pickerItem: PhotosPickerItem?
 
-    @State private var isImporting = false
+    @State private var activeImports = 0
     @State private var importError: String?
 
     func body(content: Content) -> some View {
@@ -97,6 +97,7 @@ struct ShotFlowModifier: ViewModifier {
             .onChange(of: pickerItem) { _, newValue in
                 guard let item = newValue, let target = pickerTarget else { return }
                 pickerItem = nil
+                pickerTarget = nil
                 Task { await importMovie(item, into: target) }
             }
             .alert("导入失败", isPresented: importErrorBinding) {
@@ -105,7 +106,7 @@ struct ShotFlowModifier: ViewModifier {
                 Text(importError ?? "")
             }
             .overlay(alignment: .bottom) {
-                if isImporting {
+                if activeImports > 0 {
                     importingIndicator
                 }
             }
@@ -184,10 +185,9 @@ struct ShotFlowModifier: ViewModifier {
 
     @MainActor
     private func importMovie(_ item: PhotosPickerItem, into shot: Shot) async {
-        withAnimation { isImporting = true }
+        withAnimation { activeImports += 1 }
         defer {
-            withAnimation { isImporting = false }
-            pickerTarget = nil
+            withAnimation { activeImports -= 1 }
         }
 
         do {
