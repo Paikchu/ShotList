@@ -162,24 +162,24 @@ nonisolated enum ExportPackageBuilder {
         var manifest: [ManifestRow] = []
 
         for shot in included {
-            let available = shot.clips.filter { clip in
+            let available = shot.clips.enumerated().filter { _, clip in
                 let url = clipsDirectory.appendingPathComponent(clip.fileName, isDirectory: false)
                 return fileManager.fileExists(atPath: url.path)
             }
 
-            guard let latest = available.latestByRecordedAt else {
+            guard let latest = available.map(\.element).latestByRecordedAt else {
                 manifest.append(ManifestRow(pendingShot: shot))
                 continue
             }
 
-            let takeTotal = available.count
+            let takeTotal = shot.clips.count
 
-            for (offset, clip) in available.enumerated() {
+            for (offset, clip) in available {
                 let takeIndex = offset + 1
                 let isMain = clip.id == latest.id
                 let fileName = Self.exportedFileName(
                     number: shot.number,
-                    // 拍了多条时，主素材同样带子片段号（它是第 takeTotal 条）；
+                    // 使用快照里的原始条号，缺失素材留下空号，不重编号。
                     // 只有一条时保持 01_xxx.mov，不加后缀。
                     takeIndex: takeTotal > 1 ? takeIndex : nil,
                     note: shot.fileNameBase,
