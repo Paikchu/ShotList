@@ -33,7 +33,7 @@ struct HistoryView: View {
     /// 筛选项与统计块一一对应。「当天已拍 / 其他天拍过 / 还没拍」是不重不漏的
     /// 三分——「其他天」专指有片段、但都不是这一天拍的镜头。
     enum Filter: String, CaseIterable, Identifiable {
-        case all, thatDay, otherDays, never
+        case all, thatDay, pending, otherDays, never
 
         var id: String { rawValue }
 
@@ -42,7 +42,8 @@ struct HistoryView: View {
             case .all: return "全部"
             case .thatDay: return "当天"
             case .otherDays: return "其他天"
-            case .never: return "未拍"
+            case .never: return "从未拍"
+            case .pending: return "待拍"
             }
         }
     }
@@ -119,6 +120,7 @@ struct HistoryView: View {
         case .thatDay: return dayRecorded
         case .otherDays: return recordedOtherDays
         case .never: return neverShot
+        case .pending: return store.pendingShots(on: selectedDate)
         }
     }
 
@@ -127,7 +129,8 @@ struct HistoryView: View {
         case .all: return "还没有分镜。"
         case .thatDay: return isSelectedToday ? "今天还没拍。" : "这一天还没拍。"
         case .otherDays: return "没有在其他天拍过的镜头。"
-        case .never: return "所有镜头都拍完了。"
+        case .never: return "所有镜头都曾拍过。"
+        case .pending: return "这一天的分镜都拍完了。"
         }
     }
 
@@ -248,9 +251,13 @@ struct HistoryView: View {
     @ViewBuilder
     private var footnote: some View {
         if isSelectedToday, let next = store.pendingShots(on: selectedDate).first {
-            Label("下一个：镜头 \(next.paddedNumber)", systemImage: "arrow.right.circle.fill")
-                .font(.footnote)
-                .foregroundStyle(Color.accentColor)
+            Button {
+                filter = .pending
+            } label: {
+                Label("今日待拍 \(store.pendingShots(on: selectedDate).count) 个 · 下一个：镜头 \(next.paddedNumber)", systemImage: "arrow.right.circle.fill")
+                    .font(.footnote)
+            }
+            .accessibilityHint("查看今天还未拍摄的全部镜头，包含以前拍过的镜头")
         } else if isSelectedToday {
             Label("今天的分镜都拍完了", systemImage: "checkmark.seal.fill")
                 .font(.footnote)
@@ -288,7 +295,7 @@ struct HistoryView: View {
                 value: neverShot.count,
                 systemImage: "circle.dashed",
                 tint: .orange,
-                caption: "还没拍",
+                caption: "从未拍",
                 filterTarget: .never
             )
         }
