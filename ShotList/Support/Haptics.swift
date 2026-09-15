@@ -49,18 +49,29 @@ nonisolated enum VideoMetadata {
 final class ThumbnailLoader {
     static let shared = ThumbnailLoader()
 
-    private let cache = NSCache<NSString, UIImage>()
+    private final class CachedImage {
+        let requestID: UUID
+        let image: UIImage
+        init(requestID: UUID, image: UIImage) { self.requestID = requestID; self.image = image }
+    }
+    private struct Request {
+        let id: UUID
+        let task: Task<UIImage?, Never>
+    }
+    private let cache = NSCache<NSString, CachedImage>()
+    private let decode: (URL) async -> UIImage?
 
     /// 正在解码的任务。列表滚动时同一张图会被多张卡片同时请求，
     /// 复用同一个任务可以避免重复解码同一帧。
-    private var inFlight: [String: Task<UIImage?, Never>] = [:]
+    private var inFlight: [String: Request] = [:]
 
-    private init() {
+    init(decode: @escaping (URL) async -> UIImage? = { await ThumbnailLoader.decodeThumbnail(for: $0) }) {
+        self.decode = decode
         cache.countLimit = 60
     }
 
     func cachedThumbnail(for url: URL) -> UIImage? {
-        cache.object(forKey: url.path as NSString)
+        cache.object(forKey: url.path as NSString)?.image
     }
 
     /// 生成缩略图。命中缓存、或同一张图已有任务在跑时，直接复用结果。
@@ -69,36 +80,37 @@ final class ThumbnailLoader {
     /// url 变了说明这张图已经不是当前要显示的那张，迟到的结果要丢掉。
     func thumbnail(for url: URL) async -> UIImage? {
         let key = url.path as NSString
-        if let cached = cache.object(forKey: key) {
-            return cached
-        }
+        if let cached = cache.object(forKey: key) { return cached.image }
 
-        let path = key as String
+        let path = url.path
+        let request: Request
         if let running = inFlight[path] {
-            return await running.value
+            request = running
+        } else {
+            request = Request(id: UUID(), task: Task { await decode(url) })
+            inFlight[path] = request
         }
 
-        let task = Task<UIImage?, Never> { await Self.decodeThumbnail(for: url) }
-        inFlight[path] = task
-
-        let image = await task.value
-        // 从 await 恢复到清表之间没有挂起点，主协程上这一段是原子的，
-        // 不会误删刚建好的新任务
-        inFlight[path] = nil
-        if let image {
-            cache.setObject(image, forKey: key)
+        let image = await request.task.value
+        // 同一任务的另一位等待者可能已写入缓存，所以同时核对在途与缓存标识。
+        // 失效会移除二者；旧任务不能写回旧图，也不能清掉新一代任务。
+        guard inFlight[path]?.id == request.id || cache.object(forKey: key)?.requestID == request.id else { return nil }
+        if inFlight[path]?.id == request.id {
+            inFlight[path] = nil
+            if let image { cache.setObject(CachedImage(requestID: request.id, image: image), forKey: key) }
         }
-        return image
+        return Task.isCancelled ? nil : image
     }
 
     func invalidate(for url: URL) {
         cache.removeObject(forKey: url.path as NSString)
-        inFlight[url.path] = nil
+        inFlight.removeValue(forKey: url.path)?.task.cancel()
     }
 
     /// 清空全部缓存（清空所有分镜时调用）
     func removeAll() {
         cache.removeAllObjects()
+        for request in inFlight.values { request.task.cancel() }
         inFlight.removeAll()
     }
 
