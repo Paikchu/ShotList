@@ -179,13 +179,10 @@ struct ClipOptionsSheet: View {
         .onChange(of: draftNote) { _, _ in scheduleDraftSave() }
         .onChange(of: draftNumber) { _, _ in scheduleDraftSave() }
         .task {
-            // TEMP 落盘探针：模拟用户在输入框里打字
-            try? await Task.sleep(for: .milliseconds(900))
-            draftNote += "（探针追加）"
-
             // 等弹层落位再把光标放进去，否则键盘会和转场打架
             guard autoFocusNote else { return }
             try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled else { return }
             isNoteFocused = true
         }
         .onDisappear { flushDraft() }
@@ -248,6 +245,7 @@ struct ClipOptionsSheet: View {
         draftSaveTask?.cancel()
         draftSaveTask = nil
 
+        guard draftNote != live.note || draftNumber != live.number else { return }
         let trimmed = draftNote.trimmingCharacters(in: .whitespacesAndNewlines)
         let clamped = min(max(draftNumber, numberRange.lowerBound), numberRange.upperBound)
         guard trimmed != live.note || clamped != live.number else { return }
