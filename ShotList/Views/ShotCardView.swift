@@ -16,11 +16,25 @@ struct ShotCardView: View {
     /// 编号是否由卡片自己承担。
     ///
     /// 「分镜」页把编号放在左侧的时间线节点上，卡片这一行让给分镜描述，因此传 `false`；
-    /// 「今日」页没有时间线，编号仍旧由卡片承担。
+    /// 「历史」页没有时间线，编号仍旧由卡片承担。
     var showsNumber: Bool = true
     /// 是不是刚插进来的。用 accent 描边把「就是这一张」指出来，约一秒后由调用方收回。
     var isNew: Bool = false
+    /// 卡片按哪条片段展示（缩略图时长、角标时间都跟它走）。
+    ///
+    /// 传 `nil` 时用最近一条——全应用的默认口径；历史页按天翻看时传
+    /// 「当天最新的一条」，缩略图与时间就落在选中的那一天。
+    var displayClip: ShotClip? = nil
+    /// 覆盖角标条数的口径（如「只数当天拍下的几条」）；传 `nil` 时数全部片段。
+    var takeCountOverride: Int? = nil
+    /// 覆盖「总时长」的统计口径（如「只算当天的几条」）；传 `nil` 时算全部片段。
+    var totalDurationOverride: TimeInterval? = nil
     var onTap: () -> Void
+
+    /// 实际展示的片段：外部指定优先，否则回落到最近一条
+    private var effectiveClip: ShotClip? { displayClip ?? shot.latestClip }
+    private var effectiveTakeCount: Int { takeCountOverride ?? shot.clipCount }
+    private var effectiveTotalDuration: TimeInterval { totalDurationOverride ?? shot.totalDuration }
 
     @Environment(\.dynamicTypeSize) private var typeSize
 
@@ -75,8 +89,8 @@ struct ShotCardView: View {
         ClipThumbnailView(
             url: clipURL,
             size: size,
-            durationText: shot.durationText,
-            takeCount: shot.clipCount
+            durationText: effectiveClip?.durationText,
+            takeCount: effectiveTakeCount
         )
     }
 
@@ -93,7 +107,7 @@ struct ShotCardView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// 主行：编号（今日页）或分镜描述（分镜页），这一行整行都留给它
+    /// 主行：编号（历史页）或分镜描述（分镜页），这一行整行都留给它
     @ViewBuilder
     private var titleRow: some View {
         HStack(alignment: .firstTextBaseline, spacing: SLSpacing.small) {
@@ -134,11 +148,11 @@ struct ShotCardView: View {
     /// 镜头都会重复一遍。
     @ViewBuilder
     private var metaRow: some View {
-        if shot.hasClip {
+        if effectiveClip != nil {
             HStack(alignment: .firstTextBaseline, spacing: SLSpacing.small) {
-                if shot.clipCount > 1 {
+                if effectiveTakeCount > 1 {
                     // 条数已经标在缩略图角标上，这里只补一个总数
-                    Text("总时长 \(shot.totalDuration.slDurationText)")
+                    Text("总时长 \(effectiveTotalDuration.slDurationText)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -146,7 +160,7 @@ struct ShotCardView: View {
 
                 Spacer(minLength: SLSpacing.small)
 
-                if let recordedAt = shot.shortRecordedAtText {
+                if let recordedAt = effectiveClip?.shortRecordedAtText() {
                     Text(recordedAt)
                         .font(.caption)
                         .foregroundStyle(.secondary)

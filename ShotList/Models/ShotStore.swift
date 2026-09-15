@@ -64,27 +64,36 @@ final class ShotStore: ObservableObject {
     /// 全部片段数量（只数磁盘上真的有文件的那几条）
     var clipCount: Int { availableClipCount }
 
-    /// 今日已拍摄的镜头（以最近一条片段的拍摄日期为准）
-    var todayRecordedShots: [Shot] {
-        let today = Date()
-        return shots.filter { $0.status(relativeTo: today) == .shotToday }
-    }
+    // MARK: - 按天统计
 
-    /// 今日仍未拍摄的镜头。
+    /// 某天拍过的镜头（当天至少有一条片段），按镜头顺序排列。
     ///
-    /// 含「从未拍过」与「往日拍过」两类——站在今天的角度，两者都还欠一条。
-    /// 今日页的进度环、「下一个」提示与标签栏徽标都走这一个口径，
-    /// 免得出现「进度 0%，却提示今天都拍完了」这种自相矛盾的界面。
-    var todayPendingShots: [Shot] {
-        let today = Date()
-        return shots.filter { $0.status(relativeTo: today) != .shotToday }
+    /// 历史页按这个口径列出「当天已拍」。
+    func recordedShots(on day: Date, calendar: Calendar = .current) -> [Shot] {
+        shots.filter { shot in
+            shot.clips.contains { calendar.isDate($0.recordedAt, inSameDayAs: day) }
+        }
     }
 
-    /// 今日已拍摄的镜头数量
-    var todayRecordedCount: Int { todayRecordedShots.count }
+    /// 某天还没拍的镜头：当天没有片段的都算——含「从未拍过」与「别天拍过」两类，
+    /// 站在那一天的角度，两者都还欠一条。标签栏徽标与当天进度环走这一个口径，
+    /// 免得出现「进度 0%，却提示都拍完了」这种自相矛盾的界面。
+    func pendingShots(on day: Date, calendar: Calendar = .current) -> [Shot] {
+        let recorded = Set(recordedShots(on: day, calendar: calendar).map(\.id))
+        return shots.filter { !recorded.contains($0.id) }
+    }
 
-    /// 今日仍未拍摄的镜头数量
-    var todayPendingCount: Int { todayPendingShots.count }
+    /// 某天的拍摄进度 0…1
+    func progress(on day: Date, calendar: Calendar = .current) -> Double {
+        shots.isEmpty
+            ? 0
+            : Double(recordedShots(on: day, calendar: calendar).count) / Double(shots.count)
+    }
+
+    /// 某个镜头在某天拍的片段，按拍摄先后排列。历史页的卡片按这个口径取当天素材。
+    func clips(of shot: Shot, recordedOn day: Date, calendar: Calendar = .current) -> [ShotClip] {
+        shot.clips.filter { calendar.isDate($0.recordedAt, inSameDayAs: day) }
+    }
 
     /// 全部片段的总时长（秒，只算磁盘上真的有文件的那几条）
     var totalDuration: TimeInterval { availableDuration }
@@ -123,11 +132,6 @@ final class ShotStore: ObservableObject {
     /// 拍摄进度 0…1（按磁盘上真的有片段的镜头算，与导出页那几个数字同源）
     var progress: Double {
         shots.isEmpty ? 0 : Double(recordedCount) / Double(shots.count)
-    }
-
-    /// 今日拍摄进度 0…1
-    var todayProgress: Double {
-        shots.isEmpty ? 0 : Double(todayRecordedCount) / Double(shots.count)
     }
 
     /// 下一个可用编号
