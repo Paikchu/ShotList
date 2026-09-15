@@ -1,6 +1,11 @@
 import Foundation
 import SwiftUI
 
+nonisolated enum ShotStoreError: LocalizedError {
+    case targetMissing
+    var errorDescription: String? { "目标分镜已被删除，请重新选择分镜后再导入。" }
+}
+
 /// 分镜数据仓库。
 ///
 /// 职责：
@@ -295,7 +300,7 @@ final class ShotStore: ObservableObject {
     /// 同一个镜头可以拍很多条，这里只追加、不覆盖之前的片段。
     func addClip(from sourceURL: URL, duration: TimeInterval?, to shotID: Shot.ID) throws {
         if let loadError { throw NSError(domain: "ShotStore", code: 1, userInfo: [NSLocalizedDescriptionKey: loadError]) }
-        guard let index = index(of: shotID) else { return }
+        guard let index = index(of: shotID) else { throw ShotStoreError.targetMissing }
 
         let fileName = makeClipFileName(
             number: shots[index].number,

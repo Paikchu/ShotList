@@ -12,6 +12,14 @@ import UniformTypeIdentifiers
 struct ImportedMovie: Transferable {
     let url: URL
 
+    /// 中转文件属于这次相册导入；无论成功或失败都由此处回收。
+    @MainActor
+    func save(to store: ShotStore, shotID: Shot.ID) async throws {
+        defer { try? FileManager.default.removeItem(at: url) }
+        let duration = await VideoMetadata.duration(of: url)
+        try store.addClip(from: url, duration: duration, to: shotID)
+    }
+
     static var transferRepresentation: some TransferRepresentation {
         FileRepresentation(contentType: .movie) { movie in
             SentTransferredFile(movie.url)

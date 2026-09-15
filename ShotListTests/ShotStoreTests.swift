@@ -9,7 +9,7 @@ final class IsolatedFileManager: FileManager, @unchecked Sendable {
     }
 }
 
-final class ShotStoreTests: XCTestCase {
+final class ShotStoreTests: XCTestCase, @unchecked Sendable {
     private func fixture() throws -> (URL, IsolatedFileManager) {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -207,6 +207,27 @@ final class ShotStoreTests: XCTestCase {
         store.refreshStorageStats()
         XCTAssertTrue(store.shots[0].clips.isEmpty)
         XCTAssertTrue(ShotStore(fileManager: fm).shots[0].clips.isEmpty)
+    }
+
+    @MainActor
+    func testDeletedImportTargetThrowsAndImportCleansItsOwnedSource() async throws {
+        let (root, fm) = try fixture()
+        let store = ShotStore(fileManager: fm)
+        let shot = try XCTUnwrap(store.addShot())
+        store.delete(shot)
+        let source = root.appendingPathComponent("import-test.mov")
+        try Data("test source".utf8).write(to: source)
+        XCTAssertThrowsError(try store.addClip(from: source, duration: 1, to: shot.id)) { error in
+            XCTAssertTrue(error is ShotStoreError)
+        }
+        XCTAssertTrue(fm.fileExists(atPath: source.path))
+        do {
+            try await ImportedMovie(url: source).save(to: store, shotID: shot.id)
+            XCTFail("Import reported success for a deleted target")
+        } catch { XCTAssertTrue(error is ShotStoreError) }
+        XCTAssertFalse(fm.fileExists(atPath: source.path))
+        XCTAssertTrue(store.shots.isEmpty)
+        XCTAssertTrue(try fm.contentsOfDirectory(atPath: store.clipsDirectory.path).isEmpty)
     }
 
 }

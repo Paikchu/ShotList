@@ -194,8 +194,7 @@ struct ShotFlowModifier: ViewModifier {
             guard let movie = try await item.loadTransferable(type: ImportedMovie.self) else {
                 throw ImportFailure.unsupportedFormat
             }
-            let duration = await VideoMetadata.duration(of: movie.url)
-            try store.addClip(from: movie.url, duration: duration, to: shot.id)
+            try await movie.save(to: store, shotID: shot.id)
             Haptics.success()
         } catch {
             Haptics.error()
