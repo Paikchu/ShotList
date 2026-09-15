@@ -31,6 +31,7 @@ final class ShotStore: ObservableObject {
 
     private let fileManager: FileManager
     private let metadataURL: URL
+    private var deletionRecoveryURL: URL { metadataURL.deletingLastPathComponent().appendingPathComponent("pending-deletions.json") }
 
     /// 分镜片段统一存放目录
     let clipsDirectory: URL
@@ -285,10 +286,10 @@ final class ShotStore: ObservableObject {
     /// 删除全部分镜与片段（用于「清空重来」）
     func deleteEverything() {
         guard loadError == nil else { return }
-        let files = diskSnapshot().sizes.keys
         shots.removeAll()
         guard persist() else { return }
-        for name in files { removeFile(named: name) }
+        guard loadError == nil else { return }
+        removeOrphanFiles()
         ThumbnailLoader.shared.removeAll()
         applySnapshot(diskSnapshot())
     }
@@ -470,12 +471,14 @@ final class ShotStore: ObservableObject {
     @discardableResult
     func removeOrphanFiles() -> Int {
         guard loadError == nil else { return 0 }
-        let removed = orphanFileNames
-        for name in removed {
-            removeFile(named: name)
+        var removed = 0
+        var failed: [String] = []
+        for name in orphanFileNames {
+            if removeFile(named: name) { removed += 1 } else { failed.append(name) }
         }
         refreshStorageStats()
-        return removed.count
+        if !failed.isEmpty { reportDeletionFailures(failed) }
+        return removed
     }
 
     /// 从磁盘读取，并把内存对齐到磁盘实况。
@@ -496,6 +499,7 @@ final class ShotStore: ObservableObject {
             shots = decoded
             committedShots = decoded
             loadError = nil
+            try recoverPendingDeletions()
         } catch {
             let failure = error as NSError
             let snapshot = diskSnapshot()
@@ -520,8 +524,8 @@ final class ShotStore: ObservableObject {
     @discardableResult
     private func persist() -> Bool {
         do {
-            try commit()
             saveError = nil
+            try commit()
             return true
         } catch {
             saveError = "未能保存本次更改，已保留之前的记录和素材。请检查设备存储后重试。\n\(error.localizedDescription)"
@@ -530,7 +534,10 @@ final class ShotStore: ObservableObject {
     }
 
     private func commit() throws {
+        // 先持久化删除前的关联。JSON 提交后若进程中断或文件删不掉，重启仍可找回归属。
+        let recovery = committedShots
         do {
+            try JSONEncoder().encode(recovery).write(to: deletionRecoveryURL, options: .atomic)
             try writeMetadata()
         } catch {
             shots = committedShots
@@ -543,10 +550,50 @@ final class ShotStore: ObservableObject {
         let previous = Set(committedShots.flatMap { $0.clips.map(\.fileName) })
         let current = Set(shots.flatMap { $0.clips.map(\.fileName) })
         committedShots = shots
-        // JSON 已原子替换成功后，才回收删除/改名涉及的旧文件。
-        for name in previous.union(stagedFileNames).subtracting(current) { removeFile(named: name) }
+        let failures = previous.union(stagedFileNames).subtracting(current).sorted().filter { !removeFile(named: $0) }
         stagedFileNames.removeAll()
+        do {
+            try recoverPendingDeletions()
+        } catch {
+            // 恢复日志仍在磁盘上；暂停变更，不能让下一次提交覆盖尚未恢复的关联。
+            loadError = "删除尚未完成，已保留恢复记录和剩余素材。请检查存储后重试。\n\(error.localizedDescription)"
+        }
+        if !failures.isEmpty { reportDeletionFailures(failures) }
         applySnapshot(diskSnapshot())
+    }
+
+    private func recoverPendingDeletions() throws {
+        guard fileManager.fileExists(atPath: deletionRecoveryURL.path) else { return }
+        let recovery = try JSONDecoder().decode([Shot].self, from: Data(contentsOf: deletionRecoveryURL))
+        let known = Set(shots.flatMap { $0.clips.map(\.id) })
+        var restored = false
+        for (position, old) in recovery.enumerated() {
+            let remaining = old.clips.filter {
+                !known.contains($0.id) && fileManager.fileExists(atPath: clipsDirectory.appendingPathComponent($0.fileName).path)
+            }
+            guard !remaining.isEmpty else { continue }
+            if let index = index(of: old.id) {
+                let combined = shots[index].clips + remaining
+                let byID = Dictionary(uniqueKeysWithValues: combined.map { ($0.id, $0) })
+                let oldIDs = Set(old.clips.map(\.id))
+                shots[index].clips = old.clips.compactMap { byID[$0.id] } + combined.filter { !oldIDs.contains($0.id) }
+            } else {
+                var recovered = old
+                recovered.clips = remaining
+                shots.insert(recovered, at: min(position, shots.count))
+            }
+            restored = true
+        }
+        if restored {
+            for i in shots.indices { shots[i].number = i + 1 }
+            try writeMetadata()
+            committedShots = shots
+        }
+        try fileManager.removeItem(at: deletionRecoveryURL)
+    }
+
+    private func reportDeletionFailures(_ names: [String]) {
+        saveError = "有 \(names.count) 个文件未能删除。仍有素材的片段已保留，可稍后重试；未使用文件的剩余数量已更新。\n" + names.joined(separator: "\n")
     }
 
     private func writeMetadata() throws {
@@ -648,12 +695,18 @@ final class ShotStore: ObservableObject {
         return ext.isEmpty ? "mov" : ext
     }
 
-    private func removeFile(named fileName: String) {
+    @discardableResult
+    private func removeFile(named fileName: String) -> Bool {
         let url = clipsDirectory.appendingPathComponent(fileName, isDirectory: false)
-        try? fileManager.removeItem(at: url)
+        do { try fileManager.removeItem(at: url) }
+        catch {
+            let error = error as NSError
+            guard error.domain == NSCocoaErrorDomain && error.code == NSFileNoSuchFileError else { return false }
+        }
         // 文件名带着时间戳，删掉之后同一个路径有可能被新片段用上；
         // 缓存里的旧图必须一起清掉，否则新片段会显示上一个视频的首帧
         ThumbnailLoader.shared.invalidate(for: url)
+        return true
     }
 
     private static func timestampToken() -> String {

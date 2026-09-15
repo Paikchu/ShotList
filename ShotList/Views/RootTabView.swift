@@ -79,7 +79,7 @@ struct StorageSaveErrorBanner: View {
     var body: some View {
         if let message = store.saveError {
             VStack(alignment: .leading, spacing: 8) {
-                Label("保存失败", systemImage: "exclamationmark.triangle")
+                Label("操作未完成", systemImage: "exclamationmark.triangle")
                     .font(.headline)
                 Text(message).font(.footnote)
                 Button("关闭提示") { store.saveError = nil }

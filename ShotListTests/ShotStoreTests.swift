@@ -3,6 +3,15 @@ import XCTest
 
 final class IsolatedFileManager: FileManager, @unchecked Sendable {
     let root: URL
+    var failingRemovals: Set<String> = []
+    var onFailedRemoval: (() throws -> Void)?
+    override func removeItem(at URL: URL) throws {
+        if failingRemovals.contains(URL.lastPathComponent) {
+            try onFailedRemoval?()
+            throw NSError(domain: NSCocoaErrorDomain, code: NSFileWriteNoPermissionError)
+        }
+        try super.removeItem(at: URL)
+    }
     init(root: URL) { self.root = root; super.init() }
     override func urls(for directory: FileManager.SearchPathDirectory, in domainMask: FileManager.SearchPathDomainMask) -> [URL] {
         [root.appendingPathComponent(directory == .documentDirectory ? "Documents" : "Support")]
@@ -271,6 +280,75 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
             XCTAssertEqual(try Data(contentsOf: XCTUnwrap(repaired.clipURL(for: shot))), Data(shot.note.utf8))
         }
         XCTAssertEqual(ShotStore(fileManager: fm).shots, repaired.shots)
+    }
+
+    @MainActor
+    func testDeletionFailuresKeepReferencesAndCountOnlyRemovedOrphans() throws {
+        let (root, fm) = try fixture()
+        let store = ShotStore(fileManager: fm)
+        let shot = try XCTUnwrap(store.addShot(note: "Keep failed material"))
+        for n in 1...2 {
+            let source = root.appendingPathComponent("source\(n).mov")
+            try Data("video\(n)".utf8).write(to: source)
+            try store.addClip(from: source, duration: 1, to: shot.id)
+        }
+        let first = store.shots[0].clips[0]
+        fm.failingRemovals = [first.fileName]
+        store.removeClip(first.id, from: shot.id)
+        XCTAssertEqual(store.shots[0].clips[0], first)
+        XCTAssertEqual(store.clipCount, 2)
+        store.removeAllClips(for: shot.id)
+        XCTAssertEqual(store.shots[0].clips, [first])
+        XCTAssertNotNil(store.saveError)
+        XCTAssertEqual(ShotStore(fileManager: fm).shots, store.shots)
+        XCTAssertTrue(store.orphanFileNames.isEmpty)
+        store.delete(shot)
+        XCTAssertEqual(store.shots.first?.id, shot.id)
+        store.deleteEverything()
+        XCTAssertEqual(store.shots.first?.clips, [first])
+        for name in ["fail.mov", "ok.mov"] {
+            try Data("orphan".utf8).write(to: store.clipsDirectory.appendingPathComponent(name))
+        }
+        fm.failingRemovals.insert("fail.mov")
+        store.refreshStorageStats()
+        XCTAssertEqual(store.removeOrphanFiles(), 1)
+        XCTAssertEqual(store.orphanFileNames, ["fail.mov"])
+        XCTAssertNotNil(store.saveError)
+        fm.failingRemovals = []
+        store.deleteEverything()
+        XCTAssertTrue(store.shots.isEmpty)
+        XCTAssertTrue(store.orphanFileNames.isEmpty)
+        XCTAssertTrue(try fm.contentsOfDirectory(atPath: store.clipsDirectory.path).isEmpty)
+    }
+
+    @MainActor
+    func testDeletionRecoverySurvivesRepairWriteFailureAndRestart() throws {
+        let (root, fm) = try fixture()
+        let store = ShotStore(fileManager: fm)
+        let shot = try XCTUnwrap(store.addShot(note: "Recover me"))
+        let source = root.appendingPathComponent("source.mov")
+        try Data("video".utf8).write(to: source)
+        try store.addClip(from: source, duration: 1, to: shot.id)
+        let original = store.shots
+        let metadata = root.appendingPathComponent("Support/ShotList/shots.json")
+        let journal = root.appendingPathComponent("Support/ShotList/pending-deletions.json")
+        fm.failingRemovals = [original[0].clips[0].fileName]
+        fm.onFailedRemoval = {
+            try FileManager.default.removeItem(at: metadata)
+            try FileManager.default.createDirectory(at: metadata, withIntermediateDirectories: false)
+        }
+        store.delete(shot)
+        XCTAssertNotNil(store.loadError)
+        XCTAssertTrue(fm.fileExists(atPath: journal.path))
+        XCTAssertNil(store.addShot())
+        fm.onFailedRemoval = nil
+        try fm.removeItem(at: metadata)
+        try Data("[]".utf8).write(to: metadata)
+        let reopened = ShotStore(fileManager: fm)
+        XCTAssertNil(reopened.loadError)
+        XCTAssertEqual(reopened.shots, original)
+        XCTAssertFalse(fm.fileExists(atPath: journal.path))
+        XCTAssertEqual(ShotStore(fileManager: fm).shots, original)
     }
 
 }
