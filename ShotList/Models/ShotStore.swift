@@ -260,8 +260,8 @@ final class ShotStore: ObservableObject {
             shots[index].number = index + 1
             renumbered = true
         }
-        if renumbered { syncClipFileNames() }
-        return renumbered
+        let renamed = syncClipFileNames()
+        return renumbered || renamed
     }
 
     /// 拖拽排序
@@ -585,14 +585,15 @@ final class ShotStore: ObservableObject {
     /// 编号变化时先复制到新文件名；JSON 提交成功后才删除旧文件，失败仍能读取旧记录。
     ///
     /// 扩展名跟着文件自己走：导入的 mp4 换编号之后仍然是 mp4。
-    private func syncClipFileNames() {
+    private func syncClipFileNames() -> Bool {
+        var renamed = false
         for shotIndex in shots.indices {
             let number = shots[shotIndex].number
             for clipIndex in shots[shotIndex].clips.indices {
                 let current = shots[shotIndex].clips[clipIndex].fileName
                 guard let token = Self.token(from: current) else { continue }
 
-                let expected = Self.clipFileName(
+                var expected = Self.clipFileName(
                     number: number,
                     token: token,
                     fileExtension: Self.fileExtension(ofFileName: current)
@@ -600,19 +601,27 @@ final class ShotStore: ObservableObject {
                 guard expected != current else { continue }
 
                 let source = clipsDirectory.appendingPathComponent(current, isDirectory: false)
-                let destination = clipsDirectory.appendingPathComponent(expected, isDirectory: false)
                 guard fileManager.fileExists(atPath: source.path) else { continue }
-                guard !fileManager.fileExists(atPath: destination.path) else { continue }
+                // 旧文件在 JSON 提交前仍被引用；冲突时使用同编号的唯一文件名，不能覆盖或跳过。
+                var attempt = 2
+                while fileManager.fileExists(atPath: clipsDirectory.appendingPathComponent(expected).path) {
+                    expected = Self.clipFileName(number: number, token: "\(token)-\(attempt)",
+                                                 fileExtension: Self.fileExtension(ofFileName: current))
+                    attempt += 1
+                }
+                let destination = clipsDirectory.appendingPathComponent(expected, isDirectory: false)
 
                 do {
                     try fileManager.copyItem(at: source, to: destination)
                     stagedFileNames.insert(expected)
                     shots[shotIndex].clips[clipIndex].fileName = expected
+                    renamed = true
                 } catch {
                     continue
                 }
             }
         }
+        return renamed
     }
 
     private static func clipFileName(number: Int, token: String, fileExtension: String) -> String {

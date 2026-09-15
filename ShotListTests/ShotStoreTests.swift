@@ -230,4 +230,47 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(try fm.contentsOfDirectory(atPath: store.clipsDirectory.path).isEmpty)
     }
 
+    @MainActor
+    func testSameTimestampReorderPreservesIdentityAndRepairsLegacyNames() throws {
+        let (root, fm) = try fixture()
+        let initial = ShotStore(fileManager: fm)
+        let clips = (1...2).map { ShotClip(fileName: String(format: "镜头%02d_20260915_120000.mov", $0), duration: 1, recordedAt: Date()) }
+        var original = [Shot(number: 1, note: "A"), Shot(number: 2, note: "B")]
+        for i in original.indices {
+            original[i].clips = [clips[i]]
+            try Data(original[i].note.utf8).write(to: initial.clipsDirectory.appendingPathComponent(clips[i].fileName))
+        }
+        let metadata = root.appendingPathComponent("Support/ShotList/shots.json")
+        let good = try JSONEncoder().encode(original)
+        try good.write(to: metadata)
+        let store = ShotStore(fileManager: fm)
+        // JSON failure must leave both original videos and references intact.
+        try fm.removeItem(at: metadata)
+        try fm.createDirectory(at: metadata, withIntermediateDirectories: false)
+        store.move(fromOffsets: IndexSet(integer: 0), toOffset: 2)
+        XCTAssertEqual(store.shots, original)
+        XCTAssertEqual(Set(try fm.contentsOfDirectory(atPath: store.clipsDirectory.path)), Set(clips.map(\.fileName)))
+        try fm.removeItem(at: metadata)
+        try good.write(to: metadata)
+        store.move(fromOffsets: IndexSet(integer: 0), toOffset: 2)
+        let reopened = ShotStore(fileManager: fm)
+        XCTAssertEqual(reopened.shots.map(\.id), original.reversed().map(\.id))
+        for shot in reopened.shots {
+            XCTAssertTrue(shot.clips[0].fileName.hasPrefix(String(format: "镜头%02d_", shot.number)))
+            XCTAssertEqual(try Data(contentsOf: XCTUnwrap(reopened.clipURL(for: shot))), Data(shot.note.utf8))
+        }
+        XCTAssertFalse(reopened.normalize())
+        XCTAssertEqual(try fm.contentsOfDirectory(atPath: store.clipsDirectory.path).count, 2)
+        // Legacy records can have correct numbers but stale file-name prefixes.
+        var legacy = reopened.shots.reversed().map { $0 }
+        for i in legacy.indices { legacy[i].number = i + 1 }
+        try JSONEncoder().encode(legacy).write(to: metadata)
+        let repaired = ShotStore(fileManager: fm)
+        for shot in repaired.shots {
+            XCTAssertTrue(shot.clips[0].fileName.hasPrefix(String(format: "镜头%02d_", shot.number)))
+            XCTAssertEqual(try Data(contentsOf: XCTUnwrap(repaired.clipURL(for: shot))), Data(shot.note.utf8))
+        }
+        XCTAssertEqual(ShotStore(fileManager: fm).shots, repaired.shots)
+    }
+
 }
