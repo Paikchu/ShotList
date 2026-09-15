@@ -36,6 +36,20 @@ struct ShotCardView: View {
     private var effectiveTakeCount: Int { takeCountOverride ?? shot.clipCount }
     private var effectiveTotalDuration: TimeInterval { totalDurationOverride ?? shot.totalDuration }
 
+    var accessibilityDescription: String {
+        var parts = ["镜头 \(shot.number)"]
+        if shot.hasNote { parts.append(shot.displayDetail) }
+        if let clip = effectiveClip {
+            parts.append("共 \(effectiveTakeCount) 段")
+            parts.append(clip.shortRecordedAtText())
+            if let duration = clip.durationText { parts.append("所示片段时长 \(duration)") }
+            if effectiveTakeCount > 1 { parts.append("总时长 \(effectiveTotalDuration.slDurationText)") }
+        } else {
+            parts.append("未拍")
+        }
+        return parts.joined(separator: "，")
+    }
+
     @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
@@ -58,7 +72,7 @@ struct ShotCardView: View {
         }
         .buttonStyle(ShotCardButtonStyle())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(shot.accessibilityDescription)
+        .accessibilityLabel(accessibilityDescription)
         .accessibilityHint(shot.accessibilityActionHint)
         .accessibilityAddTraits(.isButton)
     }
