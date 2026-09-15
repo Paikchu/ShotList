@@ -24,7 +24,8 @@ struct ShotListView: View {
                 }
             }
             .navigationTitle("分镜")
-            .toolbarTitleDisplayMode(.inlineLarge)
+            // 与「今日」「导出」两页保持一致：标准大标题，三页内容起始位置对齐
+            .navigationBarTitleDisplayMode(.large)
             .toolbar { toolbarContent }
             .alert("删除这个分镜？", isPresented: deletionBinding, presenting: pendingDeletion) { shot in
                 Button("删除", role: .destructive) { store.delete(shot) }

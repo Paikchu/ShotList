@@ -84,7 +84,8 @@ struct TodayView: View {
 
     private var dateHeader: some View {
         Text(SLDateText.monthDayWeekday(Date()))
-            .font(.title3.weight(.semibold))
+            // semibold 统一为 headline（17pt）：与卡片标题、导出页概览行同级同大
+            .font(.headline)
             .foregroundStyle(.primary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.top, SLSpacing.small)
@@ -98,7 +99,8 @@ struct TodayView: View {
 
                 VStack(alignment: .leading, spacing: SLSpacing.small) {
                     Text("\(store.todayRecordedCount) / \(store.shots.count)")
-                        .font(.title2.weight(.bold).monospacedDigit())
+                        // bold 统一为 title3（20pt）：与进度环百分比、统计块数字同级同大
+                        .font(.title3.weight(.bold).monospacedDigit())
                     Text("今天已经拍了 \(store.todayRecordedCount) 个镜头")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
