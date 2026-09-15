@@ -12,6 +12,22 @@ enum SLSpacing {
     static let large: CGFloat = 24
     /// 32pt
     static let huge: CGFloat = 32
+
+    /// 三个标签页首个内容块上沿距导航栏底部的统一留白（5pt）。
+    ///
+    /// 三页容器各不相同（分镜＝`List(.plain)`、历史＝`ScrollView`、导出＝`List(.insetGrouped)`），
+    /// 各自默认的顶部内边距并不一样：实测同样不加边距时，历史的首张卡片最贴顶，
+    /// 分镜的首张卡片要低 1pt，导出的首个小节标题更低 7pt。三页都用
+    /// `.contentMargins(.top, …)` 显式指定，让首个内容块的上沿落在同一条水平线上：
+    /// - **分镜**：行自带 `tiny`（4pt）纵向内边距（时间线导轨要从行顶画到行底），
+    ///   加上 List 默认的 1pt，正好 5pt → 不额外加边距；
+    /// - **历史**：补 `pageTopInset`；
+    /// - **导出**：把 insetGrouped 多出来的那份用负边距收回（`groupedListTopSlack`）。
+    static let pageTopInset: CGFloat = 5
+
+    /// 导出页（`List(.insetGrouped)`）首个小节标题默认比统一基准多出的 7pt，
+    /// 用负的内容边距收回去。
+    static let groupedListTopSlack: CGFloat = 7
 }
 
 /// 尺寸常量。

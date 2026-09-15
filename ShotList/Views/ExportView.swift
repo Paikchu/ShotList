@@ -29,8 +29,10 @@ struct ExportView: View {
                 maintenanceSection
             }
             .listStyle(.insetGrouped)
+            .contentMargins(.top, -SLSpacing.groupedListTopSlack, for: .scrollContent)
             .navigationTitle("导出")
-            .navigationBarTitleDisplayMode(.large)
+            // 标题与右侧内容同行（inlineLarge），不单独占一行；三页起始位置一致
+            .toolbarTitleDisplayMode(.inlineLarge)
         }
         .alert("导出失败", isPresented: errorBinding) {
             Button("好", role: .cancel) {}

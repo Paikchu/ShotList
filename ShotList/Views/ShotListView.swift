@@ -24,8 +24,9 @@ struct ShotListView: View {
                 }
             }
             .navigationTitle("分镜")
-            // 与「今日」「导出」两页保持一致：标准大标题，三页内容起始位置对齐
-            .navigationBarTitleDisplayMode(.large)
+            // 标题不单独占一行：inlineLarge 让它和右侧的添加按钮同在一行，
+            // 内容起点尽量靠上；「历史」「导出」两页同款，三页起始位置一致
+            .toolbarTitleDisplayMode(.inlineLarge)
             .toolbar { toolbarContent }
             .alert("删除这个分镜？", isPresented: deletionBinding, presenting: pendingDeletion) { shot in
                 Button("删除", role: .destructive) { store.delete(shot) }
@@ -65,6 +66,9 @@ struct ShotListView: View {
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .background(Color(.systemGroupedBackground))
+            // 行自带的 tiny（4pt）内边距 + List 默认的 1pt 顶部内边距，正好是三页统一的
+            // pageTopInset（5pt），所以这里显式置 0，别让默认值再叠一层
+            .contentMargins(.top, 0, for: .scrollContent)
             .onChange(of: flashID) { _, newValue in
                 guard let newValue else { return }
                 withAnimation(.snappy(duration: 0.3)) {

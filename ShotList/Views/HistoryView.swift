@@ -65,8 +65,10 @@ struct HistoryView: View {
                 .padding(.bottom, SLSpacing.large)
             }
             .background(Color(.systemGroupedBackground))
+            .contentMargins(.top, SLSpacing.pageTopInset, for: .scrollContent)
             .navigationTitle("历史记录")
-            .navigationBarTitleDisplayMode(.large)
+            // 标题与右侧内容同行（inlineLarge），不单独占一行；三页起始位置一致
+            .toolbarTitleDisplayMode(.inlineLarge)
         }
         .shotFlow(sheet: $sheet)
     }
