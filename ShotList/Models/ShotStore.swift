@@ -20,6 +20,10 @@ final class ShotStore: ObservableObject {
 
     @Published private(set) var loadError: String?
 
+    @Published var saveError: String?
+    private var committedShots: [Shot] = []
+    private var stagedFileNames: Set<String> = []
+
     private let fileManager: FileManager
     private let metadataURL: URL
 
@@ -173,8 +177,7 @@ final class ShotStore: ObservableObject {
         let shot = Shot(number: nextNumber, note: note)
         shots.append(shot)
         normalize()
-        persist()
-        return shot
+        return persist() ? shot : nil
     }
 
     /// 一次性批量新建多个空白分镜，对应「一次录完 1、2、3、4 号镜头」的场景
@@ -188,8 +191,7 @@ final class ShotStore: ObservableObject {
         }
         shots.append(contentsOf: created)
         normalize()
-        persist()
-        return created
+        return persist() ? created : []
     }
 
     /// 在某个镜头后面插入一个新镜头。
@@ -206,8 +208,7 @@ final class ShotStore: ObservableObject {
         let shot = Shot(number: index + 2, note: note)
         shots.insert(shot, at: index + 1)
         normalize()
-        persist()
-        return shot
+        return persist() ? shot : nil
     }
 
     /// 复制一个已有分镜（不含片段）
@@ -216,16 +217,17 @@ final class ShotStore: ObservableObject {
         guard loadError == nil else { return nil }
         // 「复制」＝「在它后面插入一个内容相同的镜头」，共用同一处实现，
         // 免得两条路上的重编号与改名行为悄悄走岔
-        if let copy = insertShot(below: shot.id, note: shot.note) { return copy }
+        if index(of: shot.id) != nil { return insertShot(below: shot.id, note: shot.note) }
         return addShot(note: shot.note)
     }
 
     // MARK: - 改
 
     /// 更新分镜内容。若编号发生变化，则把它移动到对应位置。
-    func update(_ edited: Shot) {
-        guard loadError == nil else { return }
-        guard let currentIndex = index(of: edited.id) else { return }
+    @discardableResult
+    func update(_ edited: Shot) -> Bool {
+        guard loadError == nil else { return false }
+        guard let currentIndex = index(of: edited.id) else { return false }
 
         var updated = edited
         updated.clips = shots[currentIndex].clips
@@ -238,7 +240,7 @@ final class ShotStore: ObservableObject {
         }
 
         normalize()
-        persist()
+        return persist()
     }
 
     /// 按列表顺序重新编号，并让磁盘上的片段文件名跟着更新，
@@ -270,7 +272,6 @@ final class ShotStore: ObservableObject {
     func delete(_ shot: Shot) {
         guard loadError == nil else { return }
         guard let index = index(of: shot.id) else { return }
-        removeClipFiles(of: shots[index])
         shots.remove(at: index)
         normalize()
         persist()
@@ -279,11 +280,12 @@ final class ShotStore: ObservableObject {
     /// 删除全部分镜与片段（用于「清空重来」）
     func deleteEverything() {
         guard loadError == nil else { return }
-        try? fileManager.removeItem(at: clipsDirectory)
-        createDirectoryIfNeeded(clipsDirectory)
+        let files = diskSnapshot().sizes.keys
         shots.removeAll()
+        guard persist() else { return }
+        for name in files { removeFile(named: name) }
         ThumbnailLoader.shared.removeAll()
-        persist()
+        applySnapshot(diskSnapshot())
     }
 
     // MARK: - 片段
@@ -301,16 +303,15 @@ final class ShotStore: ObservableObject {
         )
         let destination = clipsDirectory.appendingPathComponent(fileName, isDirectory: false)
 
-        if fileManager.fileExists(atPath: destination.path) {
-            try fileManager.removeItem(at: destination)
-        }
+        // 先准备新文件，提交 JSON 前必须保留可重试的源视频。
         try fileManager.copyItem(at: sourceURL, to: destination)
-        try? fileManager.removeItem(at: sourceURL)
+        stagedFileNames.insert(fileName)
 
         shots[index].clips.append(
             ShotClip(fileName: fileName, duration: duration, recordedAt: Date())
         )
-        persist()
+        try commit()
+        try? fileManager.removeItem(at: sourceURL)
     }
 
     /// 删除某一个片段，镜头与其它的片段都保留
@@ -320,8 +321,7 @@ final class ShotStore: ObservableObject {
               let clipIndex = shots[shotIndex].clips.firstIndex(where: { $0.id == clipID })
         else { return }
 
-        let clip = shots[shotIndex].clips.remove(at: clipIndex)
-        removeFile(named: clip.fileName)
+        shots[shotIndex].clips.remove(at: clipIndex)
         persist()
     }
 
@@ -329,7 +329,6 @@ final class ShotStore: ObservableObject {
     func removeAllClips(for shotID: Shot.ID) {
         guard loadError == nil else { return }
         guard let index = index(of: shotID) else { return }
-        removeClipFiles(of: shots[index])
         shots[index].clips.removeAll()
         persist()
     }
@@ -356,8 +355,7 @@ final class ShotStore: ObservableObject {
         if reconcileClipsWithDisk(snapshot) {
             // 校正可能改过磁盘上的文件名（重排编号会让文件跟着改名），
             // 旧快照里的名字已经失效，得重扫一遍再算统计
-            writeMetadata()
-            applySnapshot(diskSnapshot())
+            persist()
             return
         }
 
@@ -491,6 +489,7 @@ final class ShotStore: ObservableObject {
             let data = try Data(contentsOf: metadataURL)
             let decoded = try JSONDecoder().decode([Shot].self, from: data)
             shots = decoded
+            committedShots = decoded
             loadError = nil
         } catch {
             let failure = error as NSError
@@ -500,6 +499,7 @@ final class ShotStore: ObservableObject {
                failure.code == NSFileReadNoSuchFileError,
                snapshot.isComplete, snapshot.sizes.isEmpty {
                 shots = []
+                committedShots = []
                 loadError = nil
             } else {
                 loadError = "无法读取分镜记录，已暂停编辑和文件清理，原文件不会被覆盖。请恢复可用的分镜记录后重试。\n\(error.localizedDescription)"
@@ -511,17 +511,47 @@ final class ShotStore: ObservableObject {
         refreshStorageStats()
     }
 
-    private func persist() {
-        writeMetadata()
-        refreshStorageStats()
+    /// 所有元数据变更共用一次提交；失败回滚内存，并保留旧 JSON 引用的文件。
+    @discardableResult
+    private func persist() -> Bool {
+        do {
+            try commit()
+            saveError = nil
+            return true
+        } catch {
+            saveError = "未能保存本次更改，已保留之前的记录和素材。请检查设备存储后重试。\n\(error.localizedDescription)"
+            return false
+        }
     }
 
-    private func writeMetadata() {
-        guard loadError == nil else { return }
+    private func commit() throws {
+        do {
+            try writeMetadata()
+        } catch {
+            shots = committedShots
+            for name in stagedFileNames { removeFile(named: name) }
+            stagedFileNames.removeAll()
+            applySnapshot(diskSnapshot())
+            throw error
+        }
+
+        let previous = Set(committedShots.flatMap { $0.clips.map(\.fileName) })
+        let current = Set(shots.flatMap { $0.clips.map(\.fileName) })
+        committedShots = shots
+        // JSON 已原子替换成功后，才回收删除/改名涉及的旧文件。
+        for name in previous.union(stagedFileNames).subtracting(current) { removeFile(named: name) }
+        stagedFileNames.removeAll()
+        applySnapshot(diskSnapshot())
+    }
+
+    private func writeMetadata() throws {
+        if let loadError {
+            throw NSError(domain: "ShotStore", code: 1, userInfo: [NSLocalizedDescriptionKey: loadError])
+        }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(shots) else { return }
-        try? data.write(to: metadataURL, options: .atomic)
+        let data = try encoder.encode(shots)
+        try data.write(to: metadataURL, options: .atomic)
     }
 
     private func createDirectoryIfNeeded(_ url: URL) {
@@ -547,7 +577,7 @@ final class ShotStore: ObservableObject {
         return candidate
     }
 
-    /// 编号变化后同步磁盘上的文件名。改名失败时保留原名，不会丢文件。
+    /// 编号变化时先复制到新文件名；JSON 提交成功后才删除旧文件，失败仍能读取旧记录。
     ///
     /// 扩展名跟着文件自己走：导入的 mp4 换编号之后仍然是 mp4。
     private func syncClipFileNames() {
@@ -570,7 +600,8 @@ final class ShotStore: ObservableObject {
                 guard !fileManager.fileExists(atPath: destination.path) else { continue }
 
                 do {
-                    try fileManager.moveItem(at: source, to: destination)
+                    try fileManager.copyItem(at: source, to: destination)
+                    stagedFileNames.insert(expected)
                     shots[shotIndex].clips[clipIndex].fileName = expected
                 } catch {
                     continue
@@ -601,12 +632,6 @@ final class ShotStore: ObservableObject {
     private static func fileExtension(ofFileName fileName: String) -> String {
         let ext = (fileName as NSString).pathExtension.lowercased()
         return ext.isEmpty ? "mov" : ext
-    }
-
-    private func removeClipFiles(of shot: Shot) {
-        for clip in shot.clips {
-            removeFile(named: clip.fileName)
-        }
     }
 
     private func removeFile(named fileName: String) {

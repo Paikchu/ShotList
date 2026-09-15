@@ -63,10 +63,31 @@ struct RootTabView: View {
             }
         }
         .tabBarMinimizeBehavior(.onScrollDown)
+        .safeAreaInset(edge: .top) { StorageSaveErrorBanner() }
     }
 }
 
 #Preview {
     RootTabView()
         .environmentObject(ShotStore())
+}
+
+/// 内联错误不会挤掉正在编辑的面板，草稿仍可修改或重试保存。
+struct StorageSaveErrorBanner: View {
+    @EnvironmentObject private var store: ShotStore
+
+    var body: some View {
+        if let message = store.saveError {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("保存失败", systemImage: "exclamationmark.triangle")
+                    .font(.headline)
+                Text(message).font(.footnote)
+                Button("关闭提示") { store.saveError = nil }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding()
+            .background(.regularMaterial)
+            .accessibilityElement(children: .contain)
+        }
+    }
 }

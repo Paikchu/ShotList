@@ -86,12 +86,12 @@ struct ClipOptionsSheet: View {
                 }
 
                 Section("拍摄") {
-                    Button(action: onCapture) {
+                    Button(action: { if flushDraft() { onCapture() } }) {
                         Label(live.hasClip ? "再拍一条" : "用相机拍摄", systemImage: "camera.fill")
                     }
                     .accessibilityHint("打开相机，给这个镜头再录一条，之前拍的会保留")
 
-                    Button(action: onImport) {
+                    Button(action: { if flushDraft() { onImport() } }) {
                         Label(live.hasClip ? "从相册再添加一条" : "从相册导入", systemImage: "photo.on.rectangle.angled")
                     }
                     .accessibilityHint("从照片图库里选一段已经拍好的视频加进来")
@@ -164,17 +164,19 @@ struct ClipOptionsSheet: View {
                 }
             }
             .listStyle(.insetGrouped)
+            .safeAreaInset(edge: .top) { StorageSaveErrorBanner() }
             .navigationTitle("镜头 \(live.paddedNumber)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") { dismiss() }
+                    Button("完成") { if flushDraft() { dismiss() } }
                 }
             }
         }
         // 这一页现在是镜头的正门：头部、拍摄、片段、描述、顺序、删除都在这里，
         // medium 那份高度装不下，会在输入框中间截断。
         .presentationDetents([.large])
+        .interactiveDismissDisabled(store.saveError != nil)
         .presentationDragIndicator(.visible)
         .onChange(of: draftNote) { _, _ in scheduleDraftSave() }
         .onChange(of: draftNumber) { _, _ in scheduleDraftSave() }
@@ -241,19 +243,20 @@ struct ClipOptionsSheet: View {
     /// 把草稿写回仓库。描述裁掉首尾空白，编号夹进有效区间。
     ///
     /// 与仓库当前值一致时直接返回，所以「同时打开又关掉」不会产生一次多余的写盘。
-    private func flushDraft() {
+    @discardableResult
+    private func flushDraft() -> Bool {
         draftSaveTask?.cancel()
         draftSaveTask = nil
 
-        guard draftNote != live.note || draftNumber != live.number else { return }
+        guard draftNote != live.note || draftNumber != live.number else { return true }
         let trimmed = draftNote.trimmingCharacters(in: .whitespacesAndNewlines)
         let clamped = min(max(draftNumber, numberRange.lowerBound), numberRange.upperBound)
-        guard trimmed != live.note || clamped != live.number else { return }
+        guard trimmed != live.note || clamped != live.number else { return true }
 
         var edited = live
         edited.note = trimmed
         edited.number = clamped
-        store.update(edited)
+        return store.update(edited)
     }
 
     // MARK: - 头部
@@ -306,7 +309,7 @@ struct ClipOptionsSheet: View {
 
         return HStack(spacing: SLSpacing.medium) {
             Button {
-                onPlay(clip)
+                if flushDraft() { onPlay(clip) }
             } label: {
                 HStack(spacing: SLSpacing.medium) {
                     ClipThumbnailView(
@@ -352,7 +355,7 @@ struct ClipOptionsSheet: View {
 
             Menu {
                 Button {
-                    onPlay(clip)
+                    if flushDraft() { onPlay(clip) }
                 } label: {
                     Label("播放这一条", systemImage: "play.circle")
                 }
