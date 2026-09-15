@@ -58,12 +58,12 @@ struct ClipOptionsSheet: View {
     /// 与导出结果同一套命名规则：边打字边看到最终文件名。
     ///
     /// 扩展名取自该镜头主素材的真实格式（相册导入的 mp4 导出后仍是 mp4）。
-    /// 镜头拍了多条时，主素材（最新一条，即第 clipCount 条）带子片段号，
+    /// 镜头拍了多条时，主素材（按拍摄时间选择的最新一条）带子片段号，
     /// 与 `ExportPackageBuilder.build` 的落盘命名保持一致；只拍一条时不带。
     private var previewFileName: String {
         ExportPackageBuilder.exportedFileName(
             number: draftNumber,
-            takeIndex: live.clipCount > 1 ? live.clipCount : nil,
+            takeIndex: live.clipCount > 1 ? live.latestTakeIndex : nil,
             note: draftNote,
             fileExtension: live.mainFileExtension
         )

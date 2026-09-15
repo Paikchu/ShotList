@@ -145,6 +145,12 @@ nonisolated extension Shot {
         clips.latestByRecordedAt
     }
 
+    /// 主素材在原数组中的条号，时钟回拨时不一定是末尾。
+    var latestTakeIndex: Int? {
+        guard let latestClip, let index = clips.firstIndex(where: { $0.id == latestClip.id }) else { return nil }
+        return index + 1
+    }
+
     /// 两位编号，例如 01、02
     var paddedNumber: String { String(format: "%02d", number) }
 

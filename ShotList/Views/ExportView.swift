@@ -196,12 +196,12 @@ struct ExportView: View {
 
     /// 主素材示例，例如「01-3_无人机缓慢上升.mov」。
     /// 复用导出时的命名函数，页面展示与实际打包结果永远一致：
-    /// 拍了多条的镜头带子片段号（最新一条是第 clipCount 条），只拍一条时不带。
+    /// 拍了多条的镜头带子片段号（主素材条号按拍摄时间确定），只拍一条时不带。
     private var exampleMainFileName: String {
         guard let shot = exampleShot else { return "01_镜头描述.mov" }
         return ExportPackageBuilder.exportedFileName(
             number: shot.number,
-            takeIndex: shot.clipCount > 1 ? shot.clipCount : nil,
+            takeIndex: shot.clipCount > 1 ? shot.latestTakeIndex : nil,
             note: shot.fileNameBase,
             fileExtension: shot.mainFileExtension
         )

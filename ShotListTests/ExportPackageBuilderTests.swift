@@ -94,4 +94,23 @@ final class ExportPackageBuilderTests: XCTestCase {
         guard case .packagingFailed = ExportPackageBuilder.exportFailure(NSError(domain: NSCocoaErrorDomain, code: NSFileReadNoPermissionError)) else { return XCTFail("Misclassified permission failure") }
     }
 
+    func testClockRollbackPreviewMatchesExportedMainTake() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fm = ExportTestFileManager(root: root)
+        let shot = Shot(number: 1, note: "Rollback", clips: [
+            ShotClip(fileName: "first.mov", recordedAt: Date(timeIntervalSince1970: 200)),
+            ShotClip(fileName: "second.mov", recordedAt: Date(timeIntervalSince1970: 100))
+        ])
+        for clip in shot.clips { try Data(clip.fileName.utf8).write(to: root.appendingPathComponent(clip.fileName)) }
+        XCTAssertEqual(shot.latestTakeIndex, 1)
+        let preview = ExportPackageBuilder.exportedFileName(number: shot.number, takeIndex: shot.latestTakeIndex, note: shot.note, fileExtension: shot.mainFileExtension)
+        _ = try ExportPackageBuilder.build(shots: [shot], clipsDirectory: root, scope: .recordedOnly, fileManager: fm)
+        let guide = try XCTUnwrap(fm.exportedFiles.first { $0.key.hasSuffix("分镜文字内容指南.md") }).value
+        XCTAssertTrue(String(decoding: guide, as: UTF8.self).contains("主素材文件：\(preview)"))
+        XCTAssertEqual(preview, "01-1_Rollback.mov")
+        XCTAssertNil(Shot(number: 2).latestTakeIndex)
+    }
+
 }
