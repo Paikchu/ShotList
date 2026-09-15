@@ -19,6 +19,12 @@ final class IsolatedFileManager: FileManager, @unchecked Sendable {
 }
 
 final class ShotStoreTests: XCTestCase, @unchecked Sendable {
+    @MainActor
+    private func assertAsyncThrows(_ operation: () async throws -> Void, file: StaticString = #filePath, line: UInt = #line) async {
+        do { try await operation(); XCTFail("Expected error", file: file, line: line) }
+        catch {}
+    }
+
     private func fixture() throws -> (URL, IsolatedFileManager) {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -27,13 +33,13 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
     }
 
     @MainActor
-    func testUnreadableMetadataProtectsFilesAndBlocksAllMutations() throws {
+    func testUnreadableMetadataProtectsFilesAndBlocksAllMutations() async throws {
         let (root, fm) = try fixture()
         let store = ShotStore(fileManager: fm)
         let shot = try XCTUnwrap(store.addShot(note: "Keep me"))
         let source = root.appendingPathComponent("source.mov")
         try Data("test video".utf8).write(to: source)
-        try store.addClip(from: source, duration: 1, to: shot.id)
+        try await store.addClip(from: source, duration: 1, to: shot.id)
         let metadata = root.appendingPathComponent("Support/ShotList/shots.json")
         let good = try Data(contentsOf: metadata)
         let broken = Data("invalid JSON".utf8)
@@ -54,7 +60,7 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
         XCTAssertFalse(blocked.normalize())
         XCTAssertEqual(blocked.removeOrphanFiles(), 0)
         try Data("retry source".utf8).write(to: source)
-        XCTAssertThrowsError(try blocked.addClip(from: source, duration: 1, to: shot.id))
+        await assertAsyncThrows { try await blocked.addClip(from: source, duration: 1, to: shot.id) }
         XCTAssertTrue(fm.fileExists(atPath: source.path))
         XCTAssertEqual(try Data(contentsOf: metadata), broken)
         XCTAssertEqual(try fm.contentsOfDirectory(atPath: store.clipsDirectory.path).count, 1)
@@ -67,7 +73,7 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
     }
 
     @MainActor
-    func testMissingMetadataWithExistingVideoIsNotNewLibrary() throws {
+    func testMissingMetadataWithExistingVideoIsNotNewLibrary() async throws {
         let (root, fm) = try fixture()
         let store = ShotStore(fileManager: fm)
         XCTAssertNil(store.loadError)
@@ -80,7 +86,7 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
     }
 
     @MainActor
-    func testMetadataDirectoryIsReadFailure() throws {
+    func testMetadataDirectoryIsReadFailure() async throws {
         let (root, fm) = try fixture()
         _ = ShotStore(fileManager: fm)
         try fm.createDirectory(at: root.appendingPathComponent("Support/ShotList/shots.json"), withIntermediateDirectories: true)
@@ -90,7 +96,7 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
     }
 
     @MainActor
-    func testFirstLaunchAndValidEmptyLibrary() throws {
+    func testFirstLaunchAndValidEmptyLibrary() async throws {
         let (_, fm) = try fixture()
         let store = ShotStore(fileManager: fm)
         XCTAssertNil(store.loadError)
@@ -102,7 +108,7 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
         XCTAssertNotNil(reopened.addShot())
     }
     @MainActor
-    func testClipWriteFailurePreservesSourceAndCanRetry() throws {
+    func testClipWriteFailurePreservesSourceAndCanRetry() async throws {
         let (root, fm) = try fixture()
         let store = ShotStore(fileManager: fm)
         let shot = try XCTUnwrap(store.addShot(note: "Original"))
@@ -113,7 +119,7 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
         let source = root.appendingPathComponent("source.mov")
         let video = Data("source video".utf8)
         try video.write(to: source)
-        XCTAssertThrowsError(try store.addClip(from: source, duration: 1, to: shot.id))
+        await assertAsyncThrows { try await store.addClip(from: source, duration: 1, to: shot.id) }
         XCTAssertEqual(try Data(contentsOf: source), video)
         XCTAssertTrue(store.shots[0].clips.isEmpty)
         XCTAssertEqual(store.clipCount, 0)
@@ -121,7 +127,7 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
         try fm.removeItem(at: metadata)
         try good.write(to: metadata)
         XCTAssertTrue(ShotStore(fileManager: fm).shots[0].clips.isEmpty)
-        try store.addClip(from: source, duration: 1, to: shot.id)
+        try await store.addClip(from: source, duration: 1, to: shot.id)
         XCTAssertFalse(fm.fileExists(atPath: source.path))
         let reopened = ShotStore(fileManager: fm)
         XCTAssertEqual(reopened.clipCount, 1)
@@ -129,7 +135,7 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
     }
 
     @MainActor
-    func testEncodingFailureDoesNotConsumeVideo() throws {
+    func testEncodingFailureDoesNotConsumeVideo() async throws {
         let (root, fm) = try fixture()
         let store = ShotStore(fileManager: fm)
         let shot = try XCTUnwrap(store.addShot())
@@ -137,7 +143,7 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
         let before = try Data(contentsOf: metadata)
         let source = root.appendingPathComponent("source.mov")
         try Data("video".utf8).write(to: source)
-        XCTAssertThrowsError(try store.addClip(from: source, duration: .nan, to: shot.id))
+        await assertAsyncThrows { try await store.addClip(from: source, duration: .nan, to: shot.id) }
         XCTAssertTrue(fm.fileExists(atPath: source.path))
         XCTAssertEqual(try Data(contentsOf: metadata), before)
         XCTAssertTrue(store.shots[0].clips.isEmpty)
@@ -145,14 +151,14 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
     }
 
     @MainActor
-    func testFailedMetadataMutationsPreserveCommittedRecordsAndFiles() throws {
+    func testFailedMetadataMutationsPreserveCommittedRecordsAndFiles() async throws {
         let (root, fm) = try fixture()
         let store = ShotStore(fileManager: fm)
         let first = try XCTUnwrap(store.addShot(note: "First"))
         _ = store.addShot(note: "Second")
         let source = root.appendingPathComponent("source.mov")
         try Data("video".utf8).write(to: source)
-        try store.addClip(from: source, duration: 1, to: first.id)
+        try await store.addClip(from: source, duration: 1, to: first.id)
         let original = store.shots
         let clip = try XCTUnwrap(original[0].clips.first)
         let originalURL = store.clipsDirectory.appendingPathComponent(clip.fileName)
@@ -194,13 +200,13 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
     }
 
     @MainActor
-    func testReconciliationWriteFailureKeepsCommittedReferences() throws {
+    func testReconciliationWriteFailureKeepsCommittedReferences() async throws {
         let (root, fm) = try fixture()
         let store = ShotStore(fileManager: fm)
         let shot = try XCTUnwrap(store.addShot())
         let source = root.appendingPathComponent("source.mov")
         try Data("video".utf8).write(to: source)
-        try store.addClip(from: source, duration: 1, to: shot.id)
+        try await store.addClip(from: source, duration: 1, to: shot.id)
         let original = store.shots
         let clipURL = try XCTUnwrap(store.clipURL(for: original[0]))
         let metadata = root.appendingPathComponent("Support/ShotList/shots.json")
@@ -226,9 +232,7 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
         store.delete(shot)
         let source = root.appendingPathComponent("import-test.mov")
         try Data("test source".utf8).write(to: source)
-        XCTAssertThrowsError(try store.addClip(from: source, duration: 1, to: shot.id)) { error in
-            XCTAssertTrue(error is ShotStoreError)
-        }
+        await assertAsyncThrows { try await store.addClip(from: source, duration: 1, to: shot.id) }
         XCTAssertTrue(fm.fileExists(atPath: source.path))
         do {
             try await ImportedMovie(url: source).save(to: store, shotID: shot.id)
@@ -240,7 +244,7 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
     }
 
     @MainActor
-    func testSameTimestampReorderPreservesIdentityAndRepairsLegacyNames() throws {
+    func testSameTimestampReorderPreservesIdentityAndRepairsLegacyNames() async throws {
         let (root, fm) = try fixture()
         let initial = ShotStore(fileManager: fm)
         let clips = (1...2).map { ShotClip(fileName: String(format: "镜头%02d_20260915_120000.mov", $0), duration: 1, recordedAt: Date()) }
@@ -283,14 +287,14 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
     }
 
     @MainActor
-    func testDeletionFailuresKeepReferencesAndCountOnlyRemovedOrphans() throws {
+    func testDeletionFailuresKeepReferencesAndCountOnlyRemovedOrphans() async throws {
         let (root, fm) = try fixture()
         let store = ShotStore(fileManager: fm)
         let shot = try XCTUnwrap(store.addShot(note: "Keep failed material"))
         for n in 1...2 {
             let source = root.appendingPathComponent("source\(n).mov")
             try Data("video\(n)".utf8).write(to: source)
-            try store.addClip(from: source, duration: 1, to: shot.id)
+            try await store.addClip(from: source, duration: 1, to: shot.id)
         }
         let first = store.shots[0].clips[0]
         fm.failingRemovals = [first.fileName]
@@ -322,13 +326,13 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
     }
 
     @MainActor
-    func testDeletionRecoverySurvivesRepairWriteFailureAndRestart() throws {
+    func testDeletionRecoverySurvivesRepairWriteFailureAndRestart() async throws {
         let (root, fm) = try fixture()
         let store = ShotStore(fileManager: fm)
         let shot = try XCTUnwrap(store.addShot(note: "Recover me"))
         let source = root.appendingPathComponent("source.mov")
         try Data("video".utf8).write(to: source)
-        try store.addClip(from: source, duration: 1, to: shot.id)
+        try await store.addClip(from: source, duration: 1, to: shot.id)
         let original = store.shots
         let metadata = root.appendingPathComponent("Support/ShotList/shots.json")
         let journal = root.appendingPathComponent("Support/ShotList/pending-deletions.json")
@@ -351,4 +355,90 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(ShotStore(fileManager: fm).shots, original)
     }
 
+    @MainActor
+    func testCopyRunsOffMainActorAndRechecksReorderedTarget() async throws {
+        let (root, _) = try fixture()
+        let fm = BlockingCopyFileManager(root: root)
+        let store = ShotStore(fileManager: fm)
+        let target = try XCTUnwrap(store.addShot(note: "Target"))
+        _ = store.addShot(note: "Other")
+        let source = root.appendingPathComponent("large.mp4")
+        let bytes = Data(repeating: 37, count: 4 * 1024 * 1024)
+        try bytes.write(to: source)
+        let save = Task { try await store.addClip(from: source, duration: 1, to: target.id) }
+        await fulfillment(of: [fm.copyStarted], timeout: 2)
+        // While copy is held on a worker, this main-actor mutation must still complete.
+        store.move(fromOffsets: IndexSet(integer: 0), toOffset: 2)
+        XCTAssertEqual(store.shots[1].id, target.id)
+        XCTAssertEqual(store.clipCount, 0)
+        XCTAssertEqual(store.removeOrphanFiles(), 0)
+        fm.releaseCopy.signal()
+        try await save.value
+        let clip = try XCTUnwrap(store.shots[1].clips.first)
+        XCTAssertTrue(clip.fileName.hasPrefix("镜头02_"))
+        XCTAssertTrue(clip.fileName.hasSuffix(".mp4"))
+        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(store.clipURL(for: clip))), bytes)
+        XCTAssertFalse(fm.fileExists(atPath: source.path))
+        XCTAssertFalse(try fm.contentsOfDirectory(atPath: root.path).contains { $0.hasPrefix("import-") })
+    }
+
+    @MainActor
+    func testDeletedTargetDuringCopyPreservesCallerSourceAndCleansStaging() async throws {
+        let (root, _) = try fixture()
+        let fm = BlockingCopyFileManager(root: root)
+        let store = ShotStore(fileManager: fm)
+        let target = try XCTUnwrap(store.addShot())
+        let source = root.appendingPathComponent("source.mov")
+        try Data("source".utf8).write(to: source)
+        let save = Task { try await store.addClip(from: source, duration: 1, to: target.id) }
+        await fulfillment(of: [fm.copyStarted], timeout: 2)
+        store.deleteEverything()
+        fm.releaseCopy.signal()
+        do { try await save.value; XCTFail("Deleted target accepted") }
+        catch { XCTAssertTrue(error is ShotStoreError) }
+        XCTAssertTrue(fm.fileExists(atPath: source.path))
+        XCTAssertTrue(store.shots.isEmpty)
+        XCTAssertTrue(try fm.contentsOfDirectory(atPath: store.clipsDirectory.path).isEmpty)
+        XCTAssertFalse(try fm.contentsOfDirectory(atPath: root.path).contains { $0.hasPrefix("import-") })
+    }
+
+    @MainActor
+    func testCancelledCopyDoesNotPublishOrConsumeSource() async throws {
+        let (root, _) = try fixture()
+        let fm = BlockingCopyFileManager(root: root)
+        let store = ShotStore(fileManager: fm)
+        let target = try XCTUnwrap(store.addShot())
+        let source = root.appendingPathComponent("source.mov")
+        try Data("source".utf8).write(to: source)
+        let save = Task { try await store.addClip(from: source, duration: 1, to: target.id) }
+        await fulfillment(of: [fm.copyStarted], timeout: 2)
+        save.cancel()
+        fm.releaseCopy.signal()
+        do { try await save.value; XCTFail("Cancelled save succeeded") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        XCTAssertTrue(fm.fileExists(atPath: source.path))
+        XCTAssertEqual(store.clipCount, 0)
+        XCTAssertFalse(try fm.contentsOfDirectory(atPath: root.path).contains { $0.hasPrefix("import-") })
+    }
+
+}
+
+
+final class BlockingCopyFileManager: FileManager, @unchecked Sendable {
+    let root: URL
+    let copyStarted = XCTestExpectation(description: "Background copy started")
+    let releaseCopy = DispatchSemaphore(value: 0)
+    init(root: URL) { self.root = root; super.init() }
+    override var temporaryDirectory: URL { root }
+    override func urls(for directory: FileManager.SearchPathDirectory, in domainMask: FileManager.SearchPathDomainMask) -> [URL] {
+        [root.appendingPathComponent(directory == .documentDirectory ? "Documents" : "Support")]
+    }
+    override func copyItem(at source: URL, to destination: URL) throws {
+        XCTAssertFalse(Thread.isMainThread, "Large-file copy must leave the UI thread")
+        copyStarted.fulfill()
+        guard !Thread.isMainThread, releaseCopy.wait(timeout: .now() + 5) == .success else {
+            throw NSError(domain: "CopyProbe", code: 1)
+        }
+        try super.copyItem(at: source, to: destination)
+    }
 }

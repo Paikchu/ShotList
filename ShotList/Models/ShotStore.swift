@@ -30,6 +30,7 @@ final class ShotStore: ObservableObject {
     private var stagedFileNames: Set<String> = []
 
     private let fileManager: FileManager
+    private let mediaFileCopy: MediaFileCopy
     private let metadataURL: URL
     private var deletionRecoveryURL: URL { metadataURL.deletingLastPathComponent().appendingPathComponent("pending-deletions.json") }
 
@@ -40,6 +41,7 @@ final class ShotStore: ObservableObject {
 
     init(fileManager: FileManager = .default) {
         self.fileManager = fileManager
+        self.mediaFileCopy = MediaFileCopy(fileManager: fileManager)
 
         let documents = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
@@ -299,8 +301,15 @@ final class ShotStore: ObservableObject {
     /// 给某个镜头追加一段刚拍好（或刚导入）的视频。
     ///
     /// 同一个镜头可以拍很多条，这里只追加、不覆盖之前的片段。
-    func addClip(from sourceURL: URL, duration: TimeInterval?, to shotID: Shot.ID) throws {
+    func addClip(from sourceURL: URL, duration: TimeInterval?, to shotID: Shot.ID) async throws {
         if let loadError { throw NSError(domain: "ShotStore", code: 1, userInfo: [NSLocalizedDescriptionKey: loadError]) }
+        guard index(of: shotID) != nil else { throw ShotStoreError.targetMissing }
+        // 大文件复制显式离开主协程，暂存文件不进入素材枚举和孤儿清理范围。
+        let prepared = try await mediaFileCopy.temporaryCopy(of: sourceURL)
+        defer { try? fileManager.removeItem(at: prepared) }
+        try Task.checkCancellation()
+        if let loadError { throw NSError(domain: "ShotStore", code: 1, userInfo: [NSLocalizedDescriptionKey: loadError]) }
+        // 等待期间分镜可能被删除或重排，必须重新解析目标和编号。
         guard let index = index(of: shotID) else { throw ShotStoreError.targetMissing }
 
         let fileName = makeClipFileName(
@@ -310,7 +319,7 @@ final class ShotStore: ObservableObject {
         let destination = clipsDirectory.appendingPathComponent(fileName, isDirectory: false)
 
         // 先准备新文件，提交 JSON 前必须保留可重试的源视频。
-        try fileManager.copyItem(at: sourceURL, to: destination)
+        try fileManager.moveItem(at: prepared, to: destination)
         stagedFileNames.insert(fileName)
 
         shots[index].clips.append(

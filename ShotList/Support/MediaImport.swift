@@ -17,26 +17,14 @@ struct ImportedMovie: Transferable {
     func save(to store: ShotStore, shotID: Shot.ID) async throws {
         defer { try? FileManager.default.removeItem(at: url) }
         let duration = await VideoMetadata.duration(of: url)
-        try store.addClip(from: url, duration: duration, to: shotID)
+        try await store.addClip(from: url, duration: duration, to: shotID)
     }
 
     static var transferRepresentation: some TransferRepresentation {
         FileRepresentation(contentType: .movie) { movie in
             SentTransferredFile(movie.url)
         } importing: { received in
-            let source = received.file
-            let fileExtension = source.pathExtension.lowercased()
-            let name = "\(ImportedMovie.temporaryFilePrefix)\(UUID().uuidString)"
-                + (fileExtension.isEmpty ? ".mov" : ".\(fileExtension)")
-
-            let destination = FileManager.default.temporaryDirectory
-                .appendingPathComponent(name, isDirectory: false)
-
-            let fileManager = FileManager.default
-            if fileManager.fileExists(atPath: destination.path) {
-                try fileManager.removeItem(at: destination)
-            }
-            try fileManager.copyItem(at: source, to: destination)
+            let destination = try await MediaFileCopy.shared.temporaryCopy(of: received.file)
             return ImportedMovie(url: destination)
         }
     }
@@ -61,6 +49,30 @@ nonisolated extension ImportedMovie {
         )) ?? []
         for url in contents where url.lastPathComponent.hasPrefix(temporaryFilePrefix) {
             try? fileManager.removeItem(at: url)
+        }
+    }
+}
+
+/// 明确在通用执行器上复制；取消或失败时回收半成品，调用者只会拿到完整文件。
+nonisolated final class MediaFileCopy: @unchecked Sendable {
+    static let shared = MediaFileCopy(fileManager: .default)
+    // FileManager 的基本文件操作可跨线程调用；这里不设置 delegate，也不共享可变的复制状态。
+    private let fileManager: FileManager
+    init(fileManager: FileManager) { self.fileManager = fileManager }
+
+    @concurrent
+    func temporaryCopy(of source: URL) async throws -> URL {
+        let ext = source.pathExtension.lowercased()
+        let name = ImportedMovie.temporaryFilePrefix + UUID().uuidString + "." + (ext.isEmpty ? "mov" : ext)
+        let destination = fileManager.temporaryDirectory.appendingPathComponent(name)
+        do {
+            try Task.checkCancellation()
+            try fileManager.copyItem(at: source, to: destination)
+            try Task.checkCancellation()
+            return destination
+        } catch {
+            try? fileManager.removeItem(at: destination)
+            throw error
         }
     }
 }

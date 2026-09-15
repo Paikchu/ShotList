@@ -520,7 +520,7 @@ struct CameraCaptureView: View {
             }
             let duration = await VideoMetadata.duration(of: url)
             do {
-                try store.addClip(from: url, duration: duration, to: shot.id)
+                try await store.addClip(from: url, duration: duration, to: shot.id)
                 reviewPlayer?.pause()
                 reviewPlayer = nil
                 reviewURL = nil
