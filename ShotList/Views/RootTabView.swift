@@ -32,6 +32,21 @@ struct RootTabView: View {
     }
 
     var body: some View {
+        if let loadError = store.loadError {
+            ContentUnavailableView {
+                Label("无法读取分镜记录", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(loadError)
+            } actions: {
+                Button("重新读取") { store.retryLoad() }
+                    .buttonStyle(.borderedProminent)
+            }
+        } else {
+            tabs
+        }
+    }
+
+    private var tabs: some View {
         TabView(selection: selectedTab) {
             Tab("分镜", systemImage: "film.stack", value: TabSelection.shots) {
                 ShotListView()

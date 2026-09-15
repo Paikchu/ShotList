@@ -279,7 +279,7 @@ struct ShotListView: View {
 
     private func addShot() {
         Haptics.impact(.light)
-        let shot = store.addShot()
+        guard let shot = store.addShot() else { return }
         // 新镜头是空的，用户此刻就是要写它——直接把光标放进描述输入框
         sheet = .options(shot, autoFocusNote: true)
     }

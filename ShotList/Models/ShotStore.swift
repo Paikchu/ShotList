@@ -18,6 +18,8 @@ final class ShotStore: ObservableObject {
     /// 全部分镜，按拍摄顺序排列
     @Published private(set) var shots: [Shot] = []
 
+    @Published private(set) var loadError: String?
+
     private let fileManager: FileManager
     private let metadataURL: URL
 
@@ -166,7 +168,8 @@ final class ShotStore: ObservableObject {
 
     /// 新建一个分镜，编号接在末尾
     @discardableResult
-    func addShot(note: String = "") -> Shot {
+    func addShot(note: String = "") -> Shot? {
+        guard loadError == nil else { return nil }
         let shot = Shot(number: nextNumber, note: note)
         shots.append(shot)
         normalize()
@@ -177,6 +180,7 @@ final class ShotStore: ObservableObject {
     /// 一次性批量新建多个空白分镜，对应「一次录完 1、2、3、4 号镜头」的场景
     @discardableResult
     func addShots(count: Int) -> [Shot] {
+        guard loadError == nil else { return [] }
         guard count > 0 else { return [] }
         var created: [Shot] = []
         for _ in 0..<count {
@@ -197,6 +201,7 @@ final class ShotStore: ObservableObject {
     /// - Returns: 新建的镜头；传入的 id 已经不在列表里时返回 `nil`。
     @discardableResult
     func insertShot(below shotID: Shot.ID, note: String = "") -> Shot? {
+        guard loadError == nil else { return nil }
         guard let index = index(of: shotID) else { return nil }
         let shot = Shot(number: index + 2, note: note)
         shots.insert(shot, at: index + 1)
@@ -207,7 +212,8 @@ final class ShotStore: ObservableObject {
 
     /// 复制一个已有分镜（不含片段）
     @discardableResult
-    func duplicate(_ shot: Shot) -> Shot {
+    func duplicate(_ shot: Shot) -> Shot? {
+        guard loadError == nil else { return nil }
         // 「复制」＝「在它后面插入一个内容相同的镜头」，共用同一处实现，
         // 免得两条路上的重编号与改名行为悄悄走岔
         if let copy = insertShot(below: shot.id, note: shot.note) { return copy }
@@ -218,6 +224,7 @@ final class ShotStore: ObservableObject {
 
     /// 更新分镜内容。若编号发生变化，则把它移动到对应位置。
     func update(_ edited: Shot) {
+        guard loadError == nil else { return }
         guard let currentIndex = index(of: edited.id) else { return }
 
         var updated = edited
@@ -240,6 +247,7 @@ final class ShotStore: ObservableObject {
     /// - Returns: 是否有编号被改动（调用方据此决定要不要落盘）。
     @discardableResult
     func normalize() -> Bool {
+        guard loadError == nil else { return false }
         var renumbered = false
         for index in shots.indices where shots[index].number != index + 1 {
             shots[index].number = index + 1
@@ -251,6 +259,7 @@ final class ShotStore: ObservableObject {
 
     /// 拖拽排序
     func move(fromOffsets source: IndexSet, toOffset destination: Int) {
+        guard loadError == nil else { return }
         shots.move(fromOffsets: source, toOffset: destination)
         normalize()
         persist()
@@ -259,6 +268,7 @@ final class ShotStore: ObservableObject {
     // MARK: - 删
 
     func delete(_ shot: Shot) {
+        guard loadError == nil else { return }
         guard let index = index(of: shot.id) else { return }
         removeClipFiles(of: shots[index])
         shots.remove(at: index)
@@ -268,6 +278,7 @@ final class ShotStore: ObservableObject {
 
     /// 删除全部分镜与片段（用于「清空重来」）
     func deleteEverything() {
+        guard loadError == nil else { return }
         try? fileManager.removeItem(at: clipsDirectory)
         createDirectoryIfNeeded(clipsDirectory)
         shots.removeAll()
@@ -281,6 +292,7 @@ final class ShotStore: ObservableObject {
     ///
     /// 同一个镜头可以拍很多条，这里只追加、不覆盖之前的片段。
     func addClip(from sourceURL: URL, duration: TimeInterval?, to shotID: Shot.ID) throws {
+        if let loadError { throw NSError(domain: "ShotStore", code: 1, userInfo: [NSLocalizedDescriptionKey: loadError]) }
         guard let index = index(of: shotID) else { return }
 
         let fileName = makeClipFileName(
@@ -303,6 +315,7 @@ final class ShotStore: ObservableObject {
 
     /// 删除某一个片段，镜头与其它的片段都保留
     func removeClip(_ clipID: ShotClip.ID, from shotID: Shot.ID) {
+        guard loadError == nil else { return }
         guard let shotIndex = index(of: shotID),
               let clipIndex = shots[shotIndex].clips.firstIndex(where: { $0.id == clipID })
         else { return }
@@ -314,6 +327,7 @@ final class ShotStore: ObservableObject {
 
     /// 清空某个镜头的全部片段，镜头本身保留
     func removeAllClips(for shotID: Shot.ID) {
+        guard loadError == nil else { return }
         guard let index = index(of: shotID) else { return }
         removeClipFiles(of: shots[index])
         shots[index].clips.removeAll()
@@ -336,6 +350,7 @@ final class ShotStore: ObservableObject {
     /// 只在启动、数据变更、以及切回前台时调用。视图读到的都是缓存值，
     /// `body` 里不再做同步文件 I/O。
     func refreshStorageStats() {
+        guard loadError == nil else { return }
         let snapshot = diskSnapshot()
 
         if reconcileClipsWithDisk(snapshot) {
@@ -451,6 +466,7 @@ final class ShotStore: ObservableObject {
     /// - Returns: 实际删掉的数量。
     @discardableResult
     func removeOrphanFiles() -> Int {
+        guard loadError == nil else { return 0 }
         let removed = orphanFileNames
         for name in removed {
             removeFile(named: name)
@@ -465,13 +481,33 @@ final class ShotStore: ObservableObject {
     /// 这里做一次一致性校正，**校正过就立刻落盘**：只改内存不写回的话，
     /// 磁盘上的文件名与 JSON 记录会一直对不上，下次启动按「文件不存在」
     /// 过滤就会让片段在界面上凭空消失（文件其实还在磁盘上）。
+    func retryLoad() {
+        guard loadError != nil else { return }
+        load()
+    }
+
     private func load() {
-        if let data = try? Data(contentsOf: metadataURL),
-           let decoded = try? JSONDecoder().decode([Shot].self, from: data) {
+        do {
+            let data = try Data(contentsOf: metadataURL)
+            let decoded = try JSONDecoder().decode([Shot].self, from: data)
             shots = decoded
+            loadError = nil
+        } catch {
+            let failure = error as NSError
+            let snapshot = diskSnapshot()
+            // 只有元数据不存在且素材目录确实为空，才能视为首次启动。
+            if failure.domain == NSCocoaErrorDomain,
+               failure.code == NSFileReadNoSuchFileError,
+               snapshot.isComplete, snapshot.sizes.isEmpty {
+                shots = []
+                loadError = nil
+            } else {
+                loadError = "无法读取分镜记录，已暂停编辑和文件清理，原文件不会被覆盖。请恢复可用的分镜记录后重试。\n\(error.localizedDescription)"
+                orphanFileNames = []
+                orphanBytes = 0
+                return
+            }
         }
-        // JSON 读不出来（首次启动 / 文件损坏）时 `shots` 本来就是空的，
-        // 这一步只会得出「目录里的文件都没被引用」，不会误删任何记录。
         refreshStorageStats()
     }
 
@@ -481,6 +517,7 @@ final class ShotStore: ObservableObject {
     }
 
     private func writeMetadata() {
+        guard loadError == nil else { return }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         guard let data = try? encoder.encode(shots) else { return }
