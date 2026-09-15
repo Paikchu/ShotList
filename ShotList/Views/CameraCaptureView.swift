@@ -25,6 +25,7 @@ struct CameraCaptureView: View {
     @State private var reviewURL: URL?
     @State private var reviewPlayer: AVPlayer?
     @State private var isSaving = false
+    @State private var isVisible = false
     @State private var errorMessage: String?
     @State private var isBlinking = false
 
@@ -42,6 +43,8 @@ struct CameraCaptureView: View {
             content
         }
         .preferredColorScheme(.dark)
+        .interactiveDismissDisabled(isSaving)
+        .onAppear { isVisible = true }
         .task { await bootstrap() }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
@@ -55,6 +58,7 @@ struct CameraCaptureView: View {
             }
         }
         .onDisappear {
+            isVisible = false
             // `stop()` 会摘掉录制回调：正在录的那一条就此作废，收尾回调会把
             // 临时文件删掉，不会再回到这个已经消失的页面上执行「进入回看」
             // （那会把音频会话切成播放模式，而归还焦点的代码早就跑完了）。
@@ -65,7 +69,7 @@ struct CameraCaptureView: View {
 
             // 回看到一半直接把页面关掉（下拉关闭 / 被父视图收走）时，
             // 这条还没保存的临时片段也要一起回收
-            if let url = reviewURL {
+            if !isSaving, let url = reviewURL {
                 try? FileManager.default.removeItem(at: url)
                 reviewURL = nil
             }
@@ -252,6 +256,7 @@ struct CameraCaptureView: View {
         VStack(spacing: SLSpacing.medium) {
             HStack {
                 Button("重拍") { retake() }
+                    .disabled(isSaving)
                     .frame(minHeight: SLSize.minTouchTarget)
                 Spacer()
                 Text("回看第 \(reviewTakeIndex) 条")
@@ -487,6 +492,7 @@ struct CameraCaptureView: View {
     }
 
     private func retake() {
+        guard !isSaving else { return }
         reviewPlayer?.pause()
         reviewPlayer = nil
         if let reviewURL {
@@ -505,6 +511,13 @@ struct CameraCaptureView: View {
         isSaving = true
 
         Task {
+            defer {
+                isSaving = false
+                if !isVisible {
+                    try? FileManager.default.removeItem(at: url)
+                    reviewURL = nil
+                }
+            }
             let duration = await VideoMetadata.duration(of: url)
             do {
                 try store.addClip(from: url, duration: duration, to: shot.id)
@@ -514,6 +527,7 @@ struct CameraCaptureView: View {
                 isSaving = false
                 Haptics.success()
 
+                guard isVisible else { return }
                 if continuing {
                     recorder.resumeSession()
                 } else {
@@ -521,7 +535,7 @@ struct CameraCaptureView: View {
                     dismiss()
                 }
             } catch {
-                isSaving = false
+                guard isVisible else { return }
                 Haptics.error()
                 errorMessage = "没能保存这段视频：\(error.localizedDescription)"
             }
