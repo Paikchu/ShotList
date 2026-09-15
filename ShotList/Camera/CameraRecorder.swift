@@ -13,6 +13,15 @@ nonisolated struct MainOnly<T>: @unchecked Sendable {
     let value: T
 }
 
+/// 一份设备格式，以及它在「分辨率 / 帧率」上的摘要。
+///
+/// 两者必须成对保存：同一个分辨率下常有多份格式（1080p 就有到 30 与到 60 两份），
+/// 只按宽高去找会拿错那一份。
+private nonisolated struct FormatEntry {
+    let format: AVCaptureDevice.Format
+    let descriptor: CaptureFormatDescriptor
+}
+
 /// 相机录制控制器（AVFoundation）。
 ///
 /// ## 隔离约定
@@ -60,6 +69,24 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
     @MainActor @Published private(set) var isTorchAvailable = false
     @MainActor @Published private(set) var isTorchOn = false
 
+    /// 当前焦距（原始 `videoZoomFactor`）与这台摄像头的档位表
+    @MainActor @Published private(set) var zoomScale = ZoomScale()
+    @MainActor @Published private(set) var zoomFactor: CGFloat = 1
+
+    /// 对焦与曝光是否被长按锁住
+    @MainActor @Published private(set) var isFocusLocked = false
+
+    /// 这台摄像头支持的（分辨率、帧率）组合，以及当前实际生效的那一档
+    @MainActor @Published private(set) var formatCatalog = CaptureFormatCatalog()
+    @MainActor @Published private(set) var resolution: CaptureResolution?
+    @MainActor @Published private(set) var frameRate: CaptureFrameRate?
+
+    /// 改画质失败时的说明。只用来告诉用户「没改成」，不拦截录制。
+    @MainActor @Published var settingsError: String?
+
+    /// 上次选过的分辨率与帧率，进相机时沿用
+    let preferences = CameraPreferences()
+
     // MARK: - 会话状态（只在 sessionQueue 上访问）
 
     let session = AVCaptureSession()
@@ -70,6 +97,12 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
     private var audioInput: AVCaptureDeviceInput?
     private var isConfigured = false
     private var recordingStart: Date?
+
+    /// 用户想要的画质，留在队列侧作为会话状态的一部分。
+    ///
+    /// 记的是**想要的**而不是实际生效的：前置摄像头多数没有 4K，切过去只能降到 1080p，
+    /// 但这只是这台设备配不上，切回后摄时仍应回到 4K，不该把用户的选择改掉。
+    private var desiredSettings: (resolution: CaptureResolution, frameRate: CaptureFrameRate)?
 
     // MARK: - 录制回调（只在主线程读写）
 
@@ -87,6 +120,7 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
     private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
     private var previewAngleObservation: NSKeyValueObservation?
     private var captureAngleObservation: NSKeyValueObservation?
+    private var zoomObservation: NSKeyValueObservation?
     private var timer: Timer?
 
     /// 单个镜头最长录制时长
@@ -119,16 +153,22 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
         status = .configuring
         observeInterruptions()
 
-        // 当前使用哪颗摄像头属于界面状态，从主线程带到队列上
+        // 当前使用哪颗摄像头、要录多大的画面都属于界面状态，从主线程带到队列上
         let target = position
+        let preferred = (
+            resolution: preferences.resolution ?? CaptureResolution.preferred,
+            frameRate: preferences.frameRate ?? CaptureFrameRate.preferred
+        )
         sessionQueue.async { [weak self] in
             guard let self else { return }
-            switch self.configureIfNeeded(position: target) {
+            switch self.configureIfNeeded(position: target, preferred: preferred) {
             case .success:
                 self.configureAudioSession()
                 if !self.session.isRunning { self.session.startRunning() }
+                // 会话跑起来之后才调焦距：虚拟摄像头要会话在跑才肯换那颗镜头
+                self.resetZoomAndFocus()
                 self.onMain {
-                    self.refreshCapabilities()
+                    self.refreshDeviceCapabilities()
                     self.status = .ready
                     self.updateRotation()
                 }
@@ -166,10 +206,14 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
     /// 就没有接收者了（它会顺手把文件删掉，见 `didFinishRecordingTo`）。不摘的话，
     /// 回调会回到一个已经消失的页面上执行「进入回看」——把音频会话切成
     /// `.playback + active`，而唯一会归还焦点的 `onDisappear` 早就跑完了。
+    ///
+    /// 同时把焦距与对焦锁定放回默认：这两样记在**设备**上，不随会话结束而失效。
+    /// 不放开的话，下次打开取景会一直停在上一页锁住的那一档，界面上还看不出原因。
     @MainActor
     func stop() {
         stopTimer()
         recordingStart = nil
+        zoomObservation = nil
         stopObservingInterruptions()
         completion = nil
 
@@ -177,6 +221,7 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
             guard let self else { return }
             // movieOutput 属于会话状态，收尾也留在 sessionQueue 上做
             if self.movieOutput.isRecording { self.movieOutput.stopRecording() }
+            self.resetZoomAndFocus()
             if self.session.isRunning { self.session.stopRunning() }
             self.deactivateAudioSession()
         }
@@ -184,6 +229,7 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
         onMain {
             if self.isRecording { self.isRecording = false }
             if self.isTorchOn { self.isTorchOn = false }
+            if self.isFocusLocked { self.isFocusLocked = false }
         }
     }
 
@@ -279,10 +325,19 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
             self.session.commitConfiguration()
 
             let didSwitch = self.videoInput?.device.position == target
+            if didSwitch {
+                // 换了一颗摄像头：格式与焦距都要按新设备重新配一遍
+                if let desired = self.desiredSettings {
+                    // 前后摄支持的格式往往不一样（前置多数没有 4K），按用户想要的档位重新配；
+                    // 配不上就退回它自己支持的最好一档，界面上的选项也跟着更新。
+                    self.applyFormatLocked(desired.resolution, desired.frameRate, to: device)
+                }
+                self.resetZoomAndFocus()
+            }
             self.onMain {
                 guard didSwitch else { return }
                 self.position = target
-                self.refreshCapabilities()
+                self.refreshDeviceCapabilities()
                 self.updateRotation()
                 Haptics.selection()
             }
@@ -308,9 +363,233 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
         }
     }
 
+    // MARK: - 焦距
+
+    /// 这台摄像头的变焦上限。
+    ///
+    /// 设备本身允许的倍率可以到十几倍，但再往上画面基本只剩数码放大，
+    /// 拍回来也不能用，不如在这里截住。
+    private static let maximumZoomFactor: CGFloat = 8
+
+    /// 缩放到指定倍率。
+    ///
+    /// - Parameter ramped: 点档位胶囊时用平滑过渡（画面一点点推过去，看得清推到了哪），
+    ///   双指跟手缩放时直接落到手指指定的倍率。
+    func setZoom(_ factor: CGFloat, ramped: Bool) {
+        sessionQueue.async { [weak self] in
+            guard let self, let device = self.videoInput?.device else { return }
+
+            let target = min(max(factor, device.minAvailableVideoZoomFactor), device.maxAvailableVideoZoomFactor)
+            let isRamping = device.isRampingVideoZoom
+            if !isRamping, abs(device.videoZoomFactor - target) < 0.001 { return }
+
+            do {
+                try device.lockForConfiguration()
+                if isRamping { device.cancelVideoZoomRamp() }
+                if ramped {
+                    device.ramp(toVideoZoomFactor: target, withRate: 12)
+                } else {
+                    device.videoZoomFactor = target
+                }
+                device.unlockForConfiguration()
+                // 倍率由设备侧观察回传（见 refreshDeviceCapabilities），
+                // 这里只在平滑过渡时先把目标值报给界面，胶囊不会等一秒钟才亮
+                if ramped { self.onMain { self.zoomFactor = target } }
+            } catch {
+                // 变焦失败不影响录制，静默忽略
+            }
+        }
+    }
+
+    // MARK: - 对焦
+
+    /// 把对焦与曝光的兴趣点挪到这个位置。
+    ///
+    /// - Parameter lock: `true` 表示长按锁定（对焦与曝光都不再自动调整），
+    ///   `false` 表示点按重新自动对焦一次。
+    ///
+    /// 兴趣点用的是设备坐标（左上 (0,0) — 右下 (1,1)），由预览层换算，
+    /// 不在这里自己算——画面既有缩放又有旋转，正着算容易差半屏。
+    func focus(atDevicePoint point: CGPoint, lock: Bool) {
+        sessionQueue.async { [weak self] in
+            guard let self, let device = self.videoInput?.device else { return }
+
+            let applied: Bool
+            do {
+                try device.lockForConfiguration()
+                defer { device.unlockForConfiguration() }
+
+                applied = lock
+                    ? self.lockFocusAndExposure(device, at: point)
+                    : self.focus(device, at: point)
+            } catch {
+                // 对焦设置失败不影响录制，静默忽略
+                return
+            }
+
+            guard applied else { return }
+            self.onMain { self.isFocusLocked = lock }
+        }
+    }
+
+    /// 点按对焦：把兴趣点挪过去，并重新走一次自动对焦。
+    private func focus(_ device: AVCaptureDevice, at point: CGPoint) -> Bool {
+        var applied = false
+
+        let autoMode: AVCaptureDevice.FocusMode? = device.isFocusModeSupported(.autoFocus)
+            ? .autoFocus
+            : (device.isFocusModeSupported(.continuousAutoFocus) ? .continuousAutoFocus : nil)
+
+        if device.isFocusPointOfInterestSupported, let autoMode {
+            device.focusPointOfInterest = point
+            // 先落回连续对焦再切一次性对焦，重复点同一个点也会重新对一次，
+            // 否则「刚才没对上，再点一下」会毫无反应。
+            if device.isFocusModeSupported(.continuousAutoFocus) { device.focusMode = .continuousAutoFocus }
+            device.focusMode = autoMode
+            applied = true
+        }
+
+        if device.isExposurePointOfInterestSupported, device.isExposureModeSupported(.continuousAutoExposure) {
+            device.exposurePointOfInterest = point
+            device.exposureMode = .continuousAutoExposure
+            applied = true
+        }
+
+        return applied
+    }
+
+    /// 长按锁定：对焦与曝光都停在这一刻，画面不会再自己调整。
+    private func lockFocusAndExposure(_ device: AVCaptureDevice, at point: CGPoint) -> Bool {
+        guard device.isFocusModeSupported(.locked) else { return false }
+
+        device.focusPointOfInterest = point
+        device.focusMode = .locked
+
+        if device.isExposurePointOfInterestSupported, device.isExposureModeSupported(.locked) {
+            device.exposurePointOfInterest = point
+            device.exposureMode = .locked
+        }
+
+        return true
+    }
+
+    // MARK: - 画质（分辨率与帧率）
+
+    /// 切换分辨率与帧率。拍摄中不允许改：会话正在用这份格式往文件里写。
+    func applyCaptureSettings(resolution: CaptureResolution, frameRate: CaptureFrameRate) {
+        sessionQueue.async { [weak self] in
+            guard let self, let device = self.videoInput?.device else { return }
+
+            guard !self.movieOutput.isRecording else {
+                self.onMain { self.settingsError = "正在拍摄，先停止拍摄才能改画质。" }
+                return
+            }
+
+            // 先记下用户想要的那一档：实际配不配得上另说，用户的意图不该被设备改掉
+            self.desiredSettings = (resolution, frameRate)
+
+            // 界面只列出可选的档位，理论上不会挑出跑不了的组合；真挑不出来就如实说明，
+            // 而不是悄悄按别的档位录下去。
+            guard let applied = self.applyFormatLocked(resolution, frameRate, to: device) else {
+                self.publishFormatCapabilities(device)
+                self.onMain { self.settingsError = "这台摄像头不支持 \(resolution.title) 的 \(frameRate.title)，画质保持原样。" }
+                return
+            }
+
+            let boxed = MainOnly(value: applied)
+            self.onMain {
+                self.resolution = boxed.value.0
+                self.frameRate = boxed.value.1
+                self.preferences.resolution = resolution
+                self.preferences.frameRate = frameRate
+                self.refreshDeviceCapabilities()
+            }
+        }
+    }
+
+    /// 把设备配成指定的分辨率与帧率，返回实际生效的组合。
+    ///
+    /// 同一个分辨率下常有多份设备格式（1080p 就有到 30 与到 60 两份），
+    /// 所以格式必须与（分辨率、帧率）成对地挑，只按宽高挑会选错那一份。
+    ///
+    /// 会话预设要切成 `.inputPriority`：只要还用 `.high` 这类预设，
+    /// 格式就由会话决定，手动设的 `activeFormat` 会被它改回去。
+    @discardableResult
+    private func applyFormatLocked(
+        _ resolution: CaptureResolution,
+        _ frameRate: CaptureFrameRate,
+        to device: AVCaptureDevice
+    ) -> (CaptureResolution, CaptureFrameRate)? {
+        let catalog = Self.catalog(for: device)
+
+        let targetResolution = catalog.resolutions.contains(resolution) ? resolution : catalog.resolutions.first
+        guard let targetResolution,
+              let targetFrameRate = CaptureFrameRate.closest(
+                to: frameRate,
+                among: catalog.frameRates(for: targetResolution)
+              ),
+              let descriptor = catalog.descriptor(for: targetResolution, frameRate: targetFrameRate),
+              let format = Self.format(in: device, matching: descriptor) else {
+            return nil
+        }
+
+        session.beginConfiguration()
+        defer { session.commitConfiguration() }
+
+        if session.sessionPreset != .inputPriority { session.sessionPreset = .inputPriority }
+
+        do {
+            try device.lockForConfiguration()
+            defer { device.unlockForConfiguration() }
+
+            device.activeFormat = format
+
+            // 帧率由设备自动调整时不允许写帧时长（会抛异常），先关掉它。
+            // 换 activeFormat 本身会把它重置为 false，这里只是把两条路径都兜住。
+            if device.isAutoVideoFrameRateEnabled { device.isAutoVideoFrameRateEnabled = false }
+            device.activeVideoMinFrameDuration = targetFrameRate.frameDuration
+            device.activeVideoMaxFrameDuration = targetFrameRate.frameDuration
+        } catch {
+            return nil
+        }
+
+        return (targetResolution, targetFrameRate)
+    }
+
+    /// 回到默认焦距，并放开对焦与曝光的锁定。
+    ///
+    /// 两样都记在设备上、跨会话留着：不收回去的话，下一次打开取景会莫名停在上一次的
+    /// 构图与对焦上。开了相机、换了摄像头、关掉相机各调一次，行为才和系统相机一样。
+    private func resetZoomAndFocus() {
+        guard let device = videoInput?.device else { return }
+        let defaultZoom = Self.zoomScale(for: device).defaultFactor
+
+        do {
+            try device.lockForConfiguration()
+            defer { device.unlockForConfiguration() }
+
+            if abs(device.videoZoomFactor - defaultZoom) > 0.001 {
+                if device.isRampingVideoZoom { device.cancelVideoZoomRamp() }
+                device.videoZoomFactor = defaultZoom
+            }
+
+            if device.isFocusModeSupported(.continuousAutoFocus) {
+                device.focusMode = .continuousAutoFocus
+            }
+            if device.isExposureModeSupported(.continuousAutoExposure) {
+                device.exposureMode = .continuousAutoExposure
+            }
+        } catch {
+            // 收尾时的清理失败没有可执行的补救，忽略
+        }
+    }
+
     // MARK: - 会话配置
 
-    private func configureIfNeeded(position: AVCaptureDevice.Position) -> Result<Void, Error> {
+    private func configureIfNeeded(
+        position: AVCaptureDevice.Position,
+        preferred: (resolution: CaptureResolution, frameRate: CaptureFrameRate)
+    ) -> Result<Void, Error> {
         if isConfigured { return .success(()) }
 
         guard let device = Self.camera(position: position) else {
@@ -320,7 +599,9 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
         session.beginConfiguration()
         defer { session.commitConfiguration() }
 
-        session.sessionPreset = .high
+        // 分辨率与帧率由自己指定（见 applyFormatLocked）。只要还挂着 .high 这类预设，
+        // 选哪份设备格式就由会话说了算，界面上的分辨率按钮会变成摆设。
+        session.sessionPreset = .inputPriority
 
         do {
             let input = try AVCaptureDeviceInput(device: device)
@@ -344,6 +625,10 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
            connection.isVideoStabilizationSupported {
             connection.preferredVideoStabilizationMode = .auto
         }
+
+        // 挑不到目标档位就保持设备默认格式，界面会按实际生效的组合显示，不谎报
+        desiredSettings = preferred
+        applyFormatLocked(preferred.resolution, preferred.frameRate, to: device)
 
         // 麦克风属于加分项，取不到也不影响画面录制
         if let audioDevice = AVCaptureDevice.default(for: .audio),
@@ -456,17 +741,115 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
         timer = nil
     }
 
-    /// 补光能力取决于当前设备，读取在队列侧完成
-    private func refreshCapabilities() {
+    /// 设备能力（补光、焦距档位、可选画质）都取决于当前这颗摄像头，统一在队列侧读一次。
+    ///
+    /// 界面上的档位与选项全部来自这里，而不是自己攒一份——换摄像头、系统自动换镜头
+    /// 都会让它们变，只有每次重新问设备才不会显示一份过期的能力表。
+    private func refreshDeviceCapabilities() {
         sessionQueue.async { [weak self] in
             guard let self else { return }
-            let device = self.videoInput?.device
-            let isAvailable = device?.hasTorch == true && device?.isTorchAvailable == true
-            let isOn = device?.torchMode == .on
-            self.onMain {
-                self.isTorchAvailable = isAvailable
-                self.isTorchOn = isOn
+            guard let device = self.videoInput?.device else {
+                self.onMain {
+                    self.isTorchAvailable = false
+                    self.isTorchOn = false
+                }
+                return
             }
+
+            let boxed = MainOnly(value: (
+                device: device,
+                scale: Self.zoomScale(for: device),
+                zoom: device.videoZoomFactor,
+                isTorchAvailable: device.hasTorch && device.isTorchAvailable,
+                isTorchOn: device.torchMode == .on
+            ))
+
+            self.onMain {
+                self.isTorchAvailable = boxed.value.isTorchAvailable
+                self.isTorchOn = boxed.value.isTorchOn
+                self.zoomScale = boxed.value.scale
+                self.zoomFactor = boxed.value.zoom
+                self.observeZoom(of: boxed.value.device)
+            }
+
+            self.publishFormatCapabilities(device)
+        }
+    }
+
+    /// 把这颗摄像头实际支持的画质、以及当前生效的那一档报给界面。
+    ///
+    /// 报的是**实际**生效的组合：前后摄支持的档位不一样，切到前置后可能比用户选的
+    /// 低一档，界面必须显示真的在录什么，而不是用户以为自己选了什么。
+    private func publishFormatCapabilities(_ device: AVCaptureDevice) {
+        let dimensions = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
+        let seconds = device.activeVideoMinFrameDuration.seconds
+        let boxed = MainOnly(value: (
+            catalog: Self.catalog(for: device),
+            resolution: CaptureResolution.matching(
+                width: Int(dimensions.width),
+                height: Int(dimensions.height)
+            ),
+            frameRate: seconds > 0
+                ? CaptureFrameRate(rawValue: Int((1 / seconds).rounded()))
+                : nil
+        ))
+
+        onMain {
+            self.formatCatalog = boxed.value.catalog
+            self.resolution = boxed.value.resolution
+            self.frameRate = boxed.value.frameRate
+        }
+    }
+
+    /// 变焦倍率由设备侧连续变化（平滑过渡、在几颗镜头之间自动切换），
+    /// 观察它而不是自己记账，界面显示的倍率才不会和取景画面脱节。
+    @MainActor
+    private func observeZoom(of device: AVCaptureDevice) {
+        zoomObservation = device.observe(\.videoZoomFactor, options: [.new]) { [weak self] _, change in
+            guard let value = change.newValue else { return }
+            self?.onMain { self?.zoomFactor = value }
+        }
+    }
+
+    // MARK: - 设备格式
+
+    private static func zoomScale(for device: AVCaptureDevice) -> ZoomScale {
+        let maximum = min(device.maxAvailableVideoZoomFactor, maximumZoomFactor)
+        return ZoomScale(
+            range: min(device.minAvailableVideoZoomFactor, maximum)...maximum,
+            displayMultiplier: device.displayVideoZoomFactorMultiplier,
+            switchOverFactors: device.virtualDeviceSwitchOverVideoZoomFactors.map { CGFloat($0.doubleValue) }
+        )
+    }
+
+    private static func catalog(for device: AVCaptureDevice) -> CaptureFormatCatalog {
+        CaptureFormatCatalog(descriptors: formatEntries(for: device).map(\.descriptor))
+    }
+
+    /// 找出与摘要完全对应的那份设备格式。
+    ///
+    /// 摘要里带着帧率区间，不能只比宽高：同一个分辨率下常有多份格式
+    /// （1080p 有到 30 与到 60 两份），只看宽高会拿错那一份。
+    private static func format(
+        in device: AVCaptureDevice,
+        matching descriptor: CaptureFormatDescriptor
+    ) -> AVCaptureDevice.Format? {
+        formatEntries(for: device).first { $0.descriptor == descriptor }?.format
+    }
+
+    private static func formatEntries(for device: AVCaptureDevice) -> [FormatEntry] {
+        device.formats.map { format in
+            let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+            let ranges = format.videoSupportedFrameRateRanges
+            return FormatEntry(
+                format: format,
+                descriptor: CaptureFormatDescriptor(
+                    width: Int(dimensions.width),
+                    height: Int(dimensions.height),
+                    minimumFrameRate: ranges.map(\.minFrameRate).min() ?? 0,
+                    maximumFrameRate: ranges.map(\.maxFrameRate).max() ?? 0
+                )
+            )
         }
     }
 
