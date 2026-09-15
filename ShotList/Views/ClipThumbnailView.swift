@@ -18,6 +18,7 @@ struct ClipThumbnailView: View {
     var takeCount: Int = 1
 
     @State private var image: UIImage?
+    @State private var didFail = false
 
     private var isRecorded: Bool { url != nil }
 
@@ -72,7 +73,13 @@ struct ClipThumbnailView: View {
         } else if isRecorded {
             Color(.tertiarySystemFill)
                 .overlay {
-                    ProgressView().controlSize(.small)
+                    if didFail {
+                        Image(systemName: "video.slash")
+                            .font(.title3)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ProgressView().controlSize(.small)
+                    }
                 }
         } else {
             Color(.tertiarySystemFill)
@@ -85,6 +92,7 @@ struct ClipThumbnailView: View {
     }
 
     private func loadImage() async {
+        didFail = false
         guard let url else {
             image = nil
             return
@@ -101,6 +109,7 @@ struct ClipThumbnailView: View {
         // 已经不是当前要显示的那张了，迟到的结果必须丢掉，否则会盖住新图。
         guard !Task.isCancelled else { return }
         image = loaded
+        didFail = loaded == nil
     }
 }
 
