@@ -6,6 +6,7 @@ struct ShotListView: View {
 
     @State private var sheet: ShotSheet?
     @State private var pendingDeletion: Shot?
+    @State private var pendingClear: Shot?
 
     /// 刚新增的镜头，用来在列表里把它指出来（卡片 accent 描边 + 导轨上段变色）。
     @State private var flashID: Shot.ID?
@@ -40,6 +41,24 @@ struct ShotListView: View {
             }
         }
         .shotFlow(sheet: $sheet)
+        .confirmationDialog(
+            "清空这个镜头的片段？",
+            isPresented: Binding(
+                get: { pendingClear != nil },
+                set: { if !$0 { pendingClear = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingClear
+        ) { shot in
+            Button("全部清空", role: .destructive) {
+                store.removeAllClips(for: shot.id)
+                pendingClear = nil
+                Haptics.warning()
+            }
+            Button("取消", role: .cancel) { pendingClear = nil }
+        } message: { shot in
+            Text("镜头 \(shot.paddedNumber) 的 \(shot.clipCount) 段片段都会被删除，无法恢复。分镜描述和顺序会保留。")
+        }
         .onChange(of: sheet?.id) { _, newValue in
             // 编辑器关掉了，这时候用户才真正在看列表
             guard newValue == nil, let target = pendingFlashID else { return }
@@ -189,9 +208,8 @@ struct ShotListView: View {
                 )
             }
 
-            Button {
-                store.removeAllClips(for: shot.id)
-                Haptics.warning()
+            Button(role: .destructive) {
+                pendingClear = shot
             } label: {
                 Label("清空片段（保留分镜）", systemImage: "trash.slash")
             }
