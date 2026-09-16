@@ -113,4 +113,65 @@ final class ExportPackageBuilderTests: XCTestCase {
         XCTAssertNil(Shot(number: 2).latestTakeIndex)
     }
 
+    func testFolderNameCarriesFilmTitleAndFallsBackToDate() throws {
+        var components = DateComponents()
+        components.year = 2026
+        components.month = 9
+        components.day = 14
+        let date = try XCTUnwrap(Calendar(identifier: .gregorian).date(from: components))
+
+        XCTAssertEqual(
+            ExportPackageBuilder.folderName(filmTitle: "夏日vlog", date: date),
+            "分镜导出_夏日vlog_20260914"
+        )
+        // 没起名字就退回纯日期：压缩包名是给人快速辨认用的，「未命名」三个字帮不上忙
+        XCTAssertEqual(ExportPackageBuilder.folderName(filmTitle: "   ", date: date), "分镜导出_20260914")
+        // 文件名里不安全的字符要被换掉，中文保留
+        XCTAssertEqual(ExportPackageBuilder.folderName(filmTitle: "a/b:c", date: date), "分镜导出_a-b-c_20260914")
+    }
+
+    func testExportedTextFilesCarryFilmTitle() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fm = ExportTestFileManager(root: root)
+        let shot = Shot(number: 1, note: "开场", clips: [ShotClip(fileName: "a.mov", duration: 3)])
+        try Data("video".utf8).write(to: root.appendingPathComponent("a.mov"))
+
+        let result = try ExportPackageBuilder.build(
+            shots: [shot], clipsDirectory: root, scope: .recordedOnly,
+            filmTitle: "夏日vlog", fileManager: fm
+        )
+        XCTAssertTrue(result.zipURL.lastPathComponent.hasPrefix("分镜导出_夏日vlog_"))
+
+        let guide = try XCTUnwrap(
+            fm.exportedFiles.first { $0.key.hasSuffix("分镜文字内容指南.md") }
+                .map { String(decoding: $0.value, as: UTF8.self) }
+        )
+        let readme = try XCTUnwrap(
+            fm.exportedFiles.first { $0.key.hasSuffix("导出说明.txt") }
+                .map { String(decoding: $0.value, as: UTF8.self) }
+        )
+        XCTAssertTrue(guide.contains("影片：夏日vlog"))
+        XCTAssertTrue(readme.contains("影片：夏日vlog"))
+    }
+
+    func testUntitledFilmStillNamesItselfInTextFiles() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fm = ExportTestFileManager(root: root)
+        let shot = Shot(number: 1, note: "开场", clips: [ShotClip(fileName: "a.mov", duration: 3)])
+        try Data("video".utf8).write(to: root.appendingPathComponent("a.mov"))
+
+        let result = try ExportPackageBuilder.build(shots: [shot], clipsDirectory: root, scope: .recordedOnly, fileManager: fm)
+        // 压缩包名退回纯日期，但说明文件里留空会让人以为漏了信息，所以写「未命名影片」
+        XCTAssertTrue(result.zipURL.lastPathComponent.hasPrefix("分镜导出_2026"))
+        let guide = try XCTUnwrap(
+            fm.exportedFiles.first { $0.key.hasSuffix("分镜文字内容指南.md") }
+                .map { String(decoding: $0.value, as: UTF8.self) }
+        )
+        XCTAssertTrue(guide.contains("影片：未命名影片"))
+    }
+
 }

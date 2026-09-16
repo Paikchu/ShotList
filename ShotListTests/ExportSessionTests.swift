@@ -13,14 +13,14 @@ final class ExportSessionTests: XCTestCase, @unchecked Sendable {
     func testCompletedPackageInvalidatesAndFreshBuildReplacesIt() async throws {
         let session = ExportSession()
         let first = try package()
-        await session.build(shots: [], clipsDirectory: first.zipURL, scope: .everything, isCurrent: { true }, builder: { _, _, _ in .success(first) })
+        await session.build(shots: [], clipsDirectory: first.zipURL, scope: .everything, filmTitle: "", isCurrent: { true }, builder: { _, _, _, _ in .success(first) })
         XCTAssertEqual(session.package, first)
         session.invalidate()
         XCTAssertNil(session.package)
         XCTAssertTrue(session.isStale)
         XCTAssertFalse(FileManager.default.fileExists(atPath: first.zipURL.path))
         let second = try package()
-        await session.build(shots: [], clipsDirectory: second.zipURL, scope: .everything, isCurrent: { true }, builder: { _, _, _ in .success(second) })
+        await session.build(shots: [], clipsDirectory: second.zipURL, scope: .everything, filmTitle: "", isCurrent: { true }, builder: { _, _, _, _ in .success(second) })
         XCTAssertEqual(session.package, second)
         XCTAssertFalse(session.isStale)
     }
@@ -32,7 +32,7 @@ final class ExportSessionTests: XCTestCase, @unchecked Sendable {
         let entered = expectation(description: "Builder entered")
         var continuation: CheckedContinuation<ExportOutcome, Never>?
         let task = Task {
-            await session.build(shots: [], clipsDirectory: late.zipURL, scope: .everything, isCurrent: { true }, builder: { _, _, _ in
+            await session.build(shots: [], clipsDirectory: late.zipURL, scope: .everything, filmTitle: "", isCurrent: { true }, builder: { _, _, _, _ in
                 await withCheckedContinuation { continuation = $0; entered.fulfill() }
             })
         }
@@ -51,7 +51,7 @@ final class ExportSessionTests: XCTestCase, @unchecked Sendable {
     func testCurrentInputCheckRejectsResultBeforeViewChangeCallback() async throws {
         let session = ExportSession()
         let late = try package()
-        await session.build(shots: [], clipsDirectory: late.zipURL, scope: .everything, isCurrent: { false }, builder: { _, _, _ in .success(late) })
+        await session.build(shots: [], clipsDirectory: late.zipURL, scope: .everything, filmTitle: "", isCurrent: { false }, builder: { _, _, _, _ in .success(late) })
         XCTAssertNil(session.package)
         XCTAssertTrue(session.isStale)
         XCTAssertFalse(FileManager.default.fileExists(atPath: late.zipURL.path))

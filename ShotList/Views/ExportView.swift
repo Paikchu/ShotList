@@ -13,6 +13,23 @@ struct ExportView: View {
 
     private var recordedShots: [Shot] { store.shots.filter(\.hasClip) }
 
+    /// 当前影片的展示名（带书名号），用在确认弹层与说明文字里
+    private var filmName: String {
+        guard let film = store.currentFilm else { return "当前影片" }
+        return "《\(film.displayTitle)》"
+    }
+
+    /// 删除确认的正文。
+    ///
+    /// 空白影片删完会立刻补一部新的，照抄「N 个分镜和 N 段视频都会被删除」会出现
+    /// 「0 个分镜和 0 段视频」这种什么都没说的句子，所以这里分两句写。
+    private var deleteMessage: String {
+        guard !store.shots.isEmpty else {
+            return "\(filmName)会从影片库里移除，并回到一部空白影片。其他影片不受影响。"
+        }
+        return "\(filmName)的 \(store.shots.count) 个分镜和 \(store.clipCount) 段视频都会被删除，无法恢复。其他影片不受影响。"
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -39,21 +56,23 @@ struct ExportView: View {
             .toolbarTitleDisplayMode(.inlineLarge)
         }
         .onChange(of: store.shots) { _, _ in export.invalidate() }
+        // 切到别的影片之后，已经生成的包不再属于「当前这部影片」，必须一起作废
+        .onChange(of: store.currentFilmID) { _, _ in export.invalidate() }
         .onChange(of: scope) { _, _ in export.invalidate() }
         .alert("导出失败", isPresented: errorBinding) {
             Button("好", role: .cancel) {}
         } message: {
             Text(export.errorMessage ?? "")
         }
-        .alert("清空所有分镜和视频？", isPresented: $showClearConfirm) {
-            Button("全部清空", role: .destructive) {
-                store.deleteEverything()
+        .alert("删除当前影片？", isPresented: $showClearConfirm) {
+            Button("删除影片", role: .destructive) {
+                store.deleteCurrentFilm()
                 export.invalidate()
                 Haptics.warning()
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("\(store.shots.count) 个分镜和 \(store.clipCount) 段视频都会被删除，无法恢复。")
+            Text(deleteMessage)
         }
         .alert("清理未使用的文件？", isPresented: orphanBinding) {
             Button("删除", role: .destructive) {
@@ -93,7 +112,7 @@ struct ExportView: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("素材概览")
             .accessibilityValue(
-                "已经拍了 \(store.recordedCount) 个镜头，共 \(store.shots.count) 个，\(store.clipCount) 段视频，总时长 \(store.totalDuration.slDurationText)，占用空间 \(store.totalClipBytes.slByteText)"
+                "\(filmName)，已经拍了 \(store.recordedCount) 个镜头，共 \(store.shots.count) 个，\(store.clipCount) 段视频，总时长 \(store.totalDuration.slDurationText)，占用空间 \(store.totalClipBytes.slByteText)"
             )
         } header: {
             SectionHeader(title: "素材概览", systemImage: "chart.pie")
@@ -104,6 +123,12 @@ struct ExportView: View {
 
     private var buildSection: some View {
         Section {
+            // 作用域收敛到当前影片之后，这句话必须写出来：用户手上可能有好几部影片，
+            // 而「导出」这个词本身不区分范围
+            Text("只会导出\(filmName)的镜头，别的影片不会被一起带走。")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
             Picker("导出范围", selection: $scope) {
                 ForEach(ExportScope.allCases) { item in
                     Text(item.title).tag(item)
@@ -333,9 +358,12 @@ struct ExportView: View {
             Button(role: .destructive) {
                 showClearConfirm = true
             } label: {
-                Label("清空所有分镜和视频", systemImage: "trash")
+                Label("删除当前影片", systemImage: "trash")
             }
-            .disabled(store.shots.isEmpty)
+            // 禁用条件按「空影片」的口径判（isBlank = 无分镜且无标题），不能只看分镜数：
+            // 只剩一部「起了名字但还没加镜头」的影片时，分镜数也是 0，但它有标题要清，
+            // 而全应用只有这一个删除入口，禁用了这部影片就再也删不掉。
+            .disabled(store.films.count <= 1 && (store.currentFilm?.isBlank ?? true))
         } footer: {
             Text("所有数据只保存在这台设备上。")
         }
@@ -363,9 +391,17 @@ struct ExportView: View {
         let shots = store.shots
         let clipsDirectory = store.clipsDirectory
         let currentScope = scope
+        // 影片也是这次导出的输入：切换影片后，这份结果就不再属于「刚刚生成的导出包」
+        let filmID = store.currentFilmID
+        let filmTitle = store.currentFilm?.exportTitleToken ?? ""
         Task {
             await export.build(shots: shots, clipsDirectory: clipsDirectory, scope: currentScope,
-                               isCurrent: { store.shots == shots && scope == currentScope })
+                               filmTitle: filmTitle,
+                               isCurrent: {
+                                   store.shots == shots
+                                       && scope == currentScope
+                                       && store.currentFilmID == filmID
+                               })
         }
     }
 

@@ -40,7 +40,7 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
         let source = root.appendingPathComponent("source.mov")
         try Data("test video".utf8).write(to: source)
         try await store.addClip(from: source, duration: 1, to: shot.id)
-        let metadata = root.appendingPathComponent("Support/ShotList/shots.json")
+        let metadata = root.appendingPathComponent("Support/ShotList/films.json")
         let good = try Data(contentsOf: metadata)
         let broken = Data("invalid JSON".utf8)
         try broken.write(to: metadata)
@@ -54,7 +54,7 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
         blocked.update(shot)
         blocked.move(fromOffsets: IndexSet(integer: 0), toOffset: 1)
         blocked.delete(shot)
-        blocked.deleteEverything()
+        blocked.deleteCurrentFilm()
         blocked.removeAllClips(for: shot.id)
         blocked.refreshStorageStats()
         XCTAssertFalse(blocked.normalize())
@@ -78,18 +78,26 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
         let store = ShotStore(fileManager: fm)
         XCTAssertNil(store.loadError)
         try Data("existing".utf8).write(to: store.clipsDirectory.appendingPathComponent("old.mov"))
+        // 记录被外部删掉、素材还在：这一份不能当成空库继续跑——
+        // 否则那些视频会在下一次「清理未使用的文件」里被当成孤儿清掉
+        let metadata = root.appendingPathComponent("Support/ShotList/films.json")
+        try fm.removeItem(at: metadata)
         let blocked = ShotStore(fileManager: fm)
         XCTAssertNotNil(blocked.loadError)
         XCTAssertEqual(blocked.removeOrphanFiles(), 0)
         XCTAssertNil(blocked.addShot())
-        XCTAssertFalse(fm.fileExists(atPath: root.appendingPathComponent("Support/ShotList/shots.json").path))
+        XCTAssertFalse(fm.fileExists(atPath: metadata.path))
     }
 
     @MainActor
     func testMetadataDirectoryIsReadFailure() async throws {
         let (root, fm) = try fixture()
         _ = ShotStore(fileManager: fm)
-        try fm.createDirectory(at: root.appendingPathComponent("Support/ShotList/shots.json"), withIntermediateDirectories: true)
+        // 首次启动会落一份空影片库；把那个位置换成同名目录，模拟元数据读不出来
+        let metadata = root.appendingPathComponent("Support/ShotList/films.json")
+        try fm.removeItem(at: metadata)
+        try fm.createDirectory(at: metadata, withIntermediateDirectories: true)
+
         let blocked = ShotStore(fileManager: fm)
         XCTAssertNotNil(blocked.loadError)
         XCTAssertNil(blocked.addShot())
@@ -101,7 +109,7 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
         let store = ShotStore(fileManager: fm)
         XCTAssertNil(store.loadError)
         XCTAssertNotNil(store.addShot())
-        store.deleteEverything()
+        store.deleteCurrentFilm()
         let reopened = ShotStore(fileManager: fm)
         XCTAssertNil(reopened.loadError)
         XCTAssertTrue(reopened.shots.isEmpty)
@@ -112,7 +120,7 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
         let (root, fm) = try fixture()
         let store = ShotStore(fileManager: fm)
         let shot = try XCTUnwrap(store.addShot(note: "Original"))
-        let metadata = root.appendingPathComponent("Support/ShotList/shots.json")
+        let metadata = root.appendingPathComponent("Support/ShotList/films.json")
         let good = try Data(contentsOf: metadata)
         try fm.removeItem(at: metadata)
         try fm.createDirectory(at: metadata, withIntermediateDirectories: false)
@@ -139,7 +147,7 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
         let (root, fm) = try fixture()
         let store = ShotStore(fileManager: fm)
         let shot = try XCTUnwrap(store.addShot())
-        let metadata = root.appendingPathComponent("Support/ShotList/shots.json")
+        let metadata = root.appendingPathComponent("Support/ShotList/films.json")
         let before = try Data(contentsOf: metadata)
         let source = root.appendingPathComponent("source.mov")
         try Data("video".utf8).write(to: source)
@@ -162,7 +170,7 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
         let original = store.shots
         let clip = try XCTUnwrap(original[0].clips.first)
         let originalURL = store.clipsDirectory.appendingPathComponent(clip.fileName)
-        let metadata = root.appendingPathComponent("Support/ShotList/shots.json")
+        let metadata = root.appendingPathComponent("Support/ShotList/films.json")
         let good = try Data(contentsOf: metadata)
         try fm.removeItem(at: metadata)
         try fm.createDirectory(at: metadata, withIntermediateDirectories: false)
@@ -181,7 +189,7 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
         store.removeClip(clip.id, from: first.id)
         store.removeAllClips(for: first.id)
         store.delete(first)
-        store.deleteEverything()
+        store.deleteCurrentFilm()
         XCTAssertEqual(store.shots, original)
         XCTAssertEqual(try Data(contentsOf: originalURL), Data("video".utf8))
         XCTAssertEqual(try fm.contentsOfDirectory(atPath: store.clipsDirectory.path), [clip.fileName])
@@ -209,7 +217,7 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
         try await store.addClip(from: source, duration: 1, to: shot.id)
         let original = store.shots
         let clipURL = try XCTUnwrap(store.clipURL(for: original[0]))
-        let metadata = root.appendingPathComponent("Support/ShotList/shots.json")
+        let metadata = root.appendingPathComponent("Support/ShotList/films.json")
         let good = try Data(contentsOf: metadata)
         try fm.removeItem(at: clipURL)
         try fm.removeItem(at: metadata)
@@ -253,8 +261,9 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
             original[i].clips = [clips[i]]
             try Data(original[i].note.utf8).write(to: initial.clipsDirectory.appendingPathComponent(clips[i].fileName))
         }
-        let metadata = root.appendingPathComponent("Support/ShotList/shots.json")
-        let good = try JSONEncoder().encode(original)
+        let metadata = root.appendingPathComponent("Support/ShotList/films.json")
+        let film = Film(shots: original)
+        let good = try JSONEncoder().encode(FilmLibrary(films: [film], currentFilmID: film.id))
         try good.write(to: metadata)
         let store = ShotStore(fileManager: fm)
         // JSON failure must leave both original videos and references intact.
@@ -274,10 +283,13 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
         }
         XCTAssertFalse(reopened.normalize())
         XCTAssertEqual(try fm.contentsOfDirectory(atPath: store.clipsDirectory.path).count, 2)
-        // Legacy records can have correct numbers but stale file-name prefixes.
-        var legacy = reopened.shots.reversed().map { $0 }
-        for i in legacy.indices { legacy[i].number = i + 1 }
-        try JSONEncoder().encode(legacy).write(to: metadata)
+        // 旧记录可能编号正确、文件名前缀却是旧的，读取时要顺手改好
+        var stale = reopened.shots.reversed().map { $0 }
+        for i in stale.indices { stale[i].number = i + 1 }
+        let staleFilm = Film(shots: stale)
+        try JSONEncoder()
+            .encode(FilmLibrary(films: [staleFilm], currentFilmID: staleFilm.id))
+            .write(to: metadata)
         let repaired = ShotStore(fileManager: fm)
         for shot in repaired.shots {
             XCTAssertTrue(shot.clips[0].fileName.hasPrefix(String(format: "镜头%02d_", shot.number)))
@@ -308,7 +320,7 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(store.orphanFileNames.isEmpty)
         store.delete(shot)
         XCTAssertEqual(store.shots.first?.id, shot.id)
-        store.deleteEverything()
+        store.deleteCurrentFilm()
         XCTAssertEqual(store.shots.first?.clips, [first])
         for name in ["fail.mov", "ok.mov"] {
             try Data("orphan".utf8).write(to: store.clipsDirectory.appendingPathComponent(name))
@@ -319,7 +331,10 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(store.orphanFileNames, ["fail.mov"])
         XCTAssertNotNil(store.saveError)
         fm.failingRemovals = []
-        store.deleteEverything()
+        // 删除当前影片只回收这部影片自己的片段，未使用文件要在导出页单独清理，
+        // 这里把上一次没删掉的 fail.mov 补删一次
+        XCTAssertEqual(store.removeOrphanFiles(), 1)
+        store.deleteCurrentFilm()
         XCTAssertTrue(store.shots.isEmpty)
         XCTAssertTrue(store.orphanFileNames.isEmpty)
         XCTAssertTrue(try fm.contentsOfDirectory(atPath: store.clipsDirectory.path).isEmpty)
@@ -334,7 +349,7 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
         try Data("video".utf8).write(to: source)
         try await store.addClip(from: source, duration: 1, to: shot.id)
         let original = store.shots
-        let metadata = root.appendingPathComponent("Support/ShotList/shots.json")
+        let metadata = root.appendingPathComponent("Support/ShotList/films.json")
         let journal = root.appendingPathComponent("Support/ShotList/pending-deletions.json")
         fm.failingRemovals = [original[0].clips[0].fileName]
         fm.onFailedRemoval = {
@@ -347,7 +362,7 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
         XCTAssertNil(store.addShot())
         fm.onFailedRemoval = nil
         try fm.removeItem(at: metadata)
-        try Data("[]".utf8).write(to: metadata)
+        try Data(#"{"films":[]}"#.utf8).write(to: metadata)
         let reopened = ShotStore(fileManager: fm)
         XCTAssertNil(reopened.loadError)
         XCTAssertEqual(reopened.shots, original)
@@ -392,7 +407,7 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
         try Data("source".utf8).write(to: source)
         let save = Task { try await store.addClip(from: source, duration: 1, to: target.id) }
         await fulfillment(of: [fm.copyStarted], timeout: 2)
-        store.deleteEverything()
+        store.deleteCurrentFilm()
         fm.releaseCopy.signal()
         do { try await save.value; XCTFail("Deleted target accepted") }
         catch { XCTAssertTrue(error is ShotStoreError) }
@@ -421,6 +436,191 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
         XCTAssertFalse(try fm.contentsOfDirectory(atPath: root.path).contains { $0.hasPrefix("import-") })
     }
 
+    // MARK: - 影片库
+
+    @MainActor
+    func testMigratesLegacyShotsIntoASingleFilm() async throws {
+        let (root, fm) = try fixture()
+        // 先用新版跑一遍，拿到一份「有记录也有文件」的状态，再退回旧版布局
+        let seed = ShotStore(fileManager: fm)
+        let shot = try XCTUnwrap(seed.addShot(note: "旧记录"))
+        let source = root.appendingPathComponent("source.mov")
+        try Data("legacy video".utf8).write(to: source)
+        try await seed.addClip(from: source, duration: 3, to: shot.id)
+        let legacyShots = seed.shots
+
+        let support = root.appendingPathComponent("Support/ShotList")
+        try fm.removeItem(at: support.appendingPathComponent("films.json"))
+        try JSONEncoder().encode(legacyShots).write(to: support.appendingPathComponent("shots.json"))
+
+        let migrated = ShotStore(fileManager: fm)
+        XCTAssertNil(migrated.loadError)
+        // 镜头与片段逐项一致，一个都没丢
+        XCTAssertEqual(migrated.shots, legacyShots)
+        XCTAssertEqual(migrated.clipCount, 1)
+        XCTAssertEqual(
+            try Data(contentsOf: XCTUnwrap(migrated.clipURL(for: migrated.shots[0]))),
+            Data("legacy video".utf8)
+        )
+        // 旧文件改名保留作回滚保险，新文件就位
+        XCTAssertTrue(fm.fileExists(atPath: support.appendingPathComponent("shots.json.migrated").path))
+        XCTAssertFalse(fm.fileExists(atPath: support.appendingPathComponent("shots.json").path))
+        XCTAssertTrue(fm.fileExists(atPath: support.appendingPathComponent("films.json").path))
+        // 再打开一次走的是新格式，不会重复迁移，也不会多出一部影片
+        let reopened = ShotStore(fileManager: fm)
+        XCTAssertEqual(reopened.shots, legacyShots)
+        XCTAssertEqual(reopened.films.count, 1)
+    }
+
+    @MainActor
+    func testOrphansAreScopedToEveryFilmNotJustTheCurrentOne() async throws {
+        let (root, fm) = try fixture()
+        let store = ShotStore(fileManager: fm)
+
+        let aShot = try XCTUnwrap(store.addShot(note: "A"))
+        let aSource = root.appendingPathComponent("a.mov")
+        try Data("a".utf8).write(to: aSource)
+        try await store.addClip(from: aSource, duration: 1, to: aShot.id)
+        let filmA = try XCTUnwrap(store.currentFilmID)
+
+        _ = store.remakeCurrentFilm(title: "B")
+        let bShot = try XCTUnwrap(store.addShot(note: "B"))
+        let bSource = root.appendingPathComponent("b.mov")
+        try Data("b".utf8).write(to: bSource)
+        try await store.addClip(from: bSource, duration: 1, to: bShot.id)
+        XCTAssertNotEqual(store.currentFilmID, filmA)
+
+        // 站在影片 B 的角度，影片 A 的素材绝不能被算成「未使用文件」
+        XCTAssertEqual(store.clipCount, 1)
+        XCTAssertTrue(store.orphanFileNames.isEmpty)
+        XCTAssertEqual(store.removeOrphanFiles(), 0)
+        XCTAssertEqual(try fm.contentsOfDirectory(atPath: store.clipsDirectory.path).count, 2)
+
+        // 切回影片 A：记录与素材都还在
+        XCTAssertTrue(store.loadFilm(filmA))
+        XCTAssertEqual(store.shots.count, 1)
+        XCTAssertEqual(store.shots[0].note, "A")
+        XCTAssertEqual(store.clipCount, 1)
+    }
+
+    @MainActor
+    func testRemakeArchivesCurrentFilmAndRecyclesBlankOnes() async throws {
+        let (_, fm) = try fixture()
+        let store = ShotStore(fileManager: fm)
+        _ = store.addShot(note: "旧片的镜头")
+        let oldFilm = try XCTUnwrap(store.currentFilmID)
+
+        let fresh = try XCTUnwrap(store.remakeCurrentFilm())
+        XCTAssertEqual(store.currentFilmID, fresh.id)
+        XCTAssertTrue(store.shots.isEmpty)
+        XCTAssertEqual(store.films.count, 2)
+
+        // 再重制一次：上一次留下的空壳应当被静默回收，库里不会越攒越多
+        _ = store.remakeCurrentFilm()
+        XCTAssertEqual(store.films.count, 2)
+        XCTAssertEqual(store.shots.count, 0)
+
+        // 旧片原样留库，切回去内容完整
+        XCTAssertTrue(store.loadFilm(oldFilm))
+        XCTAssertEqual(store.shots.count, 1)
+        XCTAssertEqual(store.shots[0].note, "旧片的镜头")
+        XCTAssertNotNil(store.currentFilm)
+    }
+
+    @MainActor
+    func testRemakeLeavesExactlyOneBlankFilm() async throws {
+        let (_, fm) = try fixture()
+        let store = ShotStore(fileManager: fm)
+        // 全新库里只有一部空影片，第一次重制会把它回收掉，而不是留下两个空壳
+        _ = store.remakeCurrentFilm()
+        XCTAssertNotNil(store.currentFilm)
+        XCTAssertTrue(store.shots.isEmpty)
+        XCTAssertEqual(store.films.count, 1)
+        // 反复重制也不会越攒越多
+        _ = store.remakeCurrentFilm()
+        XCTAssertEqual(store.films.count, 1)
+        XCTAssertNotNil(store.currentFilm)
+    }
+
+    /// 导出页的「删除当前影片」在「只剩一部、没有分镜」时是否可用，判据是 `isBlank`
+    /// 而不是 `shots.isEmpty`。这条用例钉住它所依赖的 store 行为：删掉一部
+    /// 「起了名字但还没加镜头」的影片，标题确实被清掉了——不是「什么都没发生」。
+    @MainActor
+    func testDeletingTheOnlyTitledFilmActuallyClearsItsTitle() async throws {
+        let (_, fm) = try fixture()
+        let store = ShotStore(fileManager: fm)
+        let titled = try XCTUnwrap(store.currentFilmID)
+        store.renameFilm(titled, to: "夏日vlog")
+        XCTAssertTrue(try XCTUnwrap(store.currentFilm).hasTitle)
+
+        store.deleteCurrentFilm()
+
+        XCTAssertEqual(store.films.count, 1)
+        XCTAssertNotEqual(store.currentFilmID, titled)
+        XCTAssertFalse(try XCTUnwrap(store.currentFilm).hasTitle)
+    }
+
+    @MainActor
+    func testDiskReconciliationDoesNotAdvanceUpdatedAt() async throws {
+        let (root, fm) = try fixture()
+        let store = ShotStore(fileManager: fm)
+        let shot = try XCTUnwrap(store.addShot(note: "会被外部删掉"))
+        let source = root.appendingPathComponent("source.mov")
+        try Data("video".utf8).write(to: source)
+        try await store.addClip(from: source, duration: 1, to: shot.id)
+        let before = try XCTUnwrap(store.currentFilm).updatedAt
+
+        // 模拟用户从「文件」App 里删掉片段，再回到前台
+        try fm.removeItem(at: XCTUnwrap(store.clipURL(for: store.shots[0])))
+        store.refreshStorageStats()
+
+        XCTAssertEqual(store.clipCount, 0)
+        // 自愈不是用户编辑，影片的「最后更新」不该被推到现在
+        XCTAssertEqual(try XCTUnwrap(store.currentFilm).updatedAt, before)
+    }
+
+    @MainActor
+    func testLoadingHistoricalFilmLetsUserKeepShooting() async throws {
+        let (root, fm) = try fixture()
+        let store = ShotStore(fileManager: fm)
+        let oldShot = try XCTUnwrap(store.addShot(note: "没拍完的旧片"))
+        let oldFilm = try XCTUnwrap(store.currentFilmID)
+
+        // 先换一部新片，再从影片库里把旧片载入回来接着拍
+        _ = store.remakeCurrentFilm(title: "新片")
+        XCTAssertTrue(store.loadFilm(oldFilm))
+
+        let source = root.appendingPathComponent("resume.mov")
+        try Data("resume".utf8).write(to: source)
+        try await store.addClip(from: source, duration: 2, to: oldShot.id)
+
+        XCTAssertEqual(store.clipCount, 1)
+        XCTAssertEqual(store.stats(of: try XCTUnwrap(store.film(withID: oldFilm))).clipCount, 1)
+        // 新片没有被牵连
+        let newFilm = try XCTUnwrap(store.films.first { $0.id != oldFilm })
+        XCTAssertEqual(store.stats(of: newFilm).clipCount, 0)
+        XCTAssertEqual(try fm.contentsOfDirectory(atPath: store.clipsDirectory.path).count, 1)
+        // 重启之后仍然停在载入的那部影片上
+        XCTAssertEqual(ShotStore(fileManager: fm).currentFilmID, oldFilm)
+    }
+
+    @MainActor
+    func testRenamingFilmUpdatesItsSortPositionWithoutTouchingShots() async throws {
+        let (_, fm) = try fixture()
+        let store = ShotStore(fileManager: fm)
+        _ = store.addShot(note: "第一部的镜头")
+        let first = try XCTUnwrap(store.currentFilmID)
+        _ = store.remakeCurrentFilm(title: "第二部")
+        let second = try XCTUnwrap(store.currentFilmID)
+        // 让两次编辑落在不同的时间点上，排序才有确定的结论
+        try await Task.sleep(for: .milliseconds(20))
+
+        store.renameFilm(first, to: "改过名的那部")
+        XCTAssertEqual(store.film(withID: first)?.title, "改过名的那部")
+        // 排序按最后更新倒序，刚改过的那部排到最前
+        XCTAssertEqual(store.sortedFilms.first?.id, first)
+        XCTAssertEqual(store.film(withID: second)?.shots.count, 0)
+    }
 }
 
 

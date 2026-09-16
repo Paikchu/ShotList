@@ -17,11 +17,20 @@ struct ShotListView: View {
 
     var body: some View {
         NavigationStack {
-            Group {
-                if store.shots.isEmpty {
-                    emptyState
-                } else {
-                    shotList
+            VStack(spacing: 0) {
+                // 影片条常驻：即使这部影片还没有镜头，用户也要能看见标题、
+                // 能切换影片、能重制。它不随内容有无而消失。
+                FilmBar()
+                    .padding(.horizontal, SLSpacing.medium)
+                    .padding(.top, SLSpacing.pageTopInset)
+                    .padding(.bottom, SLSpacing.small)
+
+                Group {
+                    if store.shots.isEmpty {
+                        emptyState
+                    } else {
+                        shotList
+                    }
                 }
             }
             .navigationTitle("分镜")
@@ -228,9 +237,9 @@ struct ShotListView: View {
 
     private var emptyState: some View {
         ContentUnavailableView {
-            Label("还没有分镜", systemImage: "film.stack")
+            Label("这部影片还没有分镜", systemImage: "film.stack")
         } description: {
-            Text("添加第 1 个镜头，开始搭建你的 Vlog 分镜清单。")
+            Text("添加第 1 个镜头，开始搭建这部影片的分镜清单。")
         } actions: {
             Button("添加分镜") { addShot() }
                 .buttonStyle(.borderedProminent)

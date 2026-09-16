@@ -19,10 +19,10 @@ final class ExportSession: ObservableObject {
     }
 
     func build(
-        shots: [Shot], clipsDirectory: URL, scope: ExportScope,
+        shots: [Shot], clipsDirectory: URL, scope: ExportScope, filmTitle: String,
         isCurrent: () -> Bool,
-        builder: ([Shot], URL, ExportScope) async -> ExportOutcome = {
-            await ExportPackageBuilder.buildOffMain(shots: $0, clipsDirectory: $1, scope: $2)
+        builder: ([Shot], URL, ExportScope, String) async -> ExportOutcome = {
+            await ExportPackageBuilder.buildOffMain(shots: $0, clipsDirectory: $1, scope: $2, filmTitle: $3)
         }
     ) async {
         guard !isBuilding else { return }
@@ -30,7 +30,7 @@ final class ExportSession: ObservableObject {
         generation = request
         isBuilding = true
         errorMessage = nil
-        let outcome = await builder(shots, clipsDirectory, scope)
+        let outcome = await builder(shots, clipsDirectory, scope, filmTitle)
         isBuilding = false
         guard generation == request, isCurrent() else {
             if case .success(let result) = outcome { discard(result) }

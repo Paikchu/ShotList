@@ -117,10 +117,11 @@ nonisolated enum ExportPackageBuilder {
     static func buildOffMain(
         shots: [Shot],
         clipsDirectory: URL,
-        scope: ExportScope
+        scope: ExportScope,
+        filmTitle: String
     ) async -> ExportOutcome {
         do {
-            return .success(try build(shots: shots, clipsDirectory: clipsDirectory, scope: scope))
+            return .success(try build(shots: shots, clipsDirectory: clipsDirectory, scope: scope, filmTitle: filmTitle))
         } catch {
             return .failure(error.localizedDescription)
         }
@@ -130,11 +131,13 @@ nonisolated enum ExportPackageBuilder {
         shots: [Shot],
         clipsDirectory: URL,
         scope: ExportScope,
+        filmTitle: String = "",
         fileManager: FileManager = .default,
         availableCapacity: (URL) throws -> Int64? = availableCapacity
     ) throws -> ExportPackage {
         do {
             return try buildChecked(shots: shots, clipsDirectory: clipsDirectory, scope: scope,
+                                    filmTitle: filmTitle,
                                     fileManager: fileManager, availableCapacity: availableCapacity)
         } catch {
             throw exportFailure(error)
@@ -142,7 +145,7 @@ nonisolated enum ExportPackageBuilder {
     }
 
     private static func buildChecked(
-        shots: [Shot], clipsDirectory: URL, scope: ExportScope, fileManager: FileManager,
+        shots: [Shot], clipsDirectory: URL, scope: ExportScope, filmTitle: String, fileManager: FileManager,
         availableCapacity: (URL) throws -> Int64?
     ) throws -> ExportPackage {
 
@@ -168,7 +171,7 @@ nonisolated enum ExportPackageBuilder {
         }
 
         let now = Date()
-        let folderName = "分镜导出_\(Self.dayToken(now))"
+        let folderName = Self.folderName(filmTitle: filmTitle, date: now)
         let workingRoot = fileManager.temporaryDirectory
             .appendingPathComponent("ShotListExport", isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -259,11 +262,13 @@ nonisolated enum ExportPackageBuilder {
         guard clipCount > 0 else { throw ExportError.noClips }
 
         try Self.writeManifest(manifest, to: folder)
-        try Self.writeReadme(manifest: manifest, folderName: folderName, scope: scope, to: folder)
+        try Self.writeReadme(manifest: manifest, folderName: folderName, scope: scope,
+                             filmTitle: filmTitle, to: folder)
         try Self.writeTextGuide(
             manifest: manifest,
             folderName: folderName,
             scope: scope,
+            filmTitle: filmTitle,
             totalDuration: totalDuration,
             to: folder
         )
@@ -458,6 +463,7 @@ nonisolated enum ExportPackageBuilder {
         manifest: [ManifestRow],
         folderName: String,
         scope: ExportScope,
+        filmTitle: String,
         to folder: URL
     ) throws {
         let exported = manifest.filter { $0.exportedPath != nil }
@@ -469,6 +475,7 @@ nonisolated enum ExportPackageBuilder {
         分镜助手 · 导出说明
         ============================
 
+        影片：\(filmDisplayTitle(filmTitle))
         导出时间：\(SLDateText.monthDayTime(Date()))
         导出范围：\(scope.title)
         镜头数量：\(shotCount)
@@ -553,6 +560,7 @@ nonisolated enum ExportPackageBuilder {
         manifest: [ManifestRow],
         folderName: String,
         scope: ExportScope,
+        filmTitle: String,
         totalDuration: TimeInterval,
         to folder: URL
     ) throws {
@@ -563,6 +571,8 @@ nonisolated enum ExportPackageBuilder {
 
         var text = """
         # 分镜文字内容指南
+
+        影片：\(filmDisplayTitle(filmTitle))
 
         本文件是「分镜助手」导出包的文字分镜表：把每个分镜的文字内容与同目录下的
         视频文件名绑定在一起。AI 剪辑工具可以直接按本文件处理视频，无需再问用户
@@ -630,6 +640,7 @@ nonisolated enum ExportPackageBuilder {
         text += """
         ## 四、汇总
 
+        - 影片：\(filmDisplayTitle(filmTitle))
         - 导出范围：\(scope.title)
         - 分镜数量：\(shotCount)（已拍 \(recordedShotCount)，未拍 \(shotCount - recordedShotCount)）
         - 视频片段：\(clipCount)
@@ -684,6 +695,25 @@ nonisolated enum ExportPackageBuilder {
         }
         completed = true
         return destination
+    }
+
+    /// 导出目录名：`分镜导出_[影片标题_]日期`。
+    ///
+    /// 没有标题时退回纯日期、不写「未命名」——压缩包名是给人快速辨认用的，
+    /// 那三个字帮不上忙；有标题时它就是辨认这部影片最直接的线索。
+    static func folderName(filmTitle: String, date: Date) -> String {
+        let trimmed = filmTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "分镜导出_\(dayToken(date))" }
+        return "分镜导出_\(sanitize(trimmed))_\(dayToken(date))"
+    }
+
+    /// 导出文本里对影片的称呼。
+    ///
+    /// 压缩包名可以不写「未命名影片」，但说明文件里留空会让人以为漏了信息，
+    /// 所以两处的兜底写法刻意不同。
+    private static func filmDisplayTitle(_ title: String) -> String {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "未命名影片" : trimmed
     }
 
     private static func dayToken(_ date: Date) -> String {
