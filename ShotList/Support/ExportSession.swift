@@ -7,11 +7,21 @@ final class ExportSession: ObservableObject {
     @Published private(set) var package: ExportPackage?
     @Published private(set) var isBuilding = false
     @Published private(set) var isStale = false
+    /// 打包进度。转码一段素材是几十秒级别的事，界面靠它说明「还在动、动到哪了」。
+    @Published private(set) var progress: ExportProgress?
     @Published var errorMessage: String?
     private var generation = UUID()
+    /// 在途那次打包的取消信号。
+    ///
+    /// 输入一变（改了范围、改了格式、动了素材）这次导出就已经作废：转码要几十秒
+    /// 一段，不能因为结果没人要了还让用户接着等、让设备接着转。
+    private var cancellation: ExportCancellation?
 
     func invalidate() {
+        cancellation?.cancel()
+        cancellation = nil
         generation = UUID()
+        progress = nil
         if package != nil || isBuilding { isStale = true }
         discard(package)
         package = nil
@@ -19,20 +29,29 @@ final class ExportSession: ObservableObject {
     }
 
     func build(
-        shots: [Shot], clipsDirectory: URL, scope: ExportScope, filmTitle: String,
+        _ request: ExportRequest,
         isCurrent: () -> Bool,
-        builder: ([Shot], URL, ExportScope, String) async -> ExportOutcome = {
-            await ExportPackageBuilder.buildOffMain(shots: $0, clipsDirectory: $1, scope: $2, filmTitle: $3)
+        builder: (ExportRequest, ExportRun) async -> ExportOutcome = {
+            await ExportPackageBuilder.buildOffMain($0, run: $1)
         }
     ) async {
         guard !isBuilding else { return }
-        let request = UUID()
-        generation = request
+        let token = UUID()
+        generation = token
+        let run = ExportRun(publish: { [weak self] update in
+            await self?.publish(update)
+        })
+        cancellation = run.cancellation
         isBuilding = true
         errorMessage = nil
-        let outcome = await builder(shots, clipsDirectory, scope, filmTitle)
+        progress = nil
+
+        let outcome = await builder(request, run)
+
+        cancellation = nil
         isBuilding = false
-        guard generation == request, isCurrent() else {
+        progress = nil
+        guard generation == token, isCurrent() else {
             if case .success(let result) = outcome { discard(result) }
             invalidate()
             isStale = true
@@ -48,6 +67,11 @@ final class ExportSession: ObservableObject {
             errorMessage = message
             Haptics.error()
         }
+    }
+
+    /// 进度只在这里落地：打包侧在后台线程，写界面的状态统一回主协程。
+    private func publish(_ update: ExportProgress) {
+        progress = update
     }
 
     private func discard(_ package: ExportPackage?) {

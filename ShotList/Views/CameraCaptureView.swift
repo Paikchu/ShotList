@@ -6,6 +6,10 @@ import SwiftUI
 ///
 /// 权限在用户点开相机时才申请，并且先给出自定义说明再触发系统弹窗。
 /// 没有摄像头时（例如 iOS 模拟器）给出「改用相册导入」的降级路径。
+///
+/// 取景页上除了录制本身，还要能看见这一条要拍什么（分镜描述），
+/// 并把取景控制交到手上：点按对焦、长按锁定、双指调焦距、设置里选分辨率与帧率。
+/// 界面外壳在 `CameraChrome`，这一层负责相机状态与手势的接线。
 struct CameraCaptureView: View {
     let shot: Shot
     /// 请求改用相册导入（由父视图负责关掉相机并拉起相册）
@@ -27,7 +31,15 @@ struct CameraCaptureView: View {
     @State private var isSaving = false
     @State private var isVisible = false
     @State private var errorMessage: String?
-    @State private var isBlinking = false
+
+    // MARK: - 取景控制状态
+
+    @State private var focusReticle: FocusReticleState?
+    @State private var lastFocusPoint: PreviewFocusPoint?
+    @State private var reticleTask: Task<Void, Never>?
+    @State private var pinchStartZoom: CGFloat?
+    @State private var isNoteExpanded = false
+    @State private var isShowingSettings = false
 
     /// 这个镜头已经存了几条
     private var savedTakeCount: Int {
@@ -57,8 +69,14 @@ struct CameraCaptureView: View {
                 if recorder.isRecording { recorder.stopRecording() }
             }
         }
+        .onChange(of: recorder.settingsError) { _, message in
+            guard let message else { return }
+            recorder.settingsError = nil
+            errorMessage = message
+        }
         .onDisappear {
             isVisible = false
+            reticleTask?.cancel()
             // `stop()` 会摘掉录制回调：正在录的那一条就此作废，收尾回调会把
             // 临时文件删掉，不会再回到这个已经消失的页面上执行「进入回看」
             // （那会把音频会话切成播放模式，而归还焦点的代码早就跑完了）。
@@ -79,6 +97,7 @@ struct CameraCaptureView: View {
         } message: {
             Text(errorMessage ?? "")
         }
+        .sheet(isPresented: $isShowingSettings) { settingsSheet }
     }
 
     // MARK: - 分支内容
@@ -107,147 +126,141 @@ struct CameraCaptureView: View {
 
     private var captureScreen: some View {
         ZStack {
-            CameraPreview(recorder: recorder)
-                .ignoresSafeArea()
-
-            VStack(spacing: 0) {
-                topBar
-                Spacer(minLength: 0)
-                if recorder.isRecording {
-                    recordingIndicator
-                        .padding(.bottom, SLSpacing.medium)
-                }
-                bottomControls
-            }
-        }
-    }
-
-    private var topBar: some View {
-        HStack(spacing: SLSpacing.small) {
-            Button {
-                dismiss()
-            } label: {
-                cameraCircleGlyph("xmark")
-            }
-            .accessibilityLabel("关闭相机")
-
-            Spacer(minLength: 0)
-
-            VStack(spacing: 0) {
-                Text("镜头 \(shot.paddedNumber)")
-                    .font(.subheadline.weight(.semibold))
-                if shot.hasNote {
-                    Text(shot.note)
-                        .font(.caption2)
-                        .opacity(0.85)
-                        .lineLimit(1)
-                } else if savedTakeCount > 0 {
-                    Text("已拍 \(savedTakeCount) 条")
-                        .font(.caption2)
-                        .opacity(0.85)
-                }
-            }
-            .padding(.horizontal, SLSpacing.medium)
-            .padding(.vertical, SLSpacing.small)
-            .background(.ultraThinMaterial, in: Capsule())
-
-            Spacer(minLength: 0)
-
-            Color.clear.frame(width: SLSize.minTouchTarget, height: SLSize.minTouchTarget)
-        }
-        .foregroundStyle(.white)
-        .padding(.horizontal, SLSpacing.medium)
-        .padding(.top, SLSpacing.small)
-    }
-
-    private var bottomControls: some View {
-        HStack {
-            Button { recorder.toggleTorch() } label: {
-                cameraCircleGlyph(recorder.isTorchOn ? "bolt.fill" : "bolt.slash.fill")
-            }
-            .disabled(!recorder.isTorchAvailable)
-            .opacity(recorder.isTorchAvailable ? 1 : 0.35)
-            .accessibilityLabel(recorder.isTorchOn ? "关闭补光" : "打开补光")
-
-            Spacer(minLength: 0)
-
-            recordButton
-
-            Spacer(minLength: 0)
-
-            Button { recorder.switchCamera() } label: {
-                cameraCircleGlyph("arrow.triangle.2.circlepath.camera.fill")
-            }
-            .disabled(recorder.isRecording)
-            .opacity(recorder.isRecording ? 0.35 : 1)
-            .accessibilityLabel("切换前后摄像头")
-        }
-        .foregroundStyle(.white)
-        .padding(.horizontal, SLSpacing.huge)
-        .padding(.top, SLSpacing.large)
-        .padding(.bottom, SLSpacing.large)
-        .background {
-            LinearGradient(colors: [.clear, .black.opacity(0.6)], startPoint: .top, endPoint: .bottom)
-                .ignoresSafeArea(edges: .bottom)
-                .allowsHitTesting(false)
-        }
-    }
-
-    private func cameraCircleGlyph(_ name: String) -> some View {
-        Image(systemName: name)
-            .font(.headline)
-            .frame(width: SLSize.minTouchTarget, height: SLSize.minTouchTarget)
-            .background(.ultraThinMaterial, in: Circle())
-    }
-
-    private var recordButton: some View {
-        Button {
-            toggleRecording()
-        } label: {
+            // 取景画面与对焦框同处一层并一起铺满整屏：对焦框的位置是按取景视图量的
+            // 归一化坐标，两层必须落在同一块画布上，否则手指点中间、框画到别处。
             ZStack {
-                Circle()
-                    .strokeBorder(.white, lineWidth: 5)
-                    .frame(width: SLSize.recordButton, height: SLSize.recordButton)
-                RoundedRectangle(cornerRadius: recorder.isRecording ? 6 : 28, style: .continuous)
-                    .fill(.red)
-                    .frame(
-                        width: recorder.isRecording ? 32 : SLSize.recordButton - 18,
-                        height: recorder.isRecording ? 32 : SLSize.recordButton - 18
-                    )
+                CameraPreview(recorder: recorder, onFocus: handleFocus, onPinch: handlePinch)
+
+                if let focusReticle {
+                    GeometryReader { proxy in
+                        FocusReticle(state: focusReticle, containerSize: proxy.size)
+                    }
+                    .allowsHitTesting(false)
+                }
             }
-            .frame(width: SLSize.recordButton, height: SLSize.recordButton)
-            .contentShape(Circle())
+            .ignoresSafeArea()
+
+            CameraChrome(
+                state: chromeState,
+                isNoteExpanded: $isNoteExpanded,
+                onClose: { dismiss() },
+                onToggleNote: { isNoteExpanded.toggle() },
+                onOpenSettings: { isShowingSettings = true },
+                onToggleTorch: { recorder.toggleTorch() },
+                onToggleRecording: { toggleRecording() },
+                onSwitchCamera: { recorder.switchCamera() },
+                onSelectZoom: { recorder.setZoom($0, ramped: true) },
+                onUnlockFocus: { unlockFocus() }
+            )
         }
-        .buttonStyle(.plain)
-        .disabled(isSaving)
-        .accessibilityLabel(recorder.isRecording ? "停止拍摄" : "开始拍摄")
-        .accessibilityHint("拍完可以回看，确认后再保存。同一个镜头可以拍很多条，后拍的不会覆盖前面的。")
-        .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.7), value: recorder.isRecording)
     }
 
-    private var recordingIndicator: some View {
-        HStack(spacing: SLSpacing.small) {
-            Circle()
-                .fill(.red)
-                .frame(width: 10, height: 10)
-                .opacity(isBlinking && !reduceMotion ? 0.25 : 1)
-            Text(Self.timeText(recorder.elapsed))
-                .font(.headline.monospacedDigit())
-                .foregroundStyle(.white)
-        }
-        .padding(.horizontal, SLSpacing.medium)
-        .padding(.vertical, SLSpacing.small)
-        .background(.ultraThinMaterial, in: Capsule())
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("正在拍摄")
-        .accessibilityValue(Self.timeText(recorder.elapsed))
-        .onAppear {
-            guard !reduceMotion else { return }
-            withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
-                isBlinking = true
+    private var chromeState: CameraChromeState {
+        CameraChromeState(
+            shotNumber: shot.paddedNumber,
+            note: shot.note,
+            savedTakeCount: savedTakeCount,
+            isRecording: recorder.isRecording,
+            elapsed: recorder.elapsed,
+            isTorchOn: recorder.isTorchOn,
+            isTorchAvailable: recorder.isTorchAvailable,
+            isSaving: isSaving,
+            zoomScale: recorder.zoomScale,
+            zoomFactor: recorder.zoomFactor,
+            settingsText: CaptureSettingsText.compactSummary(
+                resolution: recorder.resolution,
+                frameRate: recorder.frameRate
+            ),
+            settingsAccessibilityText: CaptureSettingsText.summary(
+                resolution: recorder.resolution,
+                frameRate: recorder.frameRate
+            ),
+            isFocusLocked: recorder.isFocusLocked
+        )
+    }
+
+    // MARK: - 取景控制
+
+    /// 点按对焦，长按锁定对焦与曝光。
+    private func handleFocus(_ point: PreviewFocusPoint, lock: Bool) {
+        recorder.focus(atDevicePoint: point.devicePoint, lock: lock)
+        lastFocusPoint = point
+        Haptics.impact(lock ? .medium : .light)
+        showReticle(FocusReticleState(normalizedPoint: point.normalizedPoint, isLocked: lock))
+    }
+
+    private func unlockFocus() {
+        let devicePoint = lastFocusPoint?.devicePoint ?? CGPoint(x: 0.5, y: 0.5)
+        recorder.focus(atDevicePoint: devicePoint, lock: false)
+        showReticle(
+            FocusReticleState(
+                normalizedPoint: lastFocusPoint?.normalizedPoint ?? CGPoint(x: 0.5, y: 0.5),
+                isLocked: false
+            )
+        )
+    }
+
+    /// 双指缩放：跟手走，松手时吸到最近的档位。
+    private func handlePinch(scale: CGFloat, state: UIGestureRecognizer.State) {
+        switch state {
+        case .began:
+            pinchStartZoom = recorder.zoomFactor
+        case .changed:
+            guard let start = pinchStartZoom else { return }
+            recorder.setZoom(recorder.zoomScale.clamped(start * scale), ramped: false)
+        default:
+            pinchStartZoom = nil
+            if let stop = recorder.zoomScale.stopToSnap(to: recorder.zoomFactor) {
+                recorder.setZoom(stop.factor, ramped: false)
             }
         }
-        .onDisappear { isBlinking = false }
+    }
+
+    private func showReticle(_ state: FocusReticleState) {
+        reticleTask?.cancel()
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.15)) {
+            focusReticle = state
+        }
+
+        // 锁定状态留着，让「我按住的那个点还锁着」一直看得见；普通对焦过一会儿自己淡出
+        guard !state.isLocked else { return }
+        reticleTask = Task {
+            try? await Task.sleep(for: .seconds(1.4))
+            guard !Task.isCancelled else { return }
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.3)) {
+                focusReticle = nil
+            }
+        }
+    }
+
+    // MARK: - 设置
+
+    private var settingsSheet: some View {
+        let selected = recorder.resolution ?? recorder.formatCatalog.resolutions.first
+
+        return CameraSettingsSheet(
+            availableResolutions: recorder.formatCatalog.resolutions,
+            availableFrameRates: selected.map { recorder.formatCatalog.frameRates(for: $0) } ?? [],
+            resolution: recorder.resolution,
+            frameRate: recorder.frameRate,
+            isRecording: recorder.isRecording,
+            onSelectResolution: { resolution in
+                // 换分辨率时帧率可能不再可用（4K 多数只到 30），跟着退到最接近的一档，
+                // 而不是让用户自己再发现一次「60 fps 变灰了」
+                let frameRate = CaptureFrameRate.closest(
+                    to: recorder.frameRate ?? .preferred,
+                    among: recorder.formatCatalog.frameRates(for: resolution)
+                ) ?? .preferred
+                recorder.applyCaptureSettings(resolution: resolution, frameRate: frameRate)
+            },
+            onSelectFrameRate: { frameRate in
+                guard let resolution = selected else { return }
+                recorder.applyCaptureSettings(resolution: resolution, frameRate: frameRate)
+            },
+            onDismiss: { isShowingSettings = false }
+        )
+        // 整屏呈现：六个档位加上说明在半屏里放不下，截断在「帧率」中间反而像坏了
+        .presentationDetents([.large])
     }
 
     // MARK: - 回看
@@ -357,17 +370,29 @@ struct CameraCaptureView: View {
     }
 
     private var loadingScreen: some View {
-        VStack {
-            topBar
+        VStack(spacing: 0) {
+            HStack {
+                Button { dismiss() } label: {
+                    CameraCircleGlyph(name: "xmark")
+                }
+                .accessibilityLabel("关闭相机")
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, SLSpacing.medium)
+            .padding(.top, SLSpacing.small)
+
             Spacer()
+
             VStack(spacing: SLSpacing.medium) {
                 ProgressView().tint(.white)
                 Text("正在启动相机…")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
+
             Spacer()
         }
+        .foregroundStyle(.white)
     }
 
     private func messageScreen(
@@ -548,14 +573,12 @@ struct CameraCaptureView: View {
             set: { presented in if !presented { errorMessage = nil } }
         )
     }
-
-    private static func timeText(_ elapsed: TimeInterval) -> String {
-        let total = Int(elapsed.rounded(.down))
-        return String(format: "%02d:%02d", total / 60, total % 60)
-    }
 }
 
 #Preview {
-    CameraCaptureView(shot: Shot(number: 1, note: "无人机缓慢上升，配一句开场旁白"), onRequestImport: {})
-        .environmentObject(ShotStore())
+    CameraCaptureView(
+        shot: Shot(number: 16, note: "手冲壶出水特写，收环境音；壶嘴贴住杯口，水线细一点，别让蒸汽糊住镜头。"),
+        onRequestImport: {}
+    )
+    .environmentObject(ShotStore())
 }

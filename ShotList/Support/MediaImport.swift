@@ -7,6 +7,10 @@ import UniformTypeIdentifiers
 /// `PhotosPicker` 给出的地址是系统托管的临时位置，这里立刻拷贝一份到自己的
 /// 临时目录，之后再由 `ShotStore` 接管搬进「分镜视频」目录。
 ///
+/// 拾取时显式要求 `.current`（见 `ShotFlowModifier`），拿到的是相册里的**原片**：
+/// 默认的 `.automatic` 会先转一次码，一段 4K 素材要等好几分钟，画质也会被降一档。
+/// 需要别的格式时到「导出」页按需转码，导入这一步只负责把原文件拿到手。
+///
 /// 文件名保留来源文件真实的扩展名：相册里的 mp4 被强行改名成 `.mov` 之后，
 /// 文件内容（容器）与扩展名就对不上了，导出后交给剪映可能打不开。
 struct ImportedMovie: Transferable {
@@ -50,6 +54,35 @@ nonisolated extension ImportedMovie {
         for url in contents where url.lastPathComponent.hasPrefix(temporaryFilePrefix) {
             try? fileManager.removeItem(at: url)
         }
+    }
+}
+
+// MARK: - 批量导入的推进
+
+/// 批量导入的推进逻辑：与相册、与具体文件类型都无关，只保证「一段一段来、失败不打断」。
+///
+/// 单独抽出来是为了能验证：顺序有没有变、中间某一段失败后面还继不继续、失败算得准不准。
+/// 相册选片那一步没法自动化，这条逻辑至少要有自己的证据。
+enum MovieImporter {
+    /// 按顺序逐段执行，收集每一段的失败原因。
+    ///
+    /// - Parameter onProgress: 每段**开始前**回调，参数是这一段的下标（从 0 开始）。
+    /// - Returns: 失败原因（本地化描述），按发生顺序；成功的段不出现在里面。
+    static func run<Item>(
+        _ items: [Item],
+        onProgress: (Int) -> Void = { _ in },
+        onEach: (Item) async throws -> Void
+    ) async -> [String] {
+        var failures: [String] = []
+        for (index, item) in items.enumerated() {
+            onProgress(index)
+            do {
+                try await onEach(item)
+            } catch {
+                failures.append(error.localizedDescription)
+            }
+        }
+        return failures
     }
 }
 
