@@ -15,6 +15,12 @@ nonisolated struct Film: Identifiable, Codable, Hashable {
     var id: UUID
     /// 影片标题。可以为空——空标题在界面上显示为「未命名影片」。
     var title: String
+    /// 这部影片的剪辑风格：怎么剪、哪些样式是全局的。
+    ///
+    /// 挂在影片上而不是全局偏好里：它是「这一次创作要什么样子」，
+    /// 换一部影片（重制 / 新建）就该回到默认，而不是把上一部片子的
+    /// 字号和片尾卡带到新片里。
+    var style: FilmStyle
     /// 这部影片的分镜，编号在影片内从 1 连续编排
     var shots: [Shot]
     var createdAt: Date
@@ -27,15 +33,40 @@ nonisolated struct Film: Identifiable, Codable, Hashable {
     init(
         id: UUID = UUID(),
         title: String = "",
+        style: FilmStyle = FilmStyle(),
         shots: [Shot] = [],
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
         self.id = id
         self.title = title
+        self.style = style
         self.shots = shots
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case style
+        case shots
+        case createdAt
+        case updatedAt
+    }
+
+    /// 手写解码而不是用合成的那个：`style` 是后加的字段，库里已有的影片 JSON
+    /// 里没有它。合成解码器遇到缺键会整份抛错，那会把**所有**影片一起读不出来；
+    /// 逐字段兜底之后，老数据只是拿到一套默认风格。
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        title = try container.decodeIfPresent(String.self, forKey: .title) ?? ""
+        style = ((try? container.decodeIfPresent(FilmStyle.self, forKey: .style)) ?? nil) ?? FilmStyle()
+        shots = try container.decodeIfPresent([Shot].self, forKey: .shots) ?? []
+        let now = Date()
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? now
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
     }
 }
 
@@ -81,11 +112,14 @@ nonisolated extension Film {
     /// 一个镜头都还没写
     var isUnstarted: Bool { shots.isEmpty }
 
-    /// 什么都没写：没有镜头、也没有标题。
+    /// 什么都没写：没有镜头、也没有标题，剪辑风格也是默认的那套。
     ///
     /// 「切换影片」「重制」时按这个口径静默回收，否则影片库会堆一堆
     /// 用户早就忘了的空壳。
-    var isBlank: Bool { shots.isEmpty && !hasTitle }
+    ///
+    /// 调过风格的影片**不算空壳**：用户可能先把风格配好、再去拍，
+    /// 按「无分镜 + 无标题」回收会把刚配好的那份风格一起丢掉。
+    var isBlank: Bool { shots.isEmpty && !hasTitle && style == .standard }
 
     /// 这部影片的全部片段（跨镜头）
     var allClips: [ShotClip] { shots.flatMap(\.clips) }

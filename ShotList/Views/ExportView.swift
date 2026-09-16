@@ -37,6 +37,7 @@ struct ExportView: View {
         NavigationStack {
             List {
                 overviewSection
+                styleSection
                 buildSection
                 if let package = export.package {
                     resultSection(package)
@@ -59,6 +60,8 @@ struct ExportView: View {
             .toolbarTitleDisplayMode(.inlineLarge)
         }
         .onChange(of: store.shots) { _, _ in export.invalidate() }
+        // 剪辑风格写进了包内的规格文件，改了它，已生成的包就是旧的
+        .onChange(of: store.currentFilm?.style) { _, _ in export.invalidate() }
         // 切到别的影片之后，已经生成的包不再属于「当前这部影片」，必须一起作废
         .onChange(of: store.currentFilmID) { _, _ in export.invalidate() }
         .onChange(of: scope) { _, _ in export.invalidate() }
@@ -120,6 +123,40 @@ struct ExportView: View {
             )
         } header: {
             SectionHeader(title: "素材概览", systemImage: "chart.pie")
+        }
+    }
+
+    // MARK: - 剪辑风格
+
+    /// 剪辑风格是这次导出的输入：改了它，已经生成的包就不再对应当前设定。
+    private var style: FilmStyle { store.currentFilm?.style ?? FilmStyle() }
+
+    private var styleSection: some View {
+        Section {
+            NavigationLink {
+                FilmStyleView()
+            } label: {
+                HStack(spacing: SLSpacing.medium) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("剪辑风格")
+                            // semibold 统一为 headline（17pt）：与其他页面的主文本同级同大
+                            .font(.headline)
+                        Text(style.summaryText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .frame(minHeight: SLSize.minTouchTarget)
+            }
+            .accessibilityLabel("剪辑风格")
+            .accessibilityValue(style.summaryText)
+            .accessibilityHint("设置画幅、节奏、常驻图层的位置与文字样式")
+        } header: {
+            SectionHeader(title: "剪辑风格", systemImage: "slider.horizontal.3")
+        } footer: {
+            Text("整部影片共用这一套。每镜具体写什么、数值是多少，写在各个镜头的分镜描述里。")
         }
     }
 
@@ -244,6 +281,7 @@ struct ExportView: View {
             contentsRow(exampleAlternateFileName, "同一个镜头更早拍的片段，子片段号越小拍得越早")
             contentsRow("分镜清单.csv", "编号、描述、状态，以及每条片段的时长与文件名")
             contentsRow("分镜文字内容指南.md", "镜头文字内容与素材的对照表，可直接交给 AI 剪辑")
+            contentsRow("剪辑规格.json", "这部影片的剪辑风格：画幅、节奏、图层位置与文字样式")
             contentsRow("导出说明.txt", "解压、导入剪映、传到电脑的步骤")
         } header: {
             SectionHeader(title: "压缩包里有什么", systemImage: "doc.text.magnifyingglass")
@@ -435,7 +473,8 @@ struct ExportView: View {
             clipsDirectory: store.clipsDirectory,
             scope: scope,
             option: transcodeOption,
-            filmTitle: store.currentFilm?.exportTitleToken ?? ""
+            filmTitle: store.currentFilm?.exportTitleToken ?? "",
+            style: style
         )
         // 影片同样是这次导出的输入：切换影片后，这份结果就不再属于「刚刚生成的导出包」
         let filmID = store.currentFilmID
@@ -445,6 +484,7 @@ struct ExportView: View {
                     && scope == request.scope
                     && transcodeOption == request.option
                     && store.currentFilmID == filmID
+                    && (store.currentFilm?.style ?? FilmStyle()) == request.style
             }
         }
     }

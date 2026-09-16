@@ -50,9 +50,11 @@ final class ExportPackageBuilderTests: XCTestCase {
         _ clipsDirectory: URL,
         scope: ExportScope = .recordedOnly,
         option: ExportTranscodeOption = .original,
-        filmTitle: String = ""
+        filmTitle: String = "",
+        style: FilmStyle = FilmStyle()
     ) -> ExportRequest {
-        ExportRequest(shots: shots, clipsDirectory: clipsDirectory, scope: scope, option: option, filmTitle: filmTitle)
+        ExportRequest(shots: shots, clipsDirectory: clipsDirectory, scope: scope,
+                      option: option, filmTitle: filmTitle, style: style)
     }
 
     func testMissingClipsKeepOriginalTakeNumbersInFilesCSVAndGuide() async throws {
@@ -308,6 +310,87 @@ final class ExportPackageBuilderTests: XCTestCase {
             XCTAssertEqual(recorder.count, 0)
             XCTAssertEqual(fm.copyCount, 0)
         }
+    }
+
+    // MARK: - 剪辑规格
+
+    /// 剪辑风格要真的进包：`剪辑规格.json` 是剪辑侧的唯一权威来源，
+    /// 文字指南也必须有同一份内容（并且写明冲突时以 JSON 为准）。
+    func testStyleSpecAndGuideCarryTheGlobalStyle() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fm = ExportTestFileManager(root: root)
+        let shot = Shot(number: 1, note: "开场", clips: [ShotClip(fileName: "a.mov", duration: 3)])
+        try Data("video".utf8).write(to: root.appendingPathComponent("a.mov"))
+
+        var style = FilmStyle()
+        style.canvas = .vertical1080
+        style.pacing = PacingStyle(targetMinDuration: 10, targetMaxDuration: 12,
+                                   shotMinDuration: 0.5, shotMaxDuration: 2)
+        style.badge.anchor = .center
+        style.badge.offsetYRatio = OverlayAnchor.center.defaultOffsetYRatio
+        style.tailCard.overlay.isEnabled = false
+
+        _ = try await ExportPackageBuilder.build(
+            request([shot], root, filmTitle: "减脂日记", style: style),
+            fileManager: fm
+        )
+
+        let specData = try XCTUnwrap(fm.exportedFiles.first { $0.key.hasSuffix("剪辑规格.json") }.map(\.value))
+        let spec = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: specData) as? [String: Any]
+        )
+        let film = try XCTUnwrap(spec["film"] as? [String: Any])
+        XCTAssertEqual(film["title"] as? String, "减脂日记")
+        let canvas = try XCTUnwrap(spec["canvas"] as? [String: Any])
+        XCTAssertEqual(canvas["width"] as? Int, 1080)
+        let overlays = try XCTUnwrap(spec["overlays"] as? [String: Any])
+        let badge = try XCTUnwrap(overlays["badge"] as? [String: Any])
+        XCTAssertEqual(badge["offsetYRatio"] as? Double, 0.5)
+        let pacing = try XCTUnwrap(spec["pacing"] as? [String: Any])
+        XCTAssertEqual(pacing["tailCardDuration"] as? Double, 0)
+
+        let guide = try XCTUnwrap(
+            fm.exportedFiles.first { $0.key.hasSuffix("分镜文字内容指南.md") }
+                .map { String(decoding: $0.value, as: UTF8.self) }
+        )
+        // 规格一节必须是从风格现算出来的，不能写死默认值
+        XCTAssertTrue(guide.contains("## 四、成片规格（全片共用）"))
+        XCTAssertTrue(guide.contains("1080×1920"))
+        XCTAssertTrue(guide.contains("画面正中"))
+        XCTAssertTrue(guide.contains("以 JSON 为准"))
+        // 汇总节顺延为第五节，编号不与新增的规格节撞车
+        XCTAssertTrue(guide.contains("## 五、汇总"))
+
+        let readme = try XCTUnwrap(
+            fm.exportedFiles.first { $0.key.hasSuffix("导出说明.txt") }
+                .map { String(decoding: $0.value, as: UTF8.self) }
+        )
+        XCTAssertTrue(readme.contains("剪辑规格.json"))
+    }
+
+    /// 关掉的图层在指南表格里要写「关闭」，不能还留着位置和文案来源。
+    func testGuideHidesDisabledOverlays() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fm = ExportTestFileManager(root: root)
+        let shot = Shot(number: 1, note: "开场", clips: [ShotClip(fileName: "a.mov", duration: 3)])
+        try Data("video".utf8).write(to: root.appendingPathComponent("a.mov"))
+
+        var style = FilmStyle()
+        style.badge.isEnabled = false
+        style.caption.isEnabled = false
+
+        _ = try await ExportPackageBuilder.build(request([shot], root, style: style), fileManager: fm)
+
+        let guide = try XCTUnwrap(
+            fm.exportedFiles.first { $0.key.hasSuffix("分镜文字内容指南.md") }
+                .map { String(decoding: $0.value, as: UTF8.self) }
+        )
+        XCTAssertTrue(guide.contains("| 常驻角标 | 关闭 |"))
+        XCTAssertTrue(guide.contains("| 分镜字幕 | 关闭 |"))
     }
 
 }

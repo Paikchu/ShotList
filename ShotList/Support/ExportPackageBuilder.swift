@@ -96,6 +96,27 @@ nonisolated struct ExportRequest: Sendable, Equatable {
     /// 归到 request 而不是另开参数：它和范围、格式一样是「用户这次要导什么」，
     /// 加参数的话每个调用点都要跟着改一遍。
     let filmTitle: String
+    /// 这部影片的剪辑风格：怎么剪、哪些样式是全局的。
+    ///
+    /// 同样归到 request：风格会写进包内的「剪辑规格.json」与文字指南，
+    /// 导出期间用户改了风格，这份产物就不再对应当前设定。
+    let style: FilmStyle
+
+    init(
+        shots: [Shot],
+        clipsDirectory: URL,
+        scope: ExportScope,
+        option: ExportTranscodeOption,
+        filmTitle: String,
+        style: FilmStyle = FilmStyle()
+    ) {
+        self.shots = shots
+        self.clipsDirectory = clipsDirectory
+        self.scope = scope
+        self.option = option
+        self.filmTitle = filmTitle
+        self.style = style
+    }
 }
 
 /// 打包进度。
@@ -243,6 +264,7 @@ enum ExportError: LocalizedError {
 /// │   └── 01-2_无人机缓慢上升.mov
 /// ├── 分镜清单.csv
 /// ├── 分镜文字内容指南.md        给 AI 剪辑用的分镜文字内容与素材对应表
+/// ├── 剪辑规格.json             这部影片的全局剪辑风格，机器可读
 /// └── 导出说明.txt
 /// ```
 /// 视频按编号加前缀命名，这样导入剪映后素材顺序与分镜顺序一致。
@@ -251,10 +273,12 @@ enum ExportError: LocalizedError {
 /// 由用户在导出页选一个转码格式（`ExportTranscodeOption`）——打包时逐条重编，
 /// 不转码就逐条复制。
 ///
-/// 三类文本文件分工不同：`分镜清单.csv` 是给人看的表格；
+/// 四类文本文件分工不同：`分镜清单.csv` 是给人看的表格；
 /// `导出说明.txt` 讲怎么导入剪映、怎么传到电脑；
 /// `分镜文字内容指南.md` 面向 AI——把每个镜头的文字描述与视频文件名严格绑定，
-/// 并写明按分镜处理视频的规则，AI 拿到压缩包就能直接按分镜干活。
+/// 并写明按分镜处理视频的规则，AI 拿到压缩包就能直接按分镜干活；
+/// `剪辑规格.json` 也是面向 AI，但管的是**影片级**的那一层——怎么剪、
+/// 哪些样式是全局的。两者冲突时以 JSON 为准，指南里也这么写。
 ///
 /// 整个类型是 `nonisolated`：它不持有状态，只按入参算结果，
 /// 因此可以在任意线程上跑，不必占用主协程。
@@ -314,6 +338,9 @@ nonisolated enum ExportPackageBuilder {
         // 影片标题也是这次导出的输入：包名与包内两个文本文件都要用它，
         // 所以跟范围、格式一起装在 request 里，而不是再挂一个参数。
         let filmTitle = request.filmTitle
+        // 剪辑风格也是这次导出的输入：它写进包内的规格文件与文字指南，
+        // 包里的成片规格必须与用户按下「生成导出包」那一刻的设定一致。
+        let style = request.style
 
         // 「有东西可导」以**磁盘**为准：JSON 里记着片段、文件却已经不在磁盘上时
         // （外部删除 / 拷贝中断 / 备份恢复），按 `hasClip` 判定会一路走到
@@ -480,9 +507,11 @@ nonisolated enum ExportPackageBuilder {
             scope: scope,
             filmTitle: filmTitle,
             option: option,
+            style: style,
             totalDuration: totalDuration,
             to: folder
         )
+        try Self.writeStyleSpec(style: style, filmTitle: filmTitle, exportedAt: now, to: folder)
 
         let zipURL = try Self.zip(folder: folder, folderName: folderName, fileManager: fileManager)
         let size = (try? zipURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).flatMap { Int64($0) } ?? 0
@@ -667,6 +696,40 @@ nonisolated enum ExportPackageBuilder {
         try data.write(to: url, options: .atomic)
     }
 
+    /// 生成「剪辑规格.json」。
+    ///
+    /// 这是包里唯一给机器读的规格文件：风格有十几项硬参数，让剪辑侧从
+    /// 自然语言里解析必然出错，键名稳定才换得了模型、换得了对话。
+    ///
+    /// 内容分两半——
+    /// - 怎么剪：画幅、帧率、总时长与单镜时长的约束、片尾卡时长、音轨；
+    /// - 哪些样式是全局的：常驻图层的位置（`offsetYRatio`，相对屏高）与文字样式
+    ///   （字号、描边都是相对屏高的比例，导 4K 与导 1080p 同一个观感）。
+    ///
+    /// **不写**每镜的字幕文案与角标数值：那是内容，逐镜写在各镜的分镜描述里，
+    /// 由「分镜文字内容指南.md」提供。
+    ///
+    /// 用 `.sortedKeys` + `.prettyPrinted` 输出：文件是给人看也给人调的，
+    /// 键顺序固定的 diff 才有意义，而且不必依赖 JSON 字典的顺序——
+    /// 那本来就是无序的，直接序列化出来每次都可能不一样。
+    private static func writeStyleSpec(
+        style: FilmStyle,
+        filmTitle: String,
+        exportedAt: Date,
+        to folder: URL
+    ) throws {
+        let payload = style.exportedJSON(
+            filmTitle: filmTitle.isEmpty ? "未命名影片" : filmTitle,
+            exportedAt: exportedAt
+        )
+        let data = try JSONSerialization.data(
+            withJSONObject: payload,
+            options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        )
+        let url = folder.appendingPathComponent("剪辑规格.json", isDirectory: false)
+        try data.write(to: url, options: .atomic)
+    }
+
     /// 按 CSV 规则转义一个字段。
     ///
     /// 逗号、引号、换行都必须整体加引号：分镜描述支持多行输入，
@@ -711,6 +774,7 @@ nonisolated enum ExportPackageBuilder {
         * 备用片段/           同一个镜头更早拍的片段，命名形如 01-1_xxx.mov（第 1 条）
         * 分镜清单.csv        每个镜头的描述、状态与每条片段的时长、文件名
         * 分镜文字内容指南.md  每个镜头的文字内容与视频文件名对照表，供 AI 按分镜处理视频
+        * 剪辑规格.json       这部影片的剪辑风格：画幅、节奏、图层位置与文字样式，机器可读
         * 导出说明.txt        本文件
 
         导入剪映
@@ -785,6 +849,7 @@ nonisolated enum ExportPackageBuilder {
         scope: ExportScope,
         filmTitle: String,
         option: ExportTranscodeOption,
+        style: FilmStyle,
         totalDuration: TimeInterval,
         to folder: URL
     ) throws {
@@ -828,6 +893,8 @@ nonisolated enum ExportPackageBuilder {
         4. 「时长」是该条素材的实际长度，用来估算成片节奏；不要臆造未提供的时长。
         5. 每个镜头的处理边界就是它自己的那段素材，不要把相邻镜头的内容并进一段。
         6. 标注「未拍摄」的镜头没有素材，直接跳过；若必须补齐，保留同样编号的空位。
+        7. 画幅、时长、常驻图层的位置与文字样式一律按「四、成片规格」执行，
+           不要自己另定一套——那一节是影片级的，整部片子只有一套。
 
         ## 三、镜头清单
 
@@ -861,8 +928,10 @@ nonisolated enum ExportPackageBuilder {
             text += "\n"
         }
 
+        text += styleSection(style)
+
         text += """
-        ## 四、汇总
+        ## 五、汇总
 
         - 影片：\(filmDisplayTitle(filmTitle))
         - 导出范围：\(scope.title)
@@ -876,6 +945,79 @@ nonisolated enum ExportPackageBuilder {
 
         let url = folder.appendingPathComponent("分镜文字内容指南.md", isDirectory: false)
         try text.data(using: .utf8)?.write(to: url, options: .atomic)
+    }
+
+    /// 「四、成片规格」的正文。
+    ///
+    /// 全部从 `FilmStyle` 现算，不写死文案：用户把角标挪到画面正中之后，
+    /// 这一节必须跟着变——写死的话导出包就会一边说「顶部居中」、
+    /// 一边在 JSON 里给另一个坐标，剪辑侧只能二选一。
+    private static func styleSection(_ style: FilmStyle) -> String {
+        var text = """
+        ## 四、成片规格（全片共用）
+
+        这一节是**影片级**的：整部片子共用一套，逐镜不需要再判断。
+        逐镜提供的是内容（画面描述、字幕文案、角标数值），样式与节奏一律以本节为准。
+
+        `剪辑规格.json` 是同一份内容的机器可读版本，**两者冲突时以 JSON 为准**。
+
+        - 画幅：\(style.canvas.width)×\(style.canvas.height)（竖屏），\(style.frameRate.title)
+        - 节奏：\(style.pacing.normalized.documentText)（总时长不含片尾卡）
+        - 片尾卡：\(style.tailCard.isEnabled ? "\(slShort(style.tailCard.duration)) 秒" : "关闭")
+        - 音轨：\(style.audio.mode == .silent ? "静音" : "保留原声（音量 \(Int((style.audio.originalGain * 100).rounded()))%）")
+
+        > 素材方向提醒：本项目的竖拍素材常带 `rotation=-90`，ffprobe 报出来的
+        > width/height 是横的，**实际是竖屏**。判断方向看上面的画幅，不要看编码尺寸。
+
+        ### 常驻图层
+
+        位置是全局的，**水平一律居中**；「距顶」指文字块中心距屏幕顶部的比例。
+
+        | 图层 | 状态 | 位置 | 距顶 | 最多行数 | 文案来源 |
+        |---|---|---|---|---|---|
+        \(overlayRow("常驻角标", style.badge))
+        \(overlayRow("分镜字幕", style.caption))
+        \(overlayRow("片尾卡", style.tailCard.overlay))
+
+        """
+        if style.badge.isEnabled, !style.badge.text.isEmpty {
+            text += "\n常驻角标的文案模板：`\(style.badge.text)`（`{value}` 由逐镜提供）\n"
+        }
+        if style.tailCard.isEnabled {
+            let cardText = style.tailCard.overlay.text.replacingOccurrences(of: "\n", with: "\\n")
+            text += "\n片尾卡文案：`\(cardText)`，背景色 `\(style.tailCard.backgroundColorHex)`，"
+            text += "时长 \(slShort(style.tailCard.duration)) 秒。\n"
+        }
+
+        text += """
+
+        ### 文字样式
+
+        - 字体：\(style.typography.family.title)（渲染提示 `\(style.typography.family.renderHint)`）
+        - 字重：\(style.typography.weight.title)
+        - 字号：占屏高 \(ratioText(style.typography.sizeRatio))
+        - 描边：占屏高 \(ratioText(style.typography.strokeRatio))，
+          \(style.typography.colorHex) 文字 + \(style.typography.strokeColorHex) 外描边
+
+        字号与描边都是相对屏高的比例，所以不管最终导出 4K 还是 1080p，
+        观感一致——不要按像素点数去换算。
+
+        """
+        return text
+    }
+
+    /// 表格里的一行。`contentSource` 那一列必须写清楚：它是全局配置与逐镜内容的
+    /// 分界线——「全片统一」的文案能在这里看全，「每镜取自」的要去镜头清单里找。
+    private static func overlayRow(_ name: String, _ overlay: OverlayStyle) -> String {
+        guard overlay.isEnabled else {
+            return "| \(name) | 关闭 | — | — | — | — |"
+        }
+        return "| \(name) | 开启 | \(overlay.anchor.title) | \(ratioText(overlay.offsetYRatio)) "
+            + "| \(overlay.maxLines) | \(overlay.contentSource.title) |"
+    }
+
+    private static func ratioText(_ ratio: Double) -> String {
+        String(format: "%.1f%%", ratio * 100)
     }
 
     /// 使用 `NSFileCoordinator` 的系统压缩能力，把目录打成 zip。

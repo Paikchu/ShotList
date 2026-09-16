@@ -291,6 +291,28 @@ final class ShotStore: ObservableObject {
         persist()
     }
 
+    /// 改影片的剪辑风格。
+    ///
+    /// 走 `mutateCurrentFilm` 的唯一写入口，因此改风格也算一次用户编辑：
+    /// 影片在库里的排序会往前跳——这符合预期，刚配完风格的那部就是最近动过的。
+    ///
+    /// 值没有变化时直接返回，不刷新 `updatedAt`：风格页里拖动滑块会连发很多次，
+    /// 松手回到原值不该算一次编辑。
+    @discardableResult
+    func updateStyle(_ style: FilmStyle) -> Bool {
+        guard loadError == nil else { return false }
+        guard let current = currentFilm, current.style != style else { return false }
+        mutateCurrentFilm { $0.style = style }
+        persist()
+        return true
+    }
+
+    /// 把一部内置方案套到当前影片上
+    @discardableResult
+    func applyStylePreset(_ preset: FilmStylePreset) -> Bool {
+        updateStyle(preset.style)
+    }
+
     /// 删除整部影片（连同它的片段）。
     func deleteFilm(_ id: Film.ID) {
         guard loadError == nil else { return }
