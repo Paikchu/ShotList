@@ -365,12 +365,6 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
 
     // MARK: - 焦距
 
-    /// 这台摄像头的变焦上限。
-    ///
-    /// 设备本身允许的倍率可以到十几倍，但再往上画面基本只剩数码放大，
-    /// 拍回来也不能用，不如在这里截住。
-    private static let maximumZoomFactor: CGFloat = 8
-
     /// 缩放到指定倍率。
     ///
     /// - Parameter ramped: 点档位胶囊时用平滑过渡（画面一点点推过去，看得清推到了哪），
@@ -813,10 +807,18 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
 
     // MARK: - 设备格式
 
+    /// 这台摄像头的变焦区间与档位。
+    ///
+    /// 区间交给 `ZoomRangePolicy` 结算：它优先用系统的推荐区间（也就是内建相机缩放控件的
+    /// 取值区间），而不是设备的能力极限再压一道固定上限。推荐区间挂在 `activeFormat` 上，
+    /// 所以每次换格式（换分辨率/帧率、切前后摄）之后都必须重新问一次。
     private static func zoomScale(for device: AVCaptureDevice) -> ZoomScale {
-        let maximum = min(device.maxAvailableVideoZoomFactor, maximumZoomFactor)
-        return ZoomScale(
-            range: min(device.minAvailableVideoZoomFactor, maximum)...maximum,
+        ZoomScale(
+            range: ZoomRangePolicy.range(
+                recommended: device.activeFormat.systemRecommendedVideoZoomRange,
+                availableLower: device.minAvailableVideoZoomFactor,
+                availableUpper: device.maxAvailableVideoZoomFactor
+            ),
             displayMultiplier: device.displayVideoZoomFactorMultiplier,
             switchOverFactors: device.virtualDeviceSwitchOverVideoZoomFactors.map { CGFloat($0.doubleValue) }
         )

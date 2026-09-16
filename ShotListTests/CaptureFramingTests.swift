@@ -20,6 +20,63 @@ final class CaptureFramingTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(SLZoomText.text(1.99), "2×")
     }
 
+    // MARK: - 缩放区间
+
+    /// 系统推荐的区间比设备能力窄时，听系统的，不按能力极限来。
+    func testRangeFollowsSystemRecommendationWhenItIsNarrower() {
+        let range = ZoomRangePolicy.range(recommended: 2...8, availableLower: 1, availableUpper: 25)
+        XCTAssertEqual(range, 2...8)
+    }
+
+    /// 推荐区间比设备能力宽时以设备此刻允许的为准，否则界面会给出到不了的档位。
+    func testRangeIsCappedByWhatTheDeviceActuallyAllows() {
+        let range = ZoomRangePolicy.range(recommended: 0.5...20, availableLower: 2, availableUpper: 6)
+        XCTAssertEqual(range, 2...6)
+    }
+
+    /// 两边各收一半：下界被设备抬高，上界被推荐值压住。
+    func testRangeCombinesBothBounds() {
+        let range = ZoomRangePolicy.range(recommended: 1...8, availableLower: 2, availableUpper: 25)
+        XCTAssertEqual(range, 2...8)
+    }
+
+    /// 系统没给推荐值（这个属性允许为 nil）时退回老口径：能力极限再压一道固定上限。
+    func testRangeFallsBackToTheCappedDeviceRange() {
+        let range = ZoomRangePolicy.range(recommended: nil, availableLower: 1, availableUpper: 25)
+        XCTAssertEqual(range, 1...ZoomRangePolicy.fallbackMaximum)
+    }
+
+    /// 兜底上限低于设备下界（锁镜头时下界会被抬高）时不能再往下压，否则区间会反转。
+    func testFallbackNeverInvertsTheRange() {
+        let range = ZoomRangePolicy.range(recommended: nil, availableLower: 12, availableUpper: 25)
+        XCTAssertEqual(range, 12...12)
+    }
+
+    /// 推荐区间与设备可用区间完全错开时交集为空，退回可用区间而不是构造非法区间。
+    func testDisjointRecommendationFallsBackToAvailableRange() {
+        let range = ZoomRangePolicy.range(recommended: 12...20, availableLower: 1, availableUpper: 6)
+        XCTAssertEqual(range, 1...6)
+    }
+
+    /// 设备报上来的上下界颠倒时也要给出合法区间。
+    func testInvertedAvailableBoundsAreNormalised() {
+        let range = ZoomRangePolicy.range(recommended: 1...6, availableLower: 6, availableUpper: 2)
+        XCTAssertEqual(range, 2...6)
+    }
+
+    /// 交集恰好落到一个点上也要出得来。
+    func testRangeSupportsASinglePointIntersection() {
+        let range = ZoomRangePolicy.range(recommended: 1...4, availableLower: 4, availableUpper: 10)
+        XCTAssertEqual(range, 4...4)
+    }
+
+    /// 区间收窄后，落在区间外的换镜头倍率不再出现在档位里。
+    func testStopsDropSwitchOverFactorsOutsideTheResolvedRange() {
+        let range = ZoomRangePolicy.range(recommended: 1...5, availableLower: 1, availableUpper: 25)
+        let scale = ZoomScale(range: range, displayMultiplier: 0.5, switchOverFactors: [2, 6])
+        XCTAssertEqual(scale.stops.map(\.text), ["0.5×", "1×"])
+    }
+
     // MARK: - 档位
 
     /// iPhone Pro 这类三摄：最广一颗是 1.0，换镜头发生在 2.0 与 6.0，

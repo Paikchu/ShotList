@@ -34,6 +34,43 @@ nonisolated struct ZoomStop: Identifiable, Equatable, Sendable {
     var text: String { SLZoomText.text(displayFactor) }
 }
 
+/// 界面允许滑到的缩放区间。
+///
+/// 口径取系统的推荐值，而不是设备能力极限：`minAvailable/maxAvailable` 回答的是
+/// 「这台设备此刻物理上到得了哪」，`systemRecommendedVideoZoomRange` 回答的是
+/// 「系统认为该让用户滑到哪」——后者正是内建相机缩放控件的取值范围。
+///
+/// 两者要取交集，不能直接采用推荐值。头文件对该属性特意写了一句：`minAvailable/maxAvailable`
+/// 会在推荐区间**之内**再被收窄（例如把镜头切换锁到当前这颗时，下界会被抬到它的换镜头倍率）。
+/// 只看推荐值，界面就可能给出设备此刻根本到不了的档位。
+nonisolated enum ZoomRangePolicy {
+    /// 拿不到系统推荐区间时用的上限。
+    ///
+    /// 设备实际允许的倍率能到十几倍，但再往上基本只剩数码放大，拍回来不能用。
+    /// 这是换用系统推荐区间之前的老口径，只在系统没给推荐值（该属性允许为 nil）时兜底。
+    static let fallbackMaximum: CGFloat = 8
+
+    static func range(
+        recommended: ClosedRange<CGFloat>?,
+        availableLower: CGFloat,
+        availableUpper: CGFloat
+    ) -> ClosedRange<CGFloat> {
+        let lower = min(availableLower, availableUpper)
+        let upper = max(availableLower, availableUpper)
+
+        guard let recommended else {
+            // 兜底上限本身可能低于设备的可用下界（锁镜头时下界会被抬高），收口时不能再往下压
+            return lower...min(upper, max(fallbackMaximum, lower))
+        }
+
+        let intersectedLower = max(recommended.lowerBound, lower)
+        let intersectedUpper = min(recommended.upperBound, upper)
+        // 两边完全错开时交集为空，而 `lower...upper` 这种越界构造会直接崩，退回实际可用区间
+        guard intersectedLower <= intersectedUpper else { return lower...upper }
+        return intersectedLower...intersectedUpper
+    }
+}
+
 /// 当前摄像头的变焦范围与档位。
 nonisolated struct ZoomScale: Equatable, Sendable {
     /// 原始倍率的可用范围
