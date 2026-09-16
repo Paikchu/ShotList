@@ -14,6 +14,8 @@ struct ShotListView: View {
     /// 否则那一秒的动效全被弹层挡着，用户回来时只看到一张普通卡片。
     @State private var pendingFlashID: Shot.ID?
     @State private var flashTask: Task<Void, Never>?
+    /// `-preselectShot` 只生效一次，用户关掉面板后不再弹回来
+    @State private var didApplyPreselect = false
 
     var body: some View {
         NavigationStack {
@@ -50,6 +52,7 @@ struct ShotListView: View {
             }
         }
         .shotFlow(sheet: $sheet)
+        .task { await openPreselectedShot() }
         .confirmationDialog(
             "清空这个镜头的片段？",
             isPresented: Binding(
@@ -291,6 +294,29 @@ struct ShotListView: View {
         guard let shot = store.addShot() else { return }
         // 新镜头是空的，用户此刻就是要写它——直接把光标放进描述输入框
         sheet = .options(shot, autoFocusNote: true)
+    }
+
+    /// 调试启动参数 `-preselectShot <编号>`：直接把某个镜头的面板打开。
+    ///
+    /// 与 `-preselectTab`（标签页）、`-preselectFilm`（影片）同一套用法，
+    /// 供 `Tools/seed-simulator.py` 之后的验收截图停在指定界面上。
+    /// 这里不自动聚焦输入框——截图要的是看整页版式，弹出键盘会盖掉半屏。
+    ///
+    /// 只在启动时做一次：用户关掉面板之后不该再弹回来（那会让人以为点不没）。
+    private func openPreselectedShot() async {
+        guard !didApplyPreselect else { return }
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let flag = arguments.firstIndex(of: "-preselectShot"),
+              flag + 1 < arguments.count,
+              let number = Int(arguments[flag + 1]),
+              let target = store.shots.first(where: { $0.number == number })
+        else { return }
+
+        didApplyPreselect = true
+        // 等标签页与影片条落位再弹：启动瞬间就发 sheet，会和转场抢同一帧。
+        try? await Task.sleep(for: .milliseconds(400))
+        guard !Task.isCancelled else { return }
+        sheet = .options(target)
     }
 
     /// 在某个镜头后面插入一个空白镜头，并直接进它的面板。

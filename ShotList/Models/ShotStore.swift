@@ -356,10 +356,13 @@ final class ShotStore: ObservableObject {
     // MARK: - 增
 
     /// 新建一个分镜，编号接在当前影片末尾
+    ///
+    /// 字幕与角标一并接收，是为了让「复制分镜」能把三样文字都带过去
+    /// ——只带描述的话，用户写好字幕再复制一下，字幕就悄悄没了。
     @discardableResult
-    func addShot(note: String = "") -> Shot? {
+    func addShot(note: String = "", caption: String = "", badgeValue: String = "") -> Shot? {
         guard loadError == nil, currentFilmIndex != nil else { return nil }
-        let shot = Shot(number: nextNumber, note: note)
+        let shot = Shot(number: nextNumber, note: note, caption: caption, badgeValue: badgeValue)
         mutateCurrentFilm { $0.shots.append(shot) }
         normalize()
         return persist() ? shot : nil
@@ -385,10 +388,15 @@ final class ShotStore: ObservableObject {
     ///
     /// - Returns: 新建的镜头；传入的 id 已经不在当前影片里时返回 `nil`。
     @discardableResult
-    func insertShot(below shotID: Shot.ID, note: String = "") -> Shot? {
+    func insertShot(
+        below shotID: Shot.ID,
+        note: String = "",
+        caption: String = "",
+        badgeValue: String = ""
+    ) -> Shot? {
         guard loadError == nil else { return nil }
         guard let index = index(of: shotID) else { return nil }
-        let shot = Shot(number: index + 2, note: note)
+        let shot = Shot(number: index + 2, note: note, caption: caption, badgeValue: badgeValue)
         mutateCurrentFilm { $0.shots.insert(shot, at: index + 1) }
         normalize()
         return persist() ? shot : nil
@@ -399,9 +407,17 @@ final class ShotStore: ObservableObject {
     func duplicate(_ shot: Shot) -> Shot? {
         guard loadError == nil else { return nil }
         // 「复制」＝「在它后面插入一个内容相同的镜头」，共用同一处实现，
-        // 免得两条路上的重编号与改名行为悄悄走岔
-        if index(of: shot.id) != nil { return insertShot(below: shot.id, note: shot.note) }
-        return addShot(note: shot.note)
+        // 免得两条路上的重编号与改名行为悄悄走岔。
+        // 三样文字都要带过去：字幕和角标也是用户敲进去的内容，不该复制时被丢掉。
+        if index(of: shot.id) != nil {
+            return insertShot(
+                below: shot.id,
+                note: shot.note,
+                caption: shot.caption,
+                badgeValue: shot.badgeValue
+            )
+        }
+        return addShot(note: shot.note, caption: shot.caption, badgeValue: shot.badgeValue)
     }
 
     // MARK: - 改

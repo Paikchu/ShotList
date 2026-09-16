@@ -273,12 +273,17 @@ enum ExportError: LocalizedError {
 /// 由用户在导出页选一个转码格式（`ExportTranscodeOption`）——打包时逐条重编，
 /// 不转码就逐条复制。
 ///
-/// 四类文本文件分工不同：`分镜清单.csv` 是给人看的表格；
-/// `导出说明.txt` 讲怎么导入剪映、怎么传到电脑；
-/// `分镜文字内容指南.md` 面向 AI——把每个镜头的文字描述与视频文件名严格绑定，
-/// 并写明按分镜处理视频的规则，AI 拿到压缩包就能直接按分镜干活；
+/// 四类文本文件分工不同：`分镜清单.csv` 是给人看的表格（也便于脚本解析，
+/// 逐镜的屏幕字幕与角标数值都在这里）；`导出说明.txt` 讲怎么导入剪映、怎么传到电脑；
+/// `分镜文字内容指南.md` 面向 AI——把每个镜头的三样文字（描述、字幕、角标）
+/// 与视频文件名严格绑定，并写明按分镜处理视频的规则，AI 拿到压缩包就能直接按分镜干活；
 /// `剪辑规格.json` 也是面向 AI，但管的是**影片级**的那一层——怎么剪、
 /// 哪些样式是全局的。两者冲突时以 JSON 为准，指南里也这么写。
+///
+/// 影片级与镜头级的分界：**样式**（位置、字号、时长区间、模板）在 `剪辑规格.json`，
+/// 是整片一套；**内容**（每镜写什么字、填什么数）在指南与 CSV 里，逐镜给出。
+/// 这条线让「不要自行扩写或改写语义」成为可执行的要求：要显示的字已经写好了，
+/// 剪辑侧没有需要猜的地方。
 ///
 /// 整个类型是 `nonisolated`：它不持有状态，只按入参算结果，
 /// 因此可以在任意线程上跑，不必占用主协程。
@@ -586,6 +591,10 @@ nonisolated enum ExportPackageBuilder {
     private struct ManifestRow {
         let number: Int
         let detail: String
+        /// 屏幕字幕文案（用户自己写的，剪辑侧原样使用）
+        let caption: String
+        /// 常驻角标数值（用户填的最终值）
+        let badgeValue: String
         let statusText: String
         let takeText: String
         let recordedAtText: String
@@ -612,6 +621,11 @@ nonisolated enum ExportPackageBuilder {
         ) {
             self.number = shot.number
             self.detail = shot.displayDetail
+            // 字幕与角标是**镜头级**的，会在同一个镜头的每一条片段上重复。
+            // 与 `detail` 一样是按镜头而非按片段的信息，重复是为了让每一行自洽：
+            // 剪辑侧挑中「备用片段」那一行时，字幕与角标不用回头再找。
+            self.caption = shot.trimmedCaption
+            self.badgeValue = shot.trimmedBadgeValue
             self.statusText = shot.status().title
             self.takeText = takeTotal > 1 ? "第 \(takeIndex) 条 / 共 \(takeTotal) 条" : "第 1 条"
             self.recordedAtText = clip.recordedAtText ?? ""
@@ -624,6 +638,8 @@ nonisolated enum ExportPackageBuilder {
         init(pendingShot shot: Shot) {
             self.number = shot.number
             self.detail = shot.displayDetail
+            self.caption = shot.trimmedCaption
+            self.badgeValue = shot.trimmedBadgeValue
             self.statusText = shot.status().title
             self.takeText = ""
             self.recordedAtText = ""
@@ -673,12 +689,21 @@ nonisolated enum ExportPackageBuilder {
         return limited.isEmpty ? "镜头" : limited
     }
 
+    /// 生成「分镜清单.csv」。
+    ///
+    /// 列顺序刻意把**内容**放在前面（描述、字幕、角标），拍摄相关的元数据靠后：
+    /// 剪辑侧与用户真正要读的是前三列，元数据是补充。
+    ///
+    /// 「屏幕字幕」与「角标数值」是镜头级字段，同一个镜头的每条片段都会重复一遍
+    /// ——这两列在任何一行上取都是对的，不必回头去别的行找。
     private static func writeManifest(_ rows: [ManifestRow], to folder: URL) throws {
-        var csv = "编号,分镜描述,状态,片段,拍摄时间,时长,导出文件名\n"
+        var csv = "编号,分镜描述,屏幕字幕,角标数值,状态,片段,拍摄时间,时长,导出文件名\n"
         for row in rows {
             let fields = [
                 String(format: "%02d", row.number),
                 row.detail,
+                row.caption,
+                row.badgeValue,
                 row.statusText,
                 row.takeText,
                 row.recordedAtText,
@@ -706,8 +731,8 @@ nonisolated enum ExportPackageBuilder {
     /// - 哪些样式是全局的：常驻图层的位置（`offsetYRatio`，相对屏高）与文字样式
     ///   （字号、描边都是相对屏高的比例，导 4K 与导 1080p 同一个观感）。
     ///
-    /// **不写**每镜的字幕文案与角标数值：那是内容，逐镜写在各镜的分镜描述里，
-    /// 由「分镜文字内容指南.md」提供。
+    /// **不写**每镜的屏幕字幕与角标数值：那是内容，逐镜写在镜头的
+    /// `caption` / `badgeValue` 里，由「分镜文字内容指南.md」提供。
     ///
     /// 用 `.sortedKeys` + `.prettyPrinted` 输出：文件是给人看也给人调的，
     /// 键顺序固定的 diff 才有意义，而且不必依赖 JSON 字典的顺序——
@@ -732,7 +757,7 @@ nonisolated enum ExportPackageBuilder {
 
     /// 按 CSV 规则转义一个字段。
     ///
-    /// 逗号、引号、换行都必须整体加引号：分镜描述支持多行输入，
+    /// 逗号、引号、换行都必须整体加引号：分镜描述与屏幕字幕都支持多行输入，
     /// 漏掉换行会把一条记录拆成两行，后面所有列跟着错位。
     private static func csvField(_ value: String) -> String {
         let needsQuoting = value.contains(",")
@@ -772,7 +797,7 @@ nonisolated enum ExportPackageBuilder {
         * 01_xxx.mov          每个镜头最新拍的一条（主素材），文件名前缀即镜头编号；
                               镜头拍了多条时主素材也带子片段号，形如 01-3_xxx.mov（第 3 条）
         * 备用片段/           同一个镜头更早拍的片段，命名形如 01-1_xxx.mov（第 1 条）
-        * 分镜清单.csv        每个镜头的描述、状态与每条片段的时长、文件名
+        * 分镜清单.csv        每个镜头的描述、屏幕字幕、角标数值与每条片段的时长、文件名
         * 分镜文字内容指南.md  每个镜头的文字内容与视频文件名对照表，供 AI 按分镜处理视频
         * 剪辑规格.json       这部影片的剪辑风格：画幅、节奏、图层位置与文字样式，机器可读
         * 导出说明.txt        本文件
@@ -839,6 +864,35 @@ nonisolated enum ExportPackageBuilder {
             .joined(separator: "；")
     }
 
+    /// 把一条逐镜文字写成「要原样显示的字」或「这一镜没有」。
+    ///
+    /// 有内容时用反引号包起来（换行写成 `\n`），空的时候写 `—`。
+    /// 反引号是这套文件里「这是字面内容」的约定：剪辑侧看到反引号就照抄，
+    /// 看到 `—` 就知道这一镜不该有这一项，不必再去猜一行空白是「没填」还是「故意留空」。
+    private static func quotedIfPresent(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "—" }
+        // 换行写成 `\n` 而不是真的断行：这一行的字段是「字幕文案」，
+        // 真的断行会让它看起来像两条不同的字段。
+        let escaped = trimmed.replacingOccurrences(of: "\n", with: "\\n")
+        return "`\(escaped)`"
+    }
+
+    /// 把镜头的角标数值代进影片级的文案模板，给出**最终要显示的那串字**。
+    ///
+    /// 不在指南里把模板和裸数值分两处给：剪辑侧自己拼一次字符串就多一次拼错的机会
+    /// （漏掉「千卡」、把裸数值当整句显示）。这里拼好，那边照抄。
+    private static func resolvedBadgeText(_ value: String, style: FilmStyle) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        let template = style.badge.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // 模板被清空时拿数值本身顶上：比起显示一个「—」，
+        // 「用户确实填了 1758」这个事实更该被保留下来。
+        guard !template.isEmpty else { return trimmed }
+        guard template.contains("{value}") else { return template }
+        return template.replacingOccurrences(of: "{value}", with: trimmed)
+    }
+
     /// 生成「分镜文字内容指南.md」。
     ///
     /// 面向 AI：把每个镜头的文字描述与包内视频文件名严格绑定，并写明处理规则。
@@ -867,6 +921,10 @@ nonisolated enum ExportPackageBuilder {
         视频文件名绑定在一起。AI 剪辑工具可以直接按本文件处理视频，无需再问用户
         「哪段视频对应哪个镜头」。
 
+        每个镜头有三样文字：**分镜描述**（拍什么，你的处理依据）、
+        **屏幕字幕**（成片上显示的那句话）、**角标**（常驻角标显示的内容）。
+        后两样由用户写定，在第「三」节逐镜给出，**原样使用**。
+
         ## 一、素材与分镜的对应关系
 
         - 视频文件名以两位编号开头，编号即分镜编号，与「三、镜头清单」一一对应。
@@ -879,22 +937,33 @@ nonisolated enum ExportPackageBuilder {
 
         ## 二、按分镜处理视频的规则
 
-        每个镜头的「分镜文字内容」就是这一段要表达的内容（拍摄对象、运镜方式、
-        口播要点等），处理时一律以它为准：
+        每个镜头带三样文字，各管一件事，**不要互相顶替**：
+        「分镜描述」是这一段拍的是什么；「屏幕字幕」是成片上要显示的那句话；
+        「角标」是常驻角标上显示的内容。前一样是你的处理依据，后两样是要照抄上去的字。
 
         1. 按编号从小到大排列片段，编号顺序就是成片顺序；不要按文件名、
            文件大小或修改时间重新排序。
         2. 每个镜头只取一条素材：默认取主素材，需要替换时才到「备用片段」里
            挑同编号的其它片段。
-        3. 分镜文字内容决定这一段的处理方式：
-           - 描述画面或运镜的，作为画面选取与调色的依据；
-           - 描述口播要点的，作为字幕文案依据，不要自行扩写或改写语义；
-           - 描述动作或道具的，作为该段裁剪起止点的依据。
-        4. 「时长」是该条素材的实际长度，用来估算成片节奏；不要臆造未提供的时长。
-        5. 每个镜头的处理边界就是它自己的那段素材，不要把相邻镜头的内容并进一段。
-        6. 标注「未拍摄」的镜头没有素材，直接跳过；若必须补齐，保留同样编号的空位。
-        7. 画幅、时长、常驻图层的位置与文字样式一律按「四、成片规格」执行，
+        3. 分镜描述只用来决定**怎么处理这段素材**：挑哪一段画面、从哪起止、怎么调色。
+           它**不是**字幕文案，不要在它基础上写字幕、也不要因为它而改字幕。
+        4. 屏幕字幕与角标在两处给出的写法是：
+           - `反引号` 包起来的是**要原样显示的完整文字**，一个字都不要增删改：
+             不扩写、不精简、不总结、不换同义词、不调语序。
+           - `—` 表示这一镜没有这一项，**不要自己补一条**。
+        5. 「时长」是该条素材的实际长度，用来估算成片节奏；不要臆造未提供的时长。
+        6. 每个镜头的处理边界就是它自己的那段素材，不要把相邻镜头的内容并进一段。
+        7. 标注「未拍摄」的镜头没有素材，直接跳过；若必须补齐，保留同样编号的空位。
+        8. 画幅、时长、常驻图层的位置与文字样式一律按「四、成片规格」执行，
            不要自己另定一套——那一节是影片级的，整部片子只有一套。
+
+        ### 字幕与角标怎么用
+
+        - 字幕直接当一句话使用，`\n` 表示在这一处换行（不是要显示的字面反斜杠加 n）。
+        - 角标那一行已经是**把本镜数值代进影片级模板之后的结果**，照它显示即可，
+          不要再去套模板、也不要自己推算或换算其中的数字。
+        - 两行都有严格的字数上限（见「四、成片规格」的图层表）：字幕按 `maxLines`
+          断行，超宽由你折行，但**不要为了塞进去而删字或改字**。
 
         ## 三、镜头清单
 
@@ -903,7 +972,16 @@ nonisolated enum ExportPackageBuilder {
         for group in groups {
             let head = group.rows[0]
             text += "### 镜头 \(String(format: "%02d", group.number)) · \(singleLine(head.detail))\n"
-            text += "- 分镜文字内容：\(singleLine(head.detail))\n"
+            text += "- 分镜描述：\(singleLine(head.detail))\n"
+
+            // 整片关掉的图层不逐镜列：列出「—」会让剪辑侧以为「这层存在但这一镜没有」，
+            // 与「这一层整片都不出」是两件事。
+            if style.caption.isEnabled {
+                text += "- 屏幕字幕：\(quotedIfPresent(head.caption))\n"
+            }
+            if style.badge.isEnabled {
+                text += "- 角标：\(quotedIfPresent(resolvedBadgeText(head.badgeValue, style: style)))\n"
+            }
 
             let exported = group.rows.filter { $0.exportedPath != nil }
             let main = exported.first { $0.isMain }

@@ -3,8 +3,8 @@ import SwiftUI
 /// 「剪辑风格」页：一部影片的全局剪辑配置。
 ///
 /// 这一页只放**影片级**的东西——怎么剪（画幅、节奏、音轨）和哪些样式是全局的
-/// （常驻图层的位置与文字样式）。每镜具体写什么、数值是多少，仍然写在各个镜头的
-/// 分镜描述里，不在这页配。
+/// （常驻图层的位置与文字样式）。每镜具体写什么，写在各镜头的「屏幕字幕」与
+/// 「角标数值」两个字段里，不在这页配。
 ///
 /// 编辑走本地草稿 + 拖后落盘：拖动滑块会连发很多次值，直接每次写一遍
 /// `shots.json` 会卡手，所以等手停下来再写（见 `body` 末尾的 `task(id:)`）。
@@ -19,11 +19,23 @@ struct FilmStyleView: View {
     /// 风格**覆盖成默认值**。这个标记就是那条闸门。
     @State private var loadedFilmID: Film.ID?
 
+    /// 预览里当作字幕的那行字，取用户真正写过的字幕。
+    ///
+    /// 优先用**屏幕字幕**字段——那才是成片上会出现的内容；一个都没写时退到
+    /// 画面描述上，让预览在还没开始写字幕时也有东西可显示，而不是一句占位文案。
     private var sampleCaption: String {
-        let note = store.shots.first(where: \.hasNote)?.note
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let note, !note.isEmpty else { return "示例字幕文字" }
-        return note.split(separator: "\n").prefix(2).joined(separator: "\n")
+        let caption = store.shots.first(where: \.hasCaption)?.trimmedCaption
+        let note = store.shots.first(where: \.hasNote)?.trimmedNote
+        guard let text = caption ?? note else { return "示例字幕文字" }
+        return text.split(separator: "\n").prefix(2).joined(separator: "\n")
+    }
+
+    /// 预览里填进 `{value}` 的那个数，取用户真正填过的角标数值。
+    ///
+    /// 用真值而不是一个固定示例：角标是最容易「以为自己填了」的一项，
+    /// 预览里出现 1758 还是 1500，一眼就能看出有没有接上。
+    private var sampleBadgeValue: String {
+        store.shots.first(where: \.hasBadgeValue)?.trimmedBadgeValue ?? "1500"
     }
 
     var body: some View {
@@ -62,7 +74,11 @@ struct FilmStyleView: View {
 
     private var previewSection: some View {
         Section {
-            StylePreview(style: draft, sampleCaption: sampleCaption)
+            StylePreview(
+                style: draft,
+                sampleCaption: sampleCaption,
+                sampleBadgeValue: sampleBadgeValue
+            )
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, SLSpacing.small)
 
@@ -72,7 +88,7 @@ struct FilmStyleView: View {
         } header: {
             SectionHeader(title: "预览", systemImage: "rectangle.on.rectangle")
         } footer: {
-            Text("画面里只画了常驻图层的位置和文字样式；每镜写什么由分镜描述决定。")
+            Text("画面里只画了常驻图层的位置和文字样式；每镜显示什么由该镜的屏幕字幕与角标数值决定。")
         }
     }
 
@@ -190,7 +206,7 @@ struct FilmStyleView: View {
         } header: {
             SectionHeader(title: "常驻图层", systemImage: "text.below.photo")
         } footer: {
-            Text("位置与样式是全局的；每个镜头具体写什么、数值是多少，写在该镜头的分镜描述里。")
+            Text("位置与样式是全局的；每个镜头具体显示什么，写在该镜头的屏幕字幕与角标数值里。")
         }
     }
 
@@ -391,6 +407,8 @@ struct FilmStyleView: View {
 private struct StylePreview: View {
     let style: FilmStyle
     let sampleCaption: String
+    /// 替换模板里 `{value}` 的那个数，取自用户填过的角标数值
+    let sampleBadgeValue: String
 
     private let aspect: CGFloat = 9.0 / 16.0
 
@@ -405,7 +423,10 @@ private struct StylePreview: View {
 
                 if style.badge.isEnabled {
                     OutlinedText(
-                        text: resolved(style.badge.text, fallback: "热量缺口：1500千卡"),
+                        text: resolved(
+                            style.badge.text,
+                            fallback: "热量缺口：\(sampleBadgeValue)千卡"
+                        ),
                         typography: style.typography,
                         frameHeight: height,
                         lines: style.badge.maxLines
@@ -441,7 +462,7 @@ private struct StylePreview: View {
     private func resolved(_ template: String, fallback: String) -> String {
         let trimmed = template.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return fallback }
-        return trimmed.replacingOccurrences(of: "{value}", with: "1500")
+        return trimmed.replacingOccurrences(of: "{value}", with: sampleBadgeValue)
     }
 
     private var previewDescription: String {

@@ -503,6 +503,105 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(store.clipCount, 1)
     }
 
+    // MARK: - 画面的描述 / 屏幕的字
+
+    /// 旧分镜里没有「屏幕字幕」与「角标数值」这两个字段，读它必须拿到空值
+    /// ——空的含义正是旧数据的真实状态：这一镜不出字幕、不出角标。
+    @MainActor
+    func testLegacyShotWithoutCaptionAndBadgeDecodesToEmpty() async throws {
+        let (root, fm) = try fixture()
+        let store = ShotStore(fileManager: fm)
+        let shot = try XCTUnwrap(store.addShot(note: "早上起床称体重"))
+        let source = root.appendingPathComponent("a.mov")
+        try Data("video".utf8).write(to: source)
+        try await store.addClip(from: source, duration: 3, to: shot.id)
+
+        // 把落盘的字幕与角标字段删掉，模拟新版之前存下的数据
+        let metadata = root.appendingPathComponent("Support/ShotList/films.json")
+        var json = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: try Data(contentsOf: metadata)) as? [String: Any]
+        )
+        var films = try XCTUnwrap(json["films"] as? [[String: Any]])
+        var shots = try XCTUnwrap(films[0]["shots"] as? [[String: Any]])
+        shots[0].removeValue(forKey: "caption")
+        shots[0].removeValue(forKey: "badgeValue")
+        films[0]["shots"] = shots
+        json["films"] = films
+        try JSONSerialization.data(withJSONObject: json).write(to: metadata)
+
+        let reloaded = ShotStore(fileManager: fm)
+
+        XCTAssertNil(reloaded.loadError)
+        let legacy = try XCTUnwrap(reloaded.shots.first)
+        XCTAssertEqual(legacy.note, "早上起床称体重")
+        XCTAssertEqual(legacy.caption, "")
+        XCTAssertEqual(legacy.badgeValue, "")
+        XCTAssertFalse(legacy.hasCaption)
+        XCTAssertFalse(legacy.hasBadgeValue)
+        // 没有字幕不等于没有描述：两件事不能互相连坐
+        XCTAssertTrue(legacy.hasNote)
+        XCTAssertEqual(legacy.clips.count, 1)
+    }
+
+    /// 字幕与角标要真的落盘——它们是用户一个字一个字敲进去的内容，
+    /// 不能只活在内存里，重开应用就没了。
+    @MainActor
+    func testCaptionAndBadgeSurviveReload() async throws {
+        let (_, fm) = try fixture()
+        let store = ShotStore(fileManager: fm)
+        let shot = try XCTUnwrap(store.addShot(note: "开场"))
+
+        var edited = shot
+        edited.caption = "今日体重114.1KG"
+        edited.badgeValue = "1758"
+        XCTAssertTrue(store.update(edited))
+
+        let reloaded = ShotStore(fileManager: fm)
+        let persisted = try XCTUnwrap(reloaded.shots.first)
+        XCTAssertEqual(persisted.caption, "今日体重114.1KG")
+        XCTAssertEqual(persisted.badgeValue, "1758")
+        XCTAssertEqual(persisted.note, "开场")
+    }
+
+    /// 行尾多敲一个回车不算「写过字幕」：三样文字入库前都要裁掉首尾空白。
+    @MainActor
+    func testWhitespaceOnlyPerShotTextIsNotContent() async throws {
+        let (_, fm) = try fixture()
+        let store = ShotStore(fileManager: fm)
+        let shot = try XCTUnwrap(store.addShot(note: "开场"))
+
+        var edited = shot
+        edited.caption = "  \n "
+        edited.badgeValue = "\n"
+        XCTAssertTrue(store.update(edited))
+
+        let stored = try XCTUnwrap(store.shots.first)
+        XCTAssertFalse(stored.hasCaption)
+        XCTAssertFalse(stored.hasBadgeValue)
+        XCTAssertEqual(stored.trimmedCaption, "")
+        XCTAssertEqual(stored.trimmedBadgeValue, "")
+    }
+
+    /// 复制镜头要把三样文字都带过去。只带描述的话，用户写好字幕再复制一下，
+    /// 字幕就悄悄没了——那是最难被发现的一种丢数据。
+    @MainActor
+    func testDuplicateCarriesCaptionAndBadge() async throws {
+        let (_, fm) = try fixture()
+        let store = ShotStore(fileManager: fm)
+        var shot = try XCTUnwrap(store.addShot(note: "器械划船"))
+        shot.caption = "器械划船 ⌄ 45KG * 4 * 10"
+        shot.badgeValue = "2318"
+        XCTAssertTrue(store.update(shot))
+
+        let copy = try XCTUnwrap(store.duplicate(XCTUnwrap(store.shots.first)))
+        XCTAssertEqual(copy.note, "器械划船")
+        XCTAssertEqual(copy.caption, "器械划船 ⌄ 45KG * 4 * 10")
+        XCTAssertEqual(copy.badgeValue, "2318")
+        XCTAssertEqual(store.shots.count, 2)
+        XCTAssertEqual(store.shots[0].number, 1)
+        XCTAssertEqual(store.shots[1].number, 2)
+    }
+
     @MainActor
     func testRemakeArchivesCurrentFilmAndRecyclesBlankOnes() async throws {
         let (_, fm) = try fixture()

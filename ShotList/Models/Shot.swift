@@ -64,12 +64,32 @@ nonisolated extension Array where Element == ShotClip {
 ///
 /// 编号 `number` 决定拍摄顺序，同时也是导出时视频文件名与清单的前缀，
 /// 因此在列表内始终按数组顺序连续编号（1、2、3…）。
+///
+/// 文字分成三样，各管一件事，**互不冒充**：
+///
+/// - `note`：**画面描述**——这个镜头要拍什么。是「挑哪一段素材、怎么运镜」的依据。
+/// - `caption`：**屏幕字幕**——成片上显示的那句话。用户自己写，剪辑侧照抄不改。
+/// - `badgeValue`：**常驻角标的数值**——例如热量缺口「1758」。
+///
+/// 三样分开之前，字幕和角标都只能塞在 `note` 里，剪辑侧无法判断一句话是
+/// 「画面的说明」还是「要显示在屏幕上的字」，只能靠猜——猜的方式就是改写语义，
+/// 于是必然和「不要自行扩写或改写」这条要求打架。分开之后这条要求才成立。
 nonisolated struct Shot: Identifiable, Codable, Hashable {
     var id: UUID
     /// 镜头编号，从 1 开始连续编号
     var number: Int
-    /// 分镜描述：这个镜头要拍什么（运镜方式、口播要点、道具…）
+    /// 画面描述：这个镜头要拍什么（运镜方式、道具、动作…）
     var note: String
+    /// 屏幕字幕文案：直接显示在成片上的那句话，含 `\n` 表示显式断行。
+    ///
+    /// 由用户自己写，剪辑侧原样使用。为空表示这个镜头不显示字幕。
+    var caption: String
+    /// 这一镜的常驻角标数值，直接填**最终值**（如 `1758`，不是增量）。
+    ///
+    /// 存成 `String` 而不是数字：角标可能带单位或符号（`1758`、`1.2k`、`—`），
+    /// 渲染侧拿到的是要贴在画面上的原文，不该由应用替它格式化。
+    /// 为空表示这个镜头不出角标。
+    var badgeValue: String
     /// 这个镜头拍过的全部片段，按拍摄先后排列
     var clips: [ShotClip]
 
@@ -77,6 +97,8 @@ nonisolated struct Shot: Identifiable, Codable, Hashable {
         case id
         case number
         case note
+        case caption
+        case badgeValue
         case clips
     }
 
@@ -84,11 +106,15 @@ nonisolated struct Shot: Identifiable, Codable, Hashable {
         id: UUID = UUID(),
         number: Int,
         note: String = "",
+        caption: String = "",
+        badgeValue: String = "",
         clips: [ShotClip] = []
     ) {
         self.id = id
         self.number = number
         self.note = note
+        self.caption = caption
+        self.badgeValue = badgeValue
         self.clips = clips
     }
 }
@@ -110,6 +136,10 @@ nonisolated extension Shot {
         id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         number = try container.decodeIfPresent(Int.self, forKey: .number) ?? 1
         note = try container.decodeIfPresent(String.self, forKey: .note) ?? ""
+        // 字幕与角标是后加的字段。旧分镜里没有它们，取空值即可——
+        // 空值的含义就是「这个镜头不显示字幕 / 不出角标」，正是旧数据的真实状态。
+        caption = try container.decodeIfPresent(String.self, forKey: .caption) ?? ""
+        badgeValue = try container.decodeIfPresent(String.self, forKey: .badgeValue) ?? ""
 
         if let stored = try container.decodeIfPresent([ShotClip].self, forKey: .clips), !stored.isEmpty {
             clips = stored.sorted { $0.recordedAt < $1.recordedAt }
@@ -157,15 +187,35 @@ nonisolated extension Shot {
     /// 备注是否为空
     var hasNote: Bool { !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
+    /// 去掉首尾空白后的画面描述
+    var trimmedNote: String { note.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    /// 去掉首尾空白后的字幕文案（导出与界面都用它，避免行尾多一个回车就当成「有字幕」）
+    var trimmedCaption: String { caption.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    /// 去掉首尾空白后的角标数值
+    var trimmedBadgeValue: String { badgeValue.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    /// 这个镜头要不要出屏幕字幕
+    var hasCaption: Bool { !trimmedCaption.isEmpty }
+
+    /// 这个镜头要不要出常驻角标
+    var hasBadgeValue: Bool { !trimmedBadgeValue.isEmpty }
+
     /// 界面上展示的描述文本，为空时回退为「镜头 N」
     var displayDetail: String {
-        let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = trimmedNote
         return trimmed.isEmpty ? "镜头 \(number)" : trimmed
+    }
+
+    /// 界面上展示的字幕；为空时回退成一行说明，用在面板的预览行上
+    var displayCaption: String {
+        hasCaption ? trimmedCaption : "未写字幕，成片上不出字"
     }
 
     /// 导出文件名用的描述，为空时回退为「镜头」
     var fileNameBase: String {
-        let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = trimmedNote
         return trimmed.isEmpty ? "镜头" : trimmed
     }
 

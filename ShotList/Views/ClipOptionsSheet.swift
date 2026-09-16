@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 点开一个镜头后弹出的面板：写分镜描述、改编号，继续拍、再导入，
+/// 点开一个镜头后弹出的面板：写分镜描述、写屏幕字幕与角标、改编号，继续拍、再导入，
 /// 以及管理已经拍好的每一条片段。
 ///
 /// 描述**就在这一页写**，不再跳一个编辑器页面——点开镜头是为了拍，顺手能改描述才顺手；
@@ -8,7 +8,12 @@ import SwiftUI
 /// 同一页上还留着导出文件名预览与编号，这两样原本是编辑器页的职责：
 /// 文件名由描述派生（改描述要能立刻看到会不会太长），编号即位置（改动会移动镜头）。
 ///
-/// 描述与编号都按草稿攒 400 毫秒再落盘：每敲一个字写一次 JSON 没必要，
+/// 文字分成三样，各写各的：**描述**是拍什么（给剪辑侧挑素材用），
+/// **字幕**是成片上显示的那句话，**角标数值**是常驻角标上的数。
+/// 三样分开之前字幕和角标只能塞在描述里，剪辑侧分不清一句是画面的说明还是要显示的字，
+/// 只能靠改写来猜——那正是「不要自行改写语义」这条要求永远守不住的原因。
+///
+/// 三样文字与编号都按草稿攒 400 毫秒再落盘：每敲一个字写一次 JSON 没必要，
 /// 而编号一变就会触发整段重编号 + 磁盘改名，更不能跟着 Stepper 的每次点击跑。
 /// 面板关掉时（点「完成」或去做别的）立即落一次，不漏。
 struct ClipOptionsSheet: View {
@@ -32,6 +37,8 @@ struct ClipOptionsSheet: View {
     @State private var showDeleteConfirm = false
 
     @State private var draftNote: String
+    @State private var draftCaption: String
+    @State private var draftBadgeValue: String
     @State private var draftNumber: Int
     @State private var draftSaveTask: Task<Void, Never>?
     @FocusState private var isNoteFocused: Bool
@@ -49,6 +56,8 @@ struct ClipOptionsSheet: View {
         self.onImport = onImport
         self.onPlay = onPlay
         _draftNote = State(initialValue: shot.note)
+        _draftCaption = State(initialValue: shot.caption)
+        _draftBadgeValue = State(initialValue: shot.badgeValue)
         _draftNumber = State(initialValue: shot.number)
     }
 
@@ -56,6 +65,19 @@ struct ClipOptionsSheet: View {
 
     private var numberRange: ClosedRange<Int> {
         1...max(1, store.shots.count)
+    }
+
+    /// 前一个镜头填过的角标数值，用来给「沿用上一镜」这个动作。
+    ///
+    /// 刻意做成**一次性把值抄过来**，而不是「留空即沿用」那种隐式规则：
+    /// 连续几个镜头常常共用同一个读数，但「留空」必须只有一种含义——
+    /// 这一镜不出角标。隐式沿用会让「不想出角标」这件事没法表达。
+    ///
+    /// 前一个镜头也没填时返回 `nil`，那个按钮就不出现。
+    private var previousBadgeValue: String? {
+        guard let index = store.shots.firstIndex(where: { $0.id == live.id }), index > 0 else { return nil }
+        let value = store.shots[index - 1].trimmedBadgeValue
+        return value.isEmpty ? nil : value
     }
 
     /// 与导出结果同一套命名规则：边打字边看到最终文件名。
@@ -126,6 +148,52 @@ struct ClipOptionsSheet: View {
                     .accessibilityValue(previewFileName)
                 }
 
+                Section {
+                    // 两行都是自由文本，一填上内容占位符就没了。没有常驻标签的话，
+                    // 两条一模一样的圆角框分不清哪条是字幕、哪条是角标，容易填错位置。
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("屏幕字幕")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                        TextField(
+                            "屏幕字幕",
+                            text: $draftCaption,
+                            prompt: Text("例如：辅助引体 ⌄ 62.5KG * 4 * 10"),
+                            axis: .vertical
+                        )
+                        .lineLimit(2...5)
+                        .accessibilityLabel("屏幕字幕")
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("角标数值")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                        TextField(
+                            "角标数值",
+                            text: $draftBadgeValue,
+                            prompt: Text("例如：1758")
+                        )
+                        .accessibilityLabel("角标数值")
+                    }
+
+                    if let previousBadgeValue, previousBadgeValue != live.trimmedBadgeValue {
+                        Button {
+                            draftBadgeValue = previousBadgeValue
+                        } label: {
+                            Label("沿用上一镜的 \(previousBadgeValue)", systemImage: "arrow.turn.left.up")
+                        }
+                        .accessibilityHint("把这个数值抄到当前镜头，抄完可以再改")
+                    }
+                } header: {
+                    Text("屏幕文字")
+                } footer: {
+                    Text(
+                        "描述写「拍什么」，字幕与角标写「画面上显示什么」。"
+                        + "这两样会被剪辑侧原样使用，不会替你改写；留空就是这一镜不出。"
+                    )
+                }
+
                 Section("顺序") {
                     Stepper(value: $draftNumber, in: numberRange) {
                         HStack {
@@ -184,6 +252,8 @@ struct ClipOptionsSheet: View {
         .interactiveDismissDisabled(store.saveError != nil)
         .presentationDragIndicator(.visible)
         .onChange(of: draftNote) { _, _ in scheduleDraftSave() }
+        .onChange(of: draftCaption) { _, _ in scheduleDraftSave() }
+        .onChange(of: draftBadgeValue) { _, _ in scheduleDraftSave() }
         .onChange(of: draftNumber) { _, _ in scheduleDraftSave() }
         .task {
             // 等弹层落位再把光标放进去，否则键盘会和转场打架
@@ -245,7 +315,8 @@ struct ClipOptionsSheet: View {
         }
     }
 
-    /// 把草稿写回仓库。描述裁掉首尾空白，编号夹进有效区间。
+    /// 把草稿写回仓库。三样文字都裁掉首尾空白（否则行尾多一个回车就会被当成
+    /// 「写过字幕」），编号夹进有效区间。
     ///
     /// 与仓库当前值一致时直接返回，所以「同时打开又关掉」不会产生一次多余的写盘。
     @discardableResult
@@ -253,13 +324,21 @@ struct ClipOptionsSheet: View {
         draftSaveTask?.cancel()
         draftSaveTask = nil
 
-        guard draftNote != live.note || draftNumber != live.number else { return true }
-        let trimmed = draftNote.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedNote = draftNote.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedCaption = draftCaption.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedBadgeValue = draftBadgeValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let clamped = min(max(draftNumber, numberRange.lowerBound), numberRange.upperBound)
-        guard trimmed != live.note || clamped != live.number else { return true }
+
+        guard trimmedNote != live.trimmedNote
+            || trimmedCaption != live.trimmedCaption
+            || trimmedBadgeValue != live.trimmedBadgeValue
+            || clamped != live.number
+        else { return true }
 
         var edited = live
-        edited.note = trimmed
+        edited.note = trimmedNote
+        edited.caption = trimmedCaption
+        edited.badgeValue = trimmedBadgeValue
         edited.number = clamped
         return store.update(edited)
     }
@@ -407,7 +486,12 @@ struct ClipOptionsSheet: View {
 
 #Preview {
     ClipOptionsSheet(
-        shot: Shot(number: 3, note: "手冲壶出水特写，收环境音"),
+        shot: Shot(
+            number: 3,
+            note: "手冲壶出水特写，收环境音",
+            caption: "第 3 杯还是手冲\n水温 92°C",
+            badgeValue: "1758"
+        ),
         onCapture: {},
         onImport: {},
         onPlay: { _ in }

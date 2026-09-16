@@ -57,6 +57,33 @@ final class ExportPackageBuilderTests: XCTestCase {
                       option: option, filmTitle: filmTitle, style: style)
     }
 
+    /// 一个带隔离文件系统的临时根目录，用完自动回收
+    private func makeTempRoot() throws -> (URL, ExportTestFileManager) {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        return (root, ExportTestFileManager(root: root))
+    }
+
+    /// 取出包里某个文本文件的内容
+    private func exportedText(_ fm: ExportTestFileManager, _ suffix: String) throws -> String {
+        let data = try XCTUnwrap(
+            fm.exportedFiles.first { $0.key.hasSuffix(suffix) }?.value,
+            "导出包里没有 \(suffix)"
+        )
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// 塞一个镜头 + 一条真素材，返回落盘根目录
+    private func singleShotRoot(
+        _ shot: Shot,
+        fileName: String = "a.mov"
+    ) throws -> (URL, ExportTestFileManager) {
+        let (root, fm) = try makeTempRoot()
+        try Data("video".utf8).write(to: root.appendingPathComponent(fileName))
+        return (root, fm)
+    }
+
     func testMissingClipsKeepOriginalTakeNumbersInFilesCSVAndGuide() async throws {
         for remaining in [[1, 2, 3], [2, 3], [3], [1, 2]] {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -391,6 +418,141 @@ final class ExportPackageBuilderTests: XCTestCase {
         )
         XCTAssertTrue(guide.contains("| 常驻角标 | 关闭 |"))
         XCTAssertTrue(guide.contains("| 分镜字幕 | 关闭 |"))
+    }
+
+    // MARK: - 逐镜的屏幕字幕与角标
+
+    /// 画面描述、屏幕字幕、角标数值要分开走到包里：CSV 各占一列，指南各占一行。
+    /// 三样混在一句话里，正是剪辑侧只能靠「改写」去猜哪句该上屏的根源。
+    func testShotCaptionAndBadgeSitApartFromNote() async throws {
+        let shot = Shot(
+            number: 1,
+            note: "早上起床称体重",
+            caption: "今日体重114.1KG",
+            badgeValue: "1758",
+            clips: [ShotClip(fileName: "a.mov", duration: 3)]
+        )
+        let (root, fm) = try singleShotRoot(shot)
+
+        _ = try await ExportPackageBuilder.build(request([shot], root), fileManager: fm)
+
+        let csv = try exportedText(fm, "分镜清单.csv")
+        XCTAssertTrue(csv.contains("编号,分镜描述,屏幕字幕,角标数值"))
+        XCTAssertTrue(csv.contains("01,早上起床称体重,今日体重114.1KG,1758,"))
+
+        let guide = try exportedText(fm, "分镜文字内容指南.md")
+        XCTAssertTrue(guide.contains("- 分镜描述：早上起床称体重"))
+        XCTAssertTrue(guide.contains("- 屏幕字幕：`今日体重114.1KG`"))
+        // 角标那一行给的是**代入模板之后的结果**：剪辑侧不该自己再拼一次字符串
+        XCTAssertTrue(guide.contains("- 角标：`热量缺口：1758千卡`"))
+    }
+
+    /// 没写字幕、没填角标就是「这一镜没有」，写成 `—`；
+    /// 留白会被剪辑侧当成「用户忘了给」而自己补一句上去。
+    func testMissingPerShotTextReadsAsNone() async throws {
+        let shot = Shot(number: 1, note: "开场", clips: [ShotClip(fileName: "a.mov", duration: 3)])
+        let (root, fm) = try singleShotRoot(shot)
+
+        _ = try await ExportPackageBuilder.build(request([shot], root), fileManager: fm)
+
+        let guide = try exportedText(fm, "分镜文字内容指南.md")
+        XCTAssertTrue(guide.contains("- 屏幕字幕：—"))
+        XCTAssertTrue(guide.contains("- 角标：—"))
+        // 没有字幕不等于没有描述，两者不连坐
+        XCTAssertTrue(guide.contains("- 分镜描述：开场"))
+    }
+
+    /// 字幕里的换行写成 `\n` 而不是真的断行：这一行是「字幕文案」这一个字段，
+    /// 真断行会让它看起来像两条不同的字段。
+    func testMultilineCaptionStaysOneField() async throws {
+        let shot = Shot(
+            number: 1,
+            note: "器械划船",
+            caption: "器械划船 ⌄ 45KG * 4 * 10\n最后一组有点勉强",
+            clips: [ShotClip(fileName: "a.mov", duration: 3)]
+        )
+        let (root, fm) = try singleShotRoot(shot)
+
+        _ = try await ExportPackageBuilder.build(request([shot], root), fileManager: fm)
+
+        let guide = try exportedText(fm, "分镜文字内容指南.md")
+        XCTAssertTrue(guide.contains("- 屏幕字幕：`器械划船 ⌄ 45KG * 4 * 10\\n最后一组有点勉强`"))
+        XCTAssertFalse(guide.contains("- 屏幕字幕：`器械划船 ⌄ 45KG * 4 * 10\n"))
+    }
+
+    /// 角标模板被用户清空时，用数值本身顶上——「确实填了 1758」这个事实要留住，
+    /// 不能因为模板空着就显示成「没有」。
+    func testEmptyBadgeTemplateFallsBackToTheValue() async throws {
+        let shot = Shot(
+            number: 1,
+            note: "开场",
+            badgeValue: "1758",
+            clips: [ShotClip(fileName: "a.mov", duration: 3)]
+        )
+        let (root, fm) = try singleShotRoot(shot)
+
+        var style = FilmStyle()
+        style.badge.text = ""
+        _ = try await ExportPackageBuilder.build(request([shot], root, style: style), fileManager: fm)
+
+        let guide = try exportedText(fm, "分镜文字内容指南.md")
+        XCTAssertTrue(guide.contains("- 角标：`1758`"))
+    }
+
+    /// 整片关掉的图层不逐镜列。列一行行 `—` 会让剪辑侧以为「这一层存在、
+    /// 只是这些镜头没有」，与「这一层整片都不出」是两件事。
+    func testDisabledLayersLeaveNoPerShotLines() async throws {
+        let shot = Shot(
+            number: 1,
+            note: "开场",
+            caption: "不该出现",
+            badgeValue: "1758",
+            clips: [ShotClip(fileName: "a.mov", duration: 3)]
+        )
+        let (root, fm) = try singleShotRoot(shot)
+
+        var style = FilmStyle()
+        style.caption.isEnabled = false
+        style.badge.isEnabled = false
+        _ = try await ExportPackageBuilder.build(request([shot], root, style: style), fileManager: fm)
+
+        let guide = try exportedText(fm, "分镜文字内容指南.md")
+        XCTAssertFalse(guide.contains("- 屏幕字幕："))
+        XCTAssertFalse(guide.contains("- 角标："))
+        // 字幕关掉了，用户写的那句话不该从别的字段漏出去
+        XCTAssertFalse(guide.contains("不该出现"))
+    }
+
+    /// 镜头级字段是整镜共用的，同一个镜头拍了几条片段，CSV 的每一行都该带上它，
+    /// 剪辑侧挑中「备用片段」那一行时不用回头去别的行找。
+    func testPerShotTextRepeatsOnEveryTakeRow() async throws {
+        var shot = Shot(
+            number: 1,
+            note: "器械划船",
+            caption: "器械划船 ⌄ 45KG * 4 * 10",
+            badgeValue: "2318"
+        )
+        shot.clips = (1...3).map {
+            ShotClip(fileName: "take\($0).mov", duration: 2, recordedAt: Date(timeIntervalSince1970: Double($0)))
+        }
+        let (root, fm) = try makeTempRoot()
+        let clips = root.appendingPathComponent("clips")
+        try fm.createDirectory(at: clips, withIntermediateDirectories: true)
+        for index in 1...3 {
+            try Data("video \(index)".utf8).write(to: clips.appendingPathComponent("take\(index).mov"))
+        }
+
+        _ = try await ExportPackageBuilder.build(request([shot], clips), fileManager: fm)
+
+        let csv = try exportedText(fm, "分镜清单.csv")
+        let rows = csv.split(separator: "\n").filter { $0.hasPrefix("01,") }
+        XCTAssertEqual(rows.count, 3)
+        for row in rows {
+            XCTAssertTrue(
+                row.contains(",器械划船,器械划船 ⌄ 45KG * 4 * 10,2318,"),
+                "片段行缺少镜头级的字幕或角标：\(row)"
+            )
+        }
     }
 
 }

@@ -14,6 +14,14 @@ struct ExportView: View {
     /// 不能等弹窗渲染时现读 `store`——那时文件已经删了，文案会变成「0 个」。
     @State private var orphanPrompt: String?
 
+    /// 支持调试启动参数 `-preselectStylePage`：验收截图直接停在「剪辑风格」页。
+    ///
+    /// 与 `-preselectTab` / `-preselectFilm` / `-preselectShot` 同一套用法。
+    /// 这一页是 `NavigationLink` 推出来的，没有参数就只能靠手点，
+    /// 而本机没有可用的点击自动化（见 AGENTS.md 的验收方式）。
+    @State private var isShowingStylePage =
+        ProcessInfo.processInfo.arguments.contains("-preselectStylePage")
+
     private var recordedShots: [Shot] { store.shots.filter(\.hasClip) }
 
     /// 当前影片的展示名（带书名号），用在确认弹层与说明文字里
@@ -58,6 +66,10 @@ struct ExportView: View {
             .navigationTitle("导出")
             // 标题与右侧内容同行（inlineLarge），不单独占一行；三页起始位置一致
             .toolbarTitleDisplayMode(.inlineLarge)
+            // 只在带了 `-preselectStylePage` 时才为 true，正常使用不受影响
+            .navigationDestination(isPresented: $isShowingStylePage) {
+                FilmStyleView()
+            }
         }
         .onChange(of: store.shots) { _, _ in export.invalidate() }
         // 剪辑风格写进了包内的规格文件，改了它，已生成的包就是旧的
@@ -156,7 +168,7 @@ struct ExportView: View {
         } header: {
             SectionHeader(title: "剪辑风格", systemImage: "slider.horizontal.3")
         } footer: {
-            Text("整部影片共用这一套。每镜具体写什么、数值是多少，写在各个镜头的分镜描述里。")
+            Text("整部影片共用这一套。每镜具体显示什么，写在各个镜头的屏幕字幕与角标数值里。")
         }
     }
 
@@ -279,7 +291,7 @@ struct ExportView: View {
         Section {
             contentsRow(exampleMainFileName, "每个镜头最新的一条（主素材）；拍了多条时统一带「分镜号-子片段号」，只拍一条时命名为 01_xxx.mov")
             contentsRow(exampleAlternateFileName, "同一个镜头更早拍的片段，子片段号越小拍得越早")
-            contentsRow("分镜清单.csv", "编号、描述、状态，以及每条片段的时长与文件名")
+            contentsRow("分镜清单.csv", "编号、描述、屏幕字幕、角标数值，以及每条片段的时长与文件名")
             contentsRow("分镜文字内容指南.md", "镜头文字内容与素材的对照表，可直接交给 AI 剪辑")
             contentsRow("剪辑规格.json", "这部影片的剪辑风格：画幅、节奏、图层位置与文字样式")
             contentsRow("导出说明.txt", "解压、导入剪映、传到电脑的步骤")

@@ -203,11 +203,12 @@ nonisolated enum OverlayAnchor: String, CaseIterable, Identifiable, Codable, Sen
 /// 图层文案从哪来。
 ///
 /// 这就是「哪些是全局、哪些是内容」的分界线：全局配置只声明**图层长什么样、
-/// 贴在哪儿**；每镜具体写什么、数值是多少，仍然由用户在分镜描述里写。
+/// 贴在哪儿**；每镜具体写什么，由用户在镜头面板里分别写进「屏幕字幕」与
+/// 「角标数值」两个字段——与「分镜描述」（拍什么）是分开的三样东西。
 nonisolated enum OverlayContentSource: String, CaseIterable, Identifiable, Codable, Sendable {
     /// 全片统一文案，写在 `text` 里（片尾卡、固定角标）
     case fixed
-    /// 取自该镜头的分镜文字（分镜字幕；角标数值也走这条）
+    /// 取自该镜头的屏幕文字：字幕取「屏幕字幕」，角标取「角标数值」
     case shotText
 
     var id: String { rawValue }
@@ -222,7 +223,7 @@ nonisolated enum OverlayContentSource: String, CaseIterable, Identifiable, Codab
     var detail: String {
         switch self {
         case .fixed: return "文字写在这里，每个镜头都一样"
-        case .shotText: return "文字由每个镜头的分镜描述提供，这里只留格式模板"
+        case .shotText: return "字幕取每镜的「屏幕字幕」，角标取「角标数值」，这里只留格式模板"
         }
     }
 }
@@ -243,8 +244,8 @@ nonisolated struct OverlayStyle: Codable, Hashable, Sendable {
     var maxLines: Int
     /// 文案来源
     var contentSource: OverlayContentSource
-    /// 文案模板。`contentSource == .shotText` 时，可用 `{value}` 之类的占位符，
-    /// 也可留空表示整段文字都取自分镜描述。
+    /// 文案模板。`contentSource == .shotText` 时，`{value}` 会被该镜头的
+    /// 「角标数值」替换；也可留空表示整段文字都取自分镜文字。
     var text: String
 
     init(
@@ -264,6 +265,7 @@ nonisolated struct OverlayStyle: Codable, Hashable, Sendable {
     }
 
     /// 常驻角标：贴在顶部居中，数值逐镜变化。对应实测成片里的「热量缺口：N千卡」。
+    /// `{value}` 由该镜头的「角标数值」字段代入。
     static let persistentBadge = OverlayStyle(
         anchor: .topCenter,
         maxLines: 1,
@@ -271,7 +273,7 @@ nonisolated struct OverlayStyle: Codable, Hashable, Sendable {
         text: "热量缺口：{value}千卡"
     )
 
-    /// 分镜字幕：贴在下三分，文案取自该镜的分镜描述。
+    /// 分镜字幕：贴在下三分，文案取自该镜头的「屏幕字幕」。
     static let shotCaption = OverlayStyle(
         anchor: .lowerThird,
         maxLines: 2,
@@ -416,9 +418,10 @@ nonisolated struct AudioStyle: Codable, Hashable, Sendable {
 /// **怎么剪**（画幅、帧率、总时长、单镜时长、音轨）和**哪些样式是全局的**
 /// （常驻图层的位置与文字样式）。
 ///
-/// 它**不**回答「这一镜写什么」：每镜的字幕文案、角标数值仍然写在分镜描述里，
-/// 由用户自己写。分界线就是 `OverlayContentSource`——全局这一层只声明图层的
-/// 存在、位置、格式模板，具体文字是内容，不进这个结构。
+/// 它**不**回答「这一镜写什么」：每镜的屏幕字幕、角标数值写在镜头自己的
+/// `Shot.caption` / `Shot.badgeValue` 里，由用户自己写。分界线就是
+/// `OverlayContentSource`——全局这一层只声明图层的存在、位置、格式模板，
+/// 具体文字是内容，不进这个结构。
 ///
 /// 默认值全部取自成片 `9月14日.mov` 的实测结果，所以「不配置」就等于
 /// 「按已经剪出来的那条片子剪」。
@@ -632,8 +635,8 @@ nonisolated extension FilmStyle {
     /// 换成 4 位小数也没用（二进制浮点存不下 0.044）。要给人看百分数就看
     /// 「分镜文字内容指南.md」里的「四、成片规格」，那一节按 `%.1f%%` 输出。
     ///
-    /// 文件里不写各镜的字幕文案与角标数值——那是内容，写在各镜的分镜描述里，
-    /// 由「分镜文字内容指南.md」逐镜提供。
+    /// 文件里不写各镜的屏幕字幕与角标数值——那是内容，写在各镜头的
+    /// `caption` / `badgeValue` 里，由「分镜文字内容指南.md」逐镜提供。
     func exportedJSON(filmTitle: String, exportedAt: Date) -> [String: Any] {
         // 片尾卡关掉时时长按 0 下发：剪辑侧不必再猜「enabled=false 是不是还要留黑屏」。
         // 类型写死成 Double（而不是直接写 `0` 字面量）——`[String: Any]` 里字面量
