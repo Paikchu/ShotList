@@ -72,8 +72,8 @@ struct ExportView: View {
             }
         }
         .onChange(of: store.shots) { _, _ in export.invalidate() }
-        // 剪辑风格写进了包内的规格文件，改了它，已生成的包就是旧的
-        .onChange(of: store.currentFilm?.style) { _, _ in export.invalidate() }
+        // 剪辑风格写进了包内的「剪辑风格.md」，改了它，已生成的包就是旧的
+        .onChange(of: store.currentFilm?.stylePrompt) { _, _ in export.invalidate() }
         // 切到别的影片之后，已经生成的包不再属于「当前这部影片」，必须一起作废
         .onChange(of: store.currentFilmID) { _, _ in export.invalidate() }
         .onChange(of: scope) { _, _ in export.invalidate() }
@@ -140,8 +140,20 @@ struct ExportView: View {
 
     // MARK: - 剪辑风格
 
-    /// 剪辑风格是这次导出的输入：改了它，已经生成的包就不再对应当前设定。
-    private var style: FilmStyle { store.currentFilm?.style ?? FilmStyle() }
+    /// 剪辑风格描述是这次导出的输入：改了它，已经生成的包就不再对应当前设定。
+    private var stylePrompt: String { store.currentFilm?.stylePrompt ?? "" }
+
+    /// 列表里那一行的副标题：没写就明说「未写」，
+    /// 而不是显示一片空白——空白看起来像加载失败。
+    private var styleSummary: String {
+        guard !stylePrompt.isEmpty else { return "未写，这次导出不带风格要求" }
+        // 多行描述压成一行预览，省得这几行把导出页撑得很长
+        return stylePrompt
+            .split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " / ")
+    }
 
     private var styleSection: some View {
         Section {
@@ -153,7 +165,7 @@ struct ExportView: View {
                         Text("剪辑风格")
                             // semibold 统一为 headline（17pt）：与其他页面的主文本同级同大
                             .font(.headline)
-                        Text(style.summaryText)
+                        Text(styleSummary)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(2)
@@ -163,12 +175,12 @@ struct ExportView: View {
                 .frame(minHeight: SLSize.minTouchTarget)
             }
             .accessibilityLabel("剪辑风格")
-            .accessibilityValue(style.summaryText)
-            .accessibilityHint("设置画幅、节奏、常驻图层的位置与文字样式")
+            .accessibilityValue(styleSummary)
+            .accessibilityHint("写一段话说明这条片子该怎么剪")
         } header: {
-            SectionHeader(title: "剪辑风格", systemImage: "slider.horizontal.3")
+            SectionHeader(title: "剪辑风格", systemImage: "text.alignleft")
         } footer: {
-            Text("整部影片共用这一套。每镜具体显示什么，写在各个镜头的屏幕字幕与角标数值里。")
+            Text("描述整部影片怎么剪，导出时写进包里的「剪辑风格.md」。每镜显示什么字，写在各个镜头的屏幕字幕与角标文字里。")
         }
     }
 
@@ -291,9 +303,9 @@ struct ExportView: View {
         Section {
             contentsRow(exampleMainFileName, "每个镜头最新的一条（主素材）；拍了多条时统一带「分镜号-子片段号」，只拍一条时命名为 01_xxx.mov")
             contentsRow(exampleAlternateFileName, "同一个镜头更早拍的片段，子片段号越小拍得越早")
-            contentsRow("分镜清单.csv", "编号、描述、屏幕字幕、角标数值，以及每条片段的时长与文件名")
+            contentsRow("分镜清单.csv", "编号、描述、屏幕字幕、角标文字，以及每条片段的时长与文件名")
             contentsRow("分镜文字内容指南.md", "镜头文字内容与素材的对照表，可直接交给 AI 剪辑")
-            contentsRow("剪辑规格.json", "这部影片的剪辑风格：画幅、节奏、图层位置与文字样式")
+            contentsRow("剪辑风格.md", "你写的那段剪辑要求：怎么剪、要什么观感；没写就不产出这个文件")
             contentsRow("导出说明.txt", "解压、导入剪映、传到电脑的步骤")
         } header: {
             SectionHeader(title: "压缩包里有什么", systemImage: "doc.text.magnifyingglass")
@@ -486,7 +498,7 @@ struct ExportView: View {
             scope: scope,
             option: transcodeOption,
             filmTitle: store.currentFilm?.exportTitleToken ?? "",
-            style: style
+            stylePrompt: stylePrompt
         )
         // 影片同样是这次导出的输入：切换影片后，这份结果就不再属于「刚刚生成的导出包」
         let filmID = store.currentFilmID
@@ -496,7 +508,7 @@ struct ExportView: View {
                     && scope == request.scope
                     && transcodeOption == request.option
                     && store.currentFilmID == filmID
-                    && (store.currentFilm?.style ?? FilmStyle()) == request.style
+                    && (store.currentFilm?.stylePrompt ?? "") == request.stylePrompt
             }
         }
     }

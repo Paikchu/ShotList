@@ -15,12 +15,14 @@ nonisolated struct Film: Identifiable, Codable, Hashable {
     var id: UUID
     /// 影片标题。可以为空——空标题在界面上显示为「未命名影片」。
     var title: String
-    /// 这部影片的剪辑风格：怎么剪、哪些样式是全局的。
+    /// 这部影片的剪辑风格：**一段描述**，怎么剪、哪些样式是全局的，都用自然语言写。
+    ///
+    /// 导出时原样写进 `剪辑风格.md` 交给剪辑工具。消费它的本来就是能读自然语言的
+    /// 工具，所以这里不放固定选项——见 `FilmStylePrompt`。
     ///
     /// 挂在影片上而不是全局偏好里：它是「这一次创作要什么样子」，
-    /// 换一部影片（重制 / 新建）就该回到默认，而不是把上一部片子的
-    /// 字号和片尾卡带到新片里。
-    var style: FilmStyle
+    /// 换一部影片（重制 / 新建）就该重新写，而不是把上一部片子的要求带到新片里。
+    var stylePrompt: String
     /// 这部影片的分镜，编号在影片内从 1 连续编排
     var shots: [Shot]
     var createdAt: Date
@@ -33,14 +35,14 @@ nonisolated struct Film: Identifiable, Codable, Hashable {
     init(
         id: UUID = UUID(),
         title: String = "",
-        style: FilmStyle = FilmStyle(),
+        stylePrompt: String = "",
         shots: [Shot] = [],
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
         self.id = id
         self.title = title
-        self.style = style
+        self.stylePrompt = stylePrompt
         self.shots = shots
         self.createdAt = createdAt
         self.updatedAt = updatedAt
@@ -49,24 +51,51 @@ nonisolated struct Film: Identifiable, Codable, Hashable {
     enum CodingKeys: String, CodingKey {
         case id
         case title
-        case style
+        case stylePrompt
         case shots
         case createdAt
         case updatedAt
+        /// 旧版本的结构化风格。**只读不写**：解码时用来补出 `stylePrompt`，
+        /// 编码走手写的 `encode(to:)`，不会再产生这个键。
+        case legacyStyle = "style"
     }
 
-    /// 手写解码而不是用合成的那个：`style` 是后加的字段，库里已有的影片 JSON
-    /// 里没有它。合成解码器遇到缺键会整份抛错，那会把**所有**影片一起读不出来；
-    /// 逐字段兜底之后，老数据只是拿到一套默认风格。
+    /// 手写解码而不是用合成的那个：`stylePrompt` 是后加的字段，库里已有的影片 JSON
+    /// 里没有它。合成解码器遇到缺键会整份抛错，那会把**所有**影片一起读不出来。
+    ///
+    /// 老数据分两种，都要接住：
+    /// - 只有标题和分镜 → 风格留空，用户自己写；
+    /// - 存着旧的结构化风格 → 翻译成一段描述写进去，别让调好的风格凭空消失。
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         title = try container.decodeIfPresent(String.self, forKey: .title) ?? ""
-        style = ((try? container.decodeIfPresent(FilmStyle.self, forKey: .style)) ?? nil) ?? FilmStyle()
+
+        let stored = (try container.decodeIfPresent(String.self, forKey: .stylePrompt) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !stored.isEmpty {
+            stylePrompt = stored
+        } else if let legacy = (try? container.decodeIfPresent(LegacyFilmStyle.self, forKey: .legacyStyle)) ?? nil {
+            stylePrompt = legacy.promptText
+        } else {
+            stylePrompt = ""
+        }
+
         shots = try container.decodeIfPresent([Shot].self, forKey: .shots) ?? []
         let now = Date()
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? now
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
+    }
+
+    /// 手写编码：只写 `stylePrompt`，不再写旧的 `style` 键。
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encode(stylePrompt, forKey: .stylePrompt)
+        try container.encode(shots, forKey: .shots)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(updatedAt, forKey: .updatedAt)
     }
 }
 
@@ -112,14 +141,18 @@ nonisolated extension Film {
     /// 一个镜头都还没写
     var isUnstarted: Bool { shots.isEmpty }
 
-    /// 什么都没写：没有镜头、也没有标题，剪辑风格也是默认的那套。
+    /// 风格描述写完没有。留空就是「这部片子没特别要求」，
+    /// 导出包里不会出现 `剪辑风格.md`。
+    var hasStylePrompt: Bool { !stylePrompt.isEmpty }
+
+    /// 什么都没写：没有镜头、没有标题，也没写风格描述。
     ///
     /// 「切换影片」「重制」时按这个口径静默回收，否则影片库会堆一堆
     /// 用户早就忘了的空壳。
     ///
-    /// 调过风格的影片**不算空壳**：用户可能先把风格配好、再去拍，
-    /// 按「无分镜 + 无标题」回收会把刚配好的那份风格一起丢掉。
-    var isBlank: Bool { shots.isEmpty && !hasTitle && style == .standard }
+    /// 写过风格的影片**不算空壳**：用户可能先把要求写好、再去拍，
+    /// 按「无分镜 + 无标题」回收会把刚写好的那段一起丢掉。
+    var isBlank: Bool { shots.isEmpty && !hasTitle && !hasStylePrompt }
 
     /// 这部影片的全部片段（跨镜头）
     var allClips: [ShotClip] { shots.flatMap(\.clips) }

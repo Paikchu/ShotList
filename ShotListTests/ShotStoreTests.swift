@@ -505,7 +505,7 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
 
     // MARK: - 画面的描述 / 屏幕的字
 
-    /// 旧分镜里没有「屏幕字幕」与「角标数值」这两个字段，读它必须拿到空值
+    /// 旧分镜里没有「屏幕字幕」与「角标文字」这两个字段，读它必须拿到空值
     /// ——空的含义正是旧数据的真实状态：这一镜不出字幕、不出角标。
     @MainActor
     func testLegacyShotWithoutCaptionAndBadgeDecodesToEmpty() async throws {
@@ -524,7 +524,7 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
         var films = try XCTUnwrap(json["films"] as? [[String: Any]])
         var shots = try XCTUnwrap(films[0]["shots"] as? [[String: Any]])
         shots[0].removeValue(forKey: "caption")
-        shots[0].removeValue(forKey: "badgeValue")
+        shots[0].removeValue(forKey: "badgeText")
         films[0]["shots"] = shots
         json["films"] = films
         try JSONSerialization.data(withJSONObject: json).write(to: metadata)
@@ -535,9 +535,9 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
         let legacy = try XCTUnwrap(reloaded.shots.first)
         XCTAssertEqual(legacy.note, "早上起床称体重")
         XCTAssertEqual(legacy.caption, "")
-        XCTAssertEqual(legacy.badgeValue, "")
+        XCTAssertEqual(legacy.badgeText, "")
         XCTAssertFalse(legacy.hasCaption)
-        XCTAssertFalse(legacy.hasBadgeValue)
+        XCTAssertFalse(legacy.hasBadgeText)
         // 没有字幕不等于没有描述：两件事不能互相连坐
         XCTAssertTrue(legacy.hasNote)
         XCTAssertEqual(legacy.clips.count, 1)
@@ -553,13 +553,13 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
 
         var edited = shot
         edited.caption = "今日体重114.1KG"
-        edited.badgeValue = "1758"
+        edited.badgeText = "热量缺口：1758千卡"
         XCTAssertTrue(store.update(edited))
 
         let reloaded = ShotStore(fileManager: fm)
         let persisted = try XCTUnwrap(reloaded.shots.first)
         XCTAssertEqual(persisted.caption, "今日体重114.1KG")
-        XCTAssertEqual(persisted.badgeValue, "1758")
+        XCTAssertEqual(persisted.badgeText, "热量缺口：1758千卡")
         XCTAssertEqual(persisted.note, "开场")
     }
 
@@ -572,14 +572,14 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
 
         var edited = shot
         edited.caption = "  \n "
-        edited.badgeValue = "\n"
+        edited.badgeText = "\n"
         XCTAssertTrue(store.update(edited))
 
         let stored = try XCTUnwrap(store.shots.first)
         XCTAssertFalse(stored.hasCaption)
-        XCTAssertFalse(stored.hasBadgeValue)
+        XCTAssertFalse(stored.hasBadgeText)
         XCTAssertEqual(stored.trimmedCaption, "")
-        XCTAssertEqual(stored.trimmedBadgeValue, "")
+        XCTAssertEqual(stored.trimmedBadgeText, "")
     }
 
     /// 复制镜头要把三样文字都带过去。只带描述的话，用户写好字幕再复制一下，
@@ -590,13 +590,13 @@ final class ShotStoreTests: XCTestCase, @unchecked Sendable {
         let store = ShotStore(fileManager: fm)
         var shot = try XCTUnwrap(store.addShot(note: "器械划船"))
         shot.caption = "器械划船 ⌄ 45KG * 4 * 10"
-        shot.badgeValue = "2318"
+        shot.badgeText = "热量缺口：2318千卡"
         XCTAssertTrue(store.update(shot))
 
         let copy = try XCTUnwrap(store.duplicate(XCTUnwrap(store.shots.first)))
         XCTAssertEqual(copy.note, "器械划船")
         XCTAssertEqual(copy.caption, "器械划船 ⌄ 45KG * 4 * 10")
-        XCTAssertEqual(copy.badgeValue, "2318")
+        XCTAssertEqual(copy.badgeText, "热量缺口：2318千卡")
         XCTAssertEqual(store.shots.count, 2)
         XCTAssertEqual(store.shots[0].number, 1)
         XCTAssertEqual(store.shots[1].number, 2)

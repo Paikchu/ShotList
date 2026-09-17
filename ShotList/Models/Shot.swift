@@ -69,7 +69,7 @@ nonisolated extension Array where Element == ShotClip {
 ///
 /// - `note`：**画面描述**——这个镜头要拍什么。是「挑哪一段素材、怎么运镜」的依据。
 /// - `caption`：**屏幕字幕**——成片上显示的那句话。用户自己写，剪辑侧照抄不改。
-/// - `badgeValue`：**常驻角标的数值**——例如热量缺口「1758」。
+/// - `badgeText`：**常驻角标要显示的整段字**——例如「热量缺口：1758千卡」。
 ///
 /// 三样分开之前，字幕和角标都只能塞在 `note` 里，剪辑侧无法判断一句话是
 /// 「画面的说明」还是「要显示在屏幕上的字」，只能靠猜——猜的方式就是改写语义，
@@ -84,12 +84,13 @@ nonisolated struct Shot: Identifiable, Codable, Hashable {
     ///
     /// 由用户自己写，剪辑侧原样使用。为空表示这个镜头不显示字幕。
     var caption: String
-    /// 这一镜的常驻角标数值，直接填**最终值**（如 `1758`，不是增量）。
+    /// 这一镜的常驻角标文字：**成片上要显示的整段字**，例如「热量缺口：1758千卡」。
     ///
-    /// 存成 `String` 而不是数字：角标可能带单位或符号（`1758`、`1.2k`、`—`），
-    /// 渲染侧拿到的是要贴在画面上的原文，不该由应用替它格式化。
+    /// 存整段文字而不是「只管数值、由影片级模板拼词」：影片级的样式已经改成
+    /// 一段自然语言描述（见 `FilmStylePrompt`），没有能拿来拼词的模板了。
+    /// 整段写在这里也更好——要显示的字就是这里写的字，剪辑侧没有需要猜的地方。
     /// 为空表示这个镜头不出角标。
-    var badgeValue: String
+    var badgeText: String
     /// 这个镜头拍过的全部片段，按拍摄先后排列
     var clips: [ShotClip]
 
@@ -98,7 +99,7 @@ nonisolated struct Shot: Identifiable, Codable, Hashable {
         case number
         case note
         case caption
-        case badgeValue
+        case badgeText
         case clips
     }
 
@@ -107,14 +108,14 @@ nonisolated struct Shot: Identifiable, Codable, Hashable {
         number: Int,
         note: String = "",
         caption: String = "",
-        badgeValue: String = "",
+        badgeText: String = "",
         clips: [ShotClip] = []
     ) {
         self.id = id
         self.number = number
         self.note = note
         self.caption = caption
-        self.badgeValue = badgeValue
+        self.badgeText = badgeText
         self.clips = clips
     }
 }
@@ -127,6 +128,10 @@ nonisolated extension Shot {
         case clipFileName
         case recordedAt
         case clipDuration
+        /// 早期的角标字段：只存数值，显示时靠影片级的文案模板补前后缀。
+        /// **只读不写**——放在 `LegacyKeys` 而不是 `CodingKeys`，
+        /// 否则合成的编码器会把一个空的 `badgeValue` 一直写回去。
+        case badgeValue
     }
 
     /// 早期版本每个镜头只存一段视频（`clipFileName` / `clipDuration` / `recordedAt`），
@@ -139,14 +144,22 @@ nonisolated extension Shot {
         // 字幕与角标是后加的字段。旧分镜里没有它们，取空值即可——
         // 空值的含义就是「这个镜头不显示字幕 / 不出角标」，正是旧数据的真实状态。
         caption = try container.decodeIfPresent(String.self, forKey: .caption) ?? ""
-        badgeValue = try container.decodeIfPresent(String.self, forKey: .badgeValue) ?? ""
+
+        // 角标从「只存数值」改成了「存整段要显示的字」。老数据只有数值，
+        // 直接接过来当文字用：显示出来就是「1758」，与它升级前的样子一致
+        // （真正的整段话由用户自己在镜头面板里补）。
+        let legacy = try decoder.container(keyedBy: LegacyKeys.self)
+        if let stored = try container.decodeIfPresent(String.self, forKey: .badgeText), !stored.isEmpty {
+            badgeText = stored
+        } else {
+            badgeText = try legacy.decodeIfPresent(String.self, forKey: .badgeValue) ?? ""
+        }
 
         if let stored = try container.decodeIfPresent([ShotClip].self, forKey: .clips), !stored.isEmpty {
             clips = stored.sorted { $0.recordedAt < $1.recordedAt }
             return
         }
 
-        let legacy = try decoder.container(keyedBy: LegacyKeys.self)
         if let fileName = try legacy.decodeIfPresent(String.self, forKey: .clipFileName) {
             clips = [
                 ShotClip(
@@ -193,14 +206,14 @@ nonisolated extension Shot {
     /// 去掉首尾空白后的字幕文案（导出与界面都用它，避免行尾多一个回车就当成「有字幕」）
     var trimmedCaption: String { caption.trimmingCharacters(in: .whitespacesAndNewlines) }
 
-    /// 去掉首尾空白后的角标数值
-    var trimmedBadgeValue: String { badgeValue.trimmingCharacters(in: .whitespacesAndNewlines) }
+    /// 去掉首尾空白后的角标文字
+    var trimmedBadgeText: String { badgeText.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     /// 这个镜头要不要出屏幕字幕
     var hasCaption: Bool { !trimmedCaption.isEmpty }
 
     /// 这个镜头要不要出常驻角标
-    var hasBadgeValue: Bool { !trimmedBadgeValue.isEmpty }
+    var hasBadgeText: Bool { !trimmedBadgeText.isEmpty }
 
     /// 界面上展示的描述文本，为空时回退为「镜头 N」
     var displayDetail: String {

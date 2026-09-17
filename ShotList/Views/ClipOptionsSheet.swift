@@ -9,7 +9,8 @@ import SwiftUI
 /// 文件名由描述派生（改描述要能立刻看到会不会太长），编号即位置（改动会移动镜头）。
 ///
 /// 文字分成三样，各写各的：**描述**是拍什么（给剪辑侧挑素材用），
-/// **字幕**是成片上显示的那句话，**角标数值**是常驻角标上的数。
+/// **字幕**是成片上显示的那句话，**角标文字**是常驻角标上要显示的整段字
+/// （例如「热量缺口：1758千卡」）。
 /// 三样分开之前字幕和角标只能塞在描述里，剪辑侧分不清一句是画面的说明还是要显示的字，
 /// 只能靠改写来猜——那正是「不要自行改写语义」这条要求永远守不住的原因。
 ///
@@ -38,7 +39,7 @@ struct ClipOptionsSheet: View {
 
     @State private var draftNote: String
     @State private var draftCaption: String
-    @State private var draftBadgeValue: String
+    @State private var draftBadgeText: String
     @State private var draftNumber: Int
     @State private var draftSaveTask: Task<Void, Never>?
     @FocusState private var isNoteFocused: Bool
@@ -57,7 +58,7 @@ struct ClipOptionsSheet: View {
         self.onPlay = onPlay
         _draftNote = State(initialValue: shot.note)
         _draftCaption = State(initialValue: shot.caption)
-        _draftBadgeValue = State(initialValue: shot.badgeValue)
+        _draftBadgeText = State(initialValue: shot.badgeText)
         _draftNumber = State(initialValue: shot.number)
     }
 
@@ -67,17 +68,17 @@ struct ClipOptionsSheet: View {
         1...max(1, store.shots.count)
     }
 
-    /// 前一个镜头填过的角标数值，用来给「沿用上一镜」这个动作。
+    /// 前一个镜头填过的角标文字，用来给「沿用上一镜」这个动作。
     ///
     /// 刻意做成**一次性把值抄过来**，而不是「留空即沿用」那种隐式规则：
     /// 连续几个镜头常常共用同一个读数，但「留空」必须只有一种含义——
     /// 这一镜不出角标。隐式沿用会让「不想出角标」这件事没法表达。
     ///
     /// 前一个镜头也没填时返回 `nil`，那个按钮就不出现。
-    private var previousBadgeValue: String? {
+    private var previousBadgeText: String? {
         guard let index = store.shots.firstIndex(where: { $0.id == live.id }), index > 0 else { return nil }
-        let value = store.shots[index - 1].trimmedBadgeValue
-        return value.isEmpty ? nil : value
+        let text = store.shots[index - 1].trimmedBadgeText
+        return text.isEmpty ? nil : text
     }
 
     /// 与导出结果同一套命名规则：边打字边看到最终文件名。
@@ -166,24 +167,26 @@ struct ClipOptionsSheet: View {
                     }
 
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("角标数值")
+                        Text("角标文字")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                         TextField(
-                            "角标数值",
-                            text: $draftBadgeValue,
-                            prompt: Text("例如：1758")
+                            "角标文字",
+                            text: $draftBadgeText,
+                            prompt: Text("例如：热量缺口：1758千卡"),
+                            axis: .vertical
                         )
-                        .accessibilityLabel("角标数值")
+                        .lineLimit(1...3)
+                        .accessibilityLabel("角标文字")
                     }
 
-                    if let previousBadgeValue, previousBadgeValue != live.trimmedBadgeValue {
+                    if let previousBadgeText, previousBadgeText != live.trimmedBadgeText {
                         Button {
-                            draftBadgeValue = previousBadgeValue
+                            draftBadgeText = previousBadgeText
                         } label: {
-                            Label("沿用上一镜的 \(previousBadgeValue)", systemImage: "arrow.turn.left.up")
+                            Label("沿用上一镜", systemImage: "arrow.turn.left.up")
                         }
-                        .accessibilityHint("把这个数值抄到当前镜头，抄完可以再改")
+                        .accessibilityHint("把上一镜的角标文字抄过来，抄完可以再改")
                     }
                 } header: {
                     Text("屏幕文字")
@@ -253,7 +256,7 @@ struct ClipOptionsSheet: View {
         .presentationDragIndicator(.visible)
         .onChange(of: draftNote) { _, _ in scheduleDraftSave() }
         .onChange(of: draftCaption) { _, _ in scheduleDraftSave() }
-        .onChange(of: draftBadgeValue) { _, _ in scheduleDraftSave() }
+        .onChange(of: draftBadgeText) { _, _ in scheduleDraftSave() }
         .onChange(of: draftNumber) { _, _ in scheduleDraftSave() }
         .task {
             // 等弹层落位再把光标放进去，否则键盘会和转场打架
@@ -326,19 +329,19 @@ struct ClipOptionsSheet: View {
 
         let trimmedNote = draftNote.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedCaption = draftCaption.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedBadgeValue = draftBadgeValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedBadgeText = draftBadgeText.trimmingCharacters(in: .whitespacesAndNewlines)
         let clamped = min(max(draftNumber, numberRange.lowerBound), numberRange.upperBound)
 
         guard trimmedNote != live.trimmedNote
             || trimmedCaption != live.trimmedCaption
-            || trimmedBadgeValue != live.trimmedBadgeValue
+            || trimmedBadgeText != live.trimmedBadgeText
             || clamped != live.number
         else { return true }
 
         var edited = live
         edited.note = trimmedNote
         edited.caption = trimmedCaption
-        edited.badgeValue = trimmedBadgeValue
+        edited.badgeText = trimmedBadgeText
         edited.number = clamped
         return store.update(edited)
     }
@@ -490,7 +493,7 @@ struct ClipOptionsSheet: View {
             number: 3,
             note: "手冲壶出水特写，收环境音",
             caption: "第 3 杯还是手冲\n水温 92°C",
-            badgeValue: "1758"
+            badgeText: "热量缺口：1758千卡"
         ),
         onCapture: {},
         onImport: {},

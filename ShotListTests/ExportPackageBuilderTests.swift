@@ -51,10 +51,10 @@ final class ExportPackageBuilderTests: XCTestCase {
         scope: ExportScope = .recordedOnly,
         option: ExportTranscodeOption = .original,
         filmTitle: String = "",
-        style: FilmStyle = FilmStyle()
+        stylePrompt: String = ""
     ) -> ExportRequest {
         ExportRequest(shots: shots, clipsDirectory: clipsDirectory, scope: scope,
-                      option: option, filmTitle: filmTitle, style: style)
+                      option: option, filmTitle: filmTitle, stylePrompt: stylePrompt)
     }
 
     /// 一个带隔离文件系统的临时根目录，用完自动回收
@@ -339,11 +339,12 @@ final class ExportPackageBuilderTests: XCTestCase {
         }
     }
 
-    // MARK: - 剪辑规格
+    // MARK: - 剪辑风格
 
-    /// 剪辑风格要真的进包：`剪辑规格.json` 是剪辑侧的唯一权威来源，
-    /// 文字指南也必须有同一份内容（并且写明冲突时以 JSON 为准）。
-    func testStyleSpecAndGuideCarryTheGlobalStyle() async throws {
+    /// 剪辑风格是用户写的一段话，原样进包：`剪辑风格.md` 是剪辑侧唯一的「怎么剪」依据，
+    /// 指南必须指向它，而固定字段的规格文件不该再出现——留一个空壳会让剪辑侧以为
+    /// 参数在别处，反而不知道该信哪一份。
+    func testStylePromptGoesIntoPackageVerbatim() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -351,85 +352,78 @@ final class ExportPackageBuilderTests: XCTestCase {
         let shot = Shot(number: 1, note: "开场", clips: [ShotClip(fileName: "a.mov", duration: 3)])
         try Data("video".utf8).write(to: root.appendingPathComponent("a.mov"))
 
-        var style = FilmStyle()
-        style.canvas = .vertical1080
-        style.pacing = PacingStyle(targetMinDuration: 10, targetMaxDuration: 12,
-                                   shotMinDuration: 0.5, shotMaxDuration: 2)
-        style.badge.anchor = .center
-        style.badge.offsetYRatio = OverlayAnchor.center.defaultOffsetYRatio
-        style.tailCard.overlay.isEnabled = false
+        let prompt = """
+        竖屏 1080×1920、60fps。
+        节奏偏快，单镜 0.5–2 秒，全片控制在 10–12 秒，不加音乐、留现场声。
+        角标固定在画面正中，白色文字加描边。片尾不加卡。
+        """
 
         _ = try await ExportPackageBuilder.build(
-            request([shot], root, filmTitle: "减脂日记", style: style),
+            request([shot], root, filmTitle: "减脂日记", stylePrompt: prompt),
             fileManager: fm
         )
 
-        let specData = try XCTUnwrap(fm.exportedFiles.first { $0.key.hasSuffix("剪辑规格.json") }.map(\.value))
-        let spec = try XCTUnwrap(
-            try JSONSerialization.jsonObject(with: specData) as? [String: Any]
-        )
-        let film = try XCTUnwrap(spec["film"] as? [String: Any])
-        XCTAssertEqual(film["title"] as? String, "减脂日记")
-        let canvas = try XCTUnwrap(spec["canvas"] as? [String: Any])
-        XCTAssertEqual(canvas["width"] as? Int, 1080)
-        let overlays = try XCTUnwrap(spec["overlays"] as? [String: Any])
-        let badge = try XCTUnwrap(overlays["badge"] as? [String: Any])
-        XCTAssertEqual(badge["offsetYRatio"] as? Double, 0.5)
-        let pacing = try XCTUnwrap(spec["pacing"] as? [String: Any])
-        XCTAssertEqual(pacing["tailCardDuration"] as? Double, 0)
+        XCTAssertFalse(fm.exportedFiles.keys.contains { $0.hasSuffix("剪辑规格.json") })
 
-        let guide = try XCTUnwrap(
-            fm.exportedFiles.first { $0.key.hasSuffix("分镜文字内容指南.md") }
-                .map { String(decoding: $0.value, as: UTF8.self) }
-        )
-        // 规格一节必须是从风格现算出来的，不能写死默认值
-        XCTAssertTrue(guide.contains("## 四、成片规格（全片共用）"))
-        XCTAssertTrue(guide.contains("1080×1920"))
-        XCTAssertTrue(guide.contains("画面正中"))
-        XCTAssertTrue(guide.contains("以 JSON 为准"))
-        // 汇总节顺延为第五节，编号不与新增的规格节撞车
-        XCTAssertTrue(guide.contains("## 五、汇总"))
+        let styleFile = try exportedText(fm, "剪辑风格.md")
+        XCTAssertTrue(styleFile.contains("# 剪辑风格 · 减脂日记"))
+        // 正文一字不改：用户写的就是要执行的
+        XCTAssertTrue(styleFile.contains(prompt))
 
-        let readme = try XCTUnwrap(
-            fm.exportedFiles.first { $0.key.hasSuffix("导出说明.txt") }
-                .map { String(decoding: $0.value, as: UTF8.self) }
-        )
-        XCTAssertTrue(readme.contains("剪辑规格.json"))
+        let guide = try exportedText(fm, "分镜文字内容指南.md")
+        XCTAssertTrue(guide.contains("## 剪辑风格看哪"))
+        XCTAssertTrue(guide.contains("剪辑风格.md"))
+        XCTAssertTrue(guide.contains("本片有那份文件，开始前先读它。"))
+        XCTAssertTrue(guide.contains("剪辑风格：见同目录「剪辑风格.md」"))
+        // 汇总节顺延为第四节，编号不与新增的风格节撞车
+        XCTAssertTrue(guide.contains("## 四、汇总"))
+
+        let readme = try exportedText(fm, "导出说明.txt")
+        XCTAssertTrue(readme.contains("剪辑风格.md"))
+        XCTAssertFalse(readme.contains("剪辑规格.json"))
     }
 
-    /// 关掉的图层在指南表格里要写「关闭」，不能还留着位置和文案来源。
-    func testGuideHidesDisabledOverlays() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let fm = ExportTestFileManager(root: root)
+    /// 没写风格描述就不产出那个文件，指南也必须改口说明「按常规处理」——
+    /// 否则剪辑侧会去找一个不存在的文件，或者以为有要求却没读到。
+    func testEmptyStylePromptProducesNoFileAndSaysSoInGuide() async throws {
         let shot = Shot(number: 1, note: "开场", clips: [ShotClip(fileName: "a.mov", duration: 3)])
-        try Data("video".utf8).write(to: root.appendingPathComponent("a.mov"))
+        let (root, fm) = try singleShotRoot(shot)
 
-        var style = FilmStyle()
-        style.badge.isEnabled = false
-        style.caption.isEnabled = false
+        _ = try await ExportPackageBuilder.build(request([shot], root), fileManager: fm)
 
-        _ = try await ExportPackageBuilder.build(request([shot], root, style: style), fileManager: fm)
+        XCTAssertFalse(fm.exportedFiles.keys.contains { $0.hasSuffix("剪辑风格.md") })
 
-        let guide = try XCTUnwrap(
-            fm.exportedFiles.first { $0.key.hasSuffix("分镜文字内容指南.md") }
-                .map { String(decoding: $0.value, as: UTF8.self) }
+        let guide = try exportedText(fm, "分镜文字内容指南.md")
+        XCTAssertTrue(guide.contains("本片没有那份文件，说明用户没有特别要求，这几项由你按常规判断。"))
+        XCTAssertTrue(guide.contains("剪辑风格：未指定，按常规处理"))
+    }
+
+    /// 只有空白的描述等同于没写。判「有没有那份文件」和「写不写那个文件」
+    /// 必须是同一个值，不能一处按原文判、一处按裁过判。
+    func testWhitespaceOnlyStylePromptCountsAsNothing() async throws {
+        let shot = Shot(number: 1, note: "开场", clips: [ShotClip(fileName: "a.mov", duration: 3)])
+        let (root, fm) = try singleShotRoot(shot)
+
+        _ = try await ExportPackageBuilder.build(
+            request([shot], root, stylePrompt: "  \n\n  "),
+            fileManager: fm
         )
-        XCTAssertTrue(guide.contains("| 常驻角标 | 关闭 |"))
-        XCTAssertTrue(guide.contains("| 分镜字幕 | 关闭 |"))
+
+        XCTAssertFalse(fm.exportedFiles.keys.contains { $0.hasSuffix("剪辑风格.md") })
+        let guide = try exportedText(fm, "分镜文字内容指南.md")
+        XCTAssertTrue(guide.contains("本片没有那份文件"))
     }
 
     // MARK: - 逐镜的屏幕字幕与角标
 
-    /// 画面描述、屏幕字幕、角标数值要分开走到包里：CSV 各占一列，指南各占一行。
+    /// 画面描述、屏幕字幕、角标文字要分开走到包里：CSV 各占一列，指南各占一行。
     /// 三样混在一句话里，正是剪辑侧只能靠「改写」去猜哪句该上屏的根源。
     func testShotCaptionAndBadgeSitApartFromNote() async throws {
         let shot = Shot(
             number: 1,
             note: "早上起床称体重",
             caption: "今日体重114.1KG",
-            badgeValue: "1758",
+            badgeText: "热量缺口：1758千卡",
             clips: [ShotClip(fileName: "a.mov", duration: 3)]
         )
         let (root, fm) = try singleShotRoot(shot)
@@ -437,13 +431,13 @@ final class ExportPackageBuilderTests: XCTestCase {
         _ = try await ExportPackageBuilder.build(request([shot], root), fileManager: fm)
 
         let csv = try exportedText(fm, "分镜清单.csv")
-        XCTAssertTrue(csv.contains("编号,分镜描述,屏幕字幕,角标数值"))
-        XCTAssertTrue(csv.contains("01,早上起床称体重,今日体重114.1KG,1758,"))
+        XCTAssertTrue(csv.contains("编号,分镜描述,屏幕字幕,角标文字"))
+        XCTAssertTrue(csv.contains("01,早上起床称体重,今日体重114.1KG,热量缺口：1758千卡,"))
 
         let guide = try exportedText(fm, "分镜文字内容指南.md")
         XCTAssertTrue(guide.contains("- 分镜描述：早上起床称体重"))
         XCTAssertTrue(guide.contains("- 屏幕字幕：`今日体重114.1KG`"))
-        // 角标那一行给的是**代入模板之后的结果**：剪辑侧不该自己再拼一次字符串
+        // 角标那一行给的就是**最终要显示的字**：剪辑侧不该自己再拼一次字符串
         XCTAssertTrue(guide.contains("- 角标：`热量缺口：1758千卡`"))
     }
 
@@ -480,47 +474,24 @@ final class ExportPackageBuilderTests: XCTestCase {
         XCTAssertFalse(guide.contains("- 屏幕字幕：`器械划船 ⌄ 45KG * 4 * 10\n"))
     }
 
-    /// 角标模板被用户清空时，用数值本身顶上——「确实填了 1758」这个事实要留住，
-    /// 不能因为模板空着就显示成「没有」。
-    func testEmptyBadgeTemplateFallsBackToTheValue() async throws {
+    /// 两行**无条件**出现：图层开关只写在「剪辑风格.md」那段描述里，
+    /// 指南这边没有依据判断「整片出不出这一层」，所以一律给出行、由 `—` 表示这一镜没有。
+    /// 只填了其中一样时，另一样也必须留着那一行——少列一行，
+    /// 剪辑侧就分不清「这片子不出角标」和「这一镜恰好没填角标」。
+    func testPerShotTextLinesAreAlwaysListed() async throws {
         let shot = Shot(
             number: 1,
             note: "开场",
-            badgeValue: "1758",
+            caption: "今日体重114.1KG",
             clips: [ShotClip(fileName: "a.mov", duration: 3)]
         )
         let (root, fm) = try singleShotRoot(shot)
 
-        var style = FilmStyle()
-        style.badge.text = ""
-        _ = try await ExportPackageBuilder.build(request([shot], root, style: style), fileManager: fm)
+        _ = try await ExportPackageBuilder.build(request([shot], root), fileManager: fm)
 
         let guide = try exportedText(fm, "分镜文字内容指南.md")
-        XCTAssertTrue(guide.contains("- 角标：`1758`"))
-    }
-
-    /// 整片关掉的图层不逐镜列。列一行行 `—` 会让剪辑侧以为「这一层存在、
-    /// 只是这些镜头没有」，与「这一层整片都不出」是两件事。
-    func testDisabledLayersLeaveNoPerShotLines() async throws {
-        let shot = Shot(
-            number: 1,
-            note: "开场",
-            caption: "不该出现",
-            badgeValue: "1758",
-            clips: [ShotClip(fileName: "a.mov", duration: 3)]
-        )
-        let (root, fm) = try singleShotRoot(shot)
-
-        var style = FilmStyle()
-        style.caption.isEnabled = false
-        style.badge.isEnabled = false
-        _ = try await ExportPackageBuilder.build(request([shot], root, style: style), fileManager: fm)
-
-        let guide = try exportedText(fm, "分镜文字内容指南.md")
-        XCTAssertFalse(guide.contains("- 屏幕字幕："))
-        XCTAssertFalse(guide.contains("- 角标："))
-        // 字幕关掉了，用户写的那句话不该从别的字段漏出去
-        XCTAssertFalse(guide.contains("不该出现"))
+        XCTAssertTrue(guide.contains("- 屏幕字幕：`今日体重114.1KG`"))
+        XCTAssertTrue(guide.contains("- 角标：—"))
     }
 
     /// 镜头级字段是整镜共用的，同一个镜头拍了几条片段，CSV 的每一行都该带上它，
@@ -530,7 +501,7 @@ final class ExportPackageBuilderTests: XCTestCase {
             number: 1,
             note: "器械划船",
             caption: "器械划船 ⌄ 45KG * 4 * 10",
-            badgeValue: "2318"
+            badgeText: "热量缺口：2318千卡"
         )
         shot.clips = (1...3).map {
             ShotClip(fileName: "take\($0).mov", duration: 2, recordedAt: Date(timeIntervalSince1970: Double($0)))
@@ -549,7 +520,7 @@ final class ExportPackageBuilderTests: XCTestCase {
         XCTAssertEqual(rows.count, 3)
         for row in rows {
             XCTAssertTrue(
-                row.contains(",器械划船,器械划船 ⌄ 45KG * 4 * 10,2318,"),
+                row.contains(",器械划船,器械划船 ⌄ 45KG * 4 * 10,热量缺口：2318千卡,"),
                 "片段行缺少镜头级的字幕或角标：\(row)"
             )
         }

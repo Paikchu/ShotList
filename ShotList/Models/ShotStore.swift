@@ -291,26 +291,21 @@ final class ShotStore: ObservableObject {
         persist()
     }
 
-    /// 改影片的剪辑风格。
+    /// 改影片的剪辑风格描述。
     ///
-    /// 走 `mutateCurrentFilm` 的唯一写入口，因此改风格也算一次用户编辑：
-    /// 影片在库里的排序会往前跳——这符合预期，刚配完风格的那部就是最近动过的。
+    /// 走 `mutateCurrentFilm` 的唯一写入口，因此写风格也算一次用户编辑：
+    /// 影片在库里的排序会往前跳——这符合预期，刚写完要求的那部就是最近动过的。
     ///
-    /// 值没有变化时直接返回，不刷新 `updatedAt`：风格页里拖动滑块会连发很多次，
-    /// 松手回到原值不该算一次编辑。
+    /// 值没有变化时直接返回，不刷新 `updatedAt`：风格页每敲一个字都会发一次，
+    /// 删掉一个字又改回来不该算两次编辑。
     @discardableResult
-    func updateStyle(_ style: FilmStyle) -> Bool {
+    func updateStylePrompt(_ prompt: String) -> Bool {
         guard loadError == nil else { return false }
-        guard let current = currentFilm, current.style != style else { return false }
-        mutateCurrentFilm { $0.style = style }
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let current = currentFilm, current.stylePrompt != trimmed else { return false }
+        mutateCurrentFilm { $0.stylePrompt = trimmed }
         persist()
         return true
-    }
-
-    /// 把一部内置方案套到当前影片上
-    @discardableResult
-    func applyStylePreset(_ preset: FilmStylePreset) -> Bool {
-        updateStyle(preset.style)
     }
 
     /// 删除整部影片（连同它的片段）。
@@ -360,9 +355,9 @@ final class ShotStore: ObservableObject {
     /// 字幕与角标一并接收，是为了让「复制分镜」能把三样文字都带过去
     /// ——只带描述的话，用户写好字幕再复制一下，字幕就悄悄没了。
     @discardableResult
-    func addShot(note: String = "", caption: String = "", badgeValue: String = "") -> Shot? {
+    func addShot(note: String = "", caption: String = "", badgeText: String = "") -> Shot? {
         guard loadError == nil, currentFilmIndex != nil else { return nil }
-        let shot = Shot(number: nextNumber, note: note, caption: caption, badgeValue: badgeValue)
+        let shot = Shot(number: nextNumber, note: note, caption: caption, badgeText: badgeText)
         mutateCurrentFilm { $0.shots.append(shot) }
         normalize()
         return persist() ? shot : nil
@@ -392,11 +387,11 @@ final class ShotStore: ObservableObject {
         below shotID: Shot.ID,
         note: String = "",
         caption: String = "",
-        badgeValue: String = ""
+        badgeText: String = ""
     ) -> Shot? {
         guard loadError == nil else { return nil }
         guard let index = index(of: shotID) else { return nil }
-        let shot = Shot(number: index + 2, note: note, caption: caption, badgeValue: badgeValue)
+        let shot = Shot(number: index + 2, note: note, caption: caption, badgeText: badgeText)
         mutateCurrentFilm { $0.shots.insert(shot, at: index + 1) }
         normalize()
         return persist() ? shot : nil
@@ -414,10 +409,10 @@ final class ShotStore: ObservableObject {
                 below: shot.id,
                 note: shot.note,
                 caption: shot.caption,
-                badgeValue: shot.badgeValue
+                badgeText: shot.badgeText
             )
         }
-        return addShot(note: shot.note, caption: shot.caption, badgeValue: shot.badgeValue)
+        return addShot(note: shot.note, caption: shot.caption, badgeText: shot.badgeText)
     }
 
     // MARK: - 改
