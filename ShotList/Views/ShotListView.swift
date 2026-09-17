@@ -25,6 +25,12 @@ struct ShotListView: View {
     /// `-preselectShot` 只生效一次，用户关掉面板后不再弹回来
     @State private var didApplyPreselect = false
 
+    /// `.largeTitle` 槽里标题要往上抬多少（见 `filmTitleButton`）。
+    ///
+    /// 实测这个偏移随字号变化很小（特大辅助字号下比系统标题高约 2pt），所以用常量而不是
+    /// `@ScaledMetric`——后者会把偏移放得过大。
+    private let filmTitleLift: CGFloat = 4.8
+
     var body: some View {
         NavigationStack {
             Group {
@@ -276,6 +282,20 @@ struct ShotListView: View {
     }
 
     /// 点标题改名。放在 `.largeTitle` 位：系统 `navigationTitle` 在标签根页上是纯文本，点了没反应。
+    ///
+    /// 自己往这个槽里放文字，有两处必须补（iOS 26.5 / iPhone 17 Pro Max 实测）：
+    ///
+    /// 1. **字号**：槽位给内容的高度提案比大标题的行盒矮，`minimumScaleFactor` 会一路压到 0.7 地板，
+    ///    34pt 的字看起来只有 23.8pt（CJK 墨高 59px）——比「历史记录」这类系统标题（86px）小一圈。
+    ///    `.fixedSize(horizontal: false, vertical: true)` 放开高度、只留宽度约束，字才按 34pt 排。
+    /// 2. **纵向**：放开高度后内容盒是 34pt 行盒（含下行空间），槽位把盒心摆在比右上角按钮那行
+    ///    低 14.5px 的位置，标题整体下坠。用「上边距 −L / 下边距 +L」在盒内顶回去：盒高不变，
+    ///    所以导航栏高度不变（改用内边距会撑高 19px，三页内容起始线就对不齐了），
+    ///    点击区也随布局一起上移。
+    ///
+    /// 宽度用 `SLSize.inlineTitleMaxWidth` 封顶：影片名是用户起的，过长时先缩到 0.7 再截断，
+    /// 不会压到右边的「添加」「影片菜单」上。
+    ///
     private var filmTitleButton: some View {
         Button(action: beginTitleEdit) {
             Text(filmTitle)
@@ -283,6 +303,10 @@ struct ShotListView: View {
                 .foregroundStyle(.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
+                .frame(maxWidth: SLSize.inlineTitleMaxWidth, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, -filmTitleLift)
+                .padding(.bottom, filmTitleLift)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

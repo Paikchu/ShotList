@@ -50,6 +50,13 @@ enum SLSize {
     static let timelineNode: CGFloat = 26
     /// 相机录制按钮外径
     static let recordButton: CGFloat = 74
+    /// 分镜页导航栏标题（影片名）的最大宽度。
+    ///
+    /// 影片名是用户自己起的，可能很长，而这一栏右边还有「添加」「影片菜单」两个按钮。
+    /// 上限按最窄的 iPhone 竖屏算：宽度 375pt − 右侧按钮组（约 116pt）− 标题左边距 20pt
+    /// ≈ 230pt。超出时先按 `minimumScaleFactor` 缩到 0.7，再长才截断，不会压到右侧按钮上。
+    /// 「历史记录」「导出」是系统标题，由系统自己排版，用不到这个值。
+    static let inlineTitleMaxWidth: CGFloat = 230
 }
 
 // MARK: - 可复用组件
