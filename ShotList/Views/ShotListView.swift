@@ -2,8 +2,9 @@ import SwiftUI
 
 /// 「分镜」标签页：录入编号 1、2、3… 的镜头，并把每个镜头变成可点击添加视频的模块。
 ///
-/// 导航栏大标题是当前影片的名字（不再写死「分镜」——标签栏已经标明这是哪一页）。
-/// 加号点一下加一个镜头，长按一次加 3 / 5 / 10 个；三点打开影片菜单（切换、改标题、重制）。
+/// 导航栏大标题是当前影片的名字（不再写死「分镜」——标签栏已经标明这是哪一页），
+/// 点标题即可改名。加号点一下加一个镜头，长按一次加 3 / 5 / 10 个；
+/// 三点打开影片菜单（切换、改标题、重制）。
 struct ShotListView: View {
     @EnvironmentObject private var store: ShotStore
 
@@ -14,6 +15,9 @@ struct ShotListView: View {
     @State private var isEditingTitle = false
     @State private var titleDraft = ""
     @State private var isConfirmingRemake = false
+    /// 导航栏标题的可编辑文本。和 `titleDraft`（弹窗）分开，避免一边打字一边改另一边。
+    @State private var navigationTitleText = ""
+    @FocusState private var isRenamingTitle: Bool
 
     /// 刚新增的镜头，用来在列表里把它指出来（卡片 accent 描边 + 导轨上段变色）。
     @State private var flashID: Shot.ID?
@@ -33,12 +37,29 @@ struct ShotListView: View {
                     shotList
                 }
             }
-            .navigationTitle(navigationFilmTitle)
-            .navigationSubtitle(navigationFilmSubtitle)
+            .navigationTitle($navigationTitleText)
             // 标题不单独占一行：inlineLarge 让它和右侧的添加按钮同在一行，
             // 内容起点尽量靠上；「历史」「导出」两页同款，三页起始位置一致
             .toolbarTitleDisplayMode(.inlineLarge)
+            .renameAction($isRenamingTitle)
             .toolbar { toolbarContent }
+            .onAppear { syncNavigationTitle() }
+            .onChange(of: store.currentFilmID) { _, _ in
+                if !isRenamingTitle { syncNavigationTitle() }
+            }
+            .onChange(of: store.currentFilm?.title) { _, _ in
+                if !isRenamingTitle { syncNavigationTitle() }
+            }
+            .onChange(of: isRenamingTitle) { _, editing in
+                if editing {
+                    Haptics.impact(.light)
+                    if store.currentFilm?.hasTitle != true {
+                        navigationTitleText = ""
+                    }
+                } else {
+                    commitNavigationTitle()
+                }
+            }
             .filmActionDialogs(
                 isEditingTitle: $isEditingTitle,
                 titleDraft: $titleDraft,
@@ -257,18 +278,27 @@ struct ShotListView: View {
 
     // MARK: - 导航栏
 
-    /// 导航栏大标题就是当前影片的名字；还没起名时回落为「未命名影片」。
-    private var navigationFilmTitle: String {
-        store.currentFilm?.displayTitle ?? "分镜"
+    /// 还没起名时显示「未命名影片」，点进去再变成空输入。
+    private func syncNavigationTitle() {
+        navigationTitleText = store.currentFilm?.displayTitle ?? "分镜"
     }
 
-    /// 原来影片条上的那行进度，现在贴在大标题下面。
-    private var navigationFilmSubtitle: String {
-        guard let film = store.currentFilm else { return "还没有影片" }
-        guard !film.shots.isEmpty else {
-            return film.hasTitle ? "还没添加镜头" : "给这部影片起个名字"
+    private func commitNavigationTitle() {
+        guard let id = store.currentFilmID else {
+            syncNavigationTitle()
+            return
         }
-        return film.subtitleText(recordedCount: store.recordedCount(of: film))
+        let trimmed = navigationTitleText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let newTitle: String
+        if store.currentFilm?.hasTitle != true, trimmed.isEmpty || trimmed == "未命名影片" {
+            newTitle = ""
+        } else {
+            newTitle = trimmed
+        }
+        let oldTitle = store.currentFilm?.title ?? ""
+        store.renameFilm(id, to: newTitle)
+        if newTitle != oldTitle { Haptics.selection() }
+        syncNavigationTitle()
     }
 
     // MARK: - 工具栏
