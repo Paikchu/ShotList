@@ -55,8 +55,6 @@ struct RootTabView: View {
             Tab("历史", systemImage: "clock.arrow.circlepath", value: TabSelection.history) {
                 HistoryView()
             }
-            // 徽标沿用拍摄提醒的口径：当前影片还欠几个镜头没拍
-            .badge(store.pendingShotCount)
 
             Tab("导出", systemImage: "square.and.arrow.up", value: TabSelection.export) {
                 ExportView()

@@ -159,9 +159,6 @@ final class ShotStore: ObservableObject {
     /// 当前影片的全部片段数量（只数磁盘上真的有文件的那几条）
     var clipCount: Int { availableClipCount }
 
-    /// 当前影片还没拍的镜头数。标签栏徽标走这个口径。
-    var pendingShotCount: Int { max(shots.count - recordedCount, 0) }
-
     /// 当前影片全部片段的总时长（秒，只算磁盘上真的有文件的那几条）
     var totalDuration: TimeInterval { availableDuration }
 

@@ -9,9 +9,10 @@ import SwiftUI
 /// 有拍摄记录时，顶部影片条用来切换影片（不改名）。没有记录时不显示下拉，
 /// 空状态「创建影片」直接跳到分镜页。
 ///
-/// 页面主体是当前影片的拍摄记录：进度环 + 统计块 + 筛选 + 镜头卡片。
+/// 页面主体是当前影片的拍摄记录：进度环（右侧是已拍 / 未拍 / 全部）+ 筛选 + 镜头卡片。
 struct HistoryView: View {
     @EnvironmentObject private var store: ShotStore
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     /// 与根标签页共用，空状态「创建影片」用来跳到分镜页。
     @SceneStorage("root.selectedTab") private var selectedTabRaw: String = RootTabView.TabSelection.shots.rawValue
@@ -20,7 +21,7 @@ struct HistoryView: View {
     /// 默认看「全部」：进历史页就是想看这部影片一共拍了些什么。
     @State private var filter: Filter = .all
 
-    /// 筛选项与统计块一一对应。「已拍 / 未拍」是不重不漏的二分，
+    /// 筛选项与圆盘右侧三项统计一一对应。「已拍 / 未拍」是不重不漏的二分，
     /// 加上「全部」正好覆盖三种看法。
     enum Filter: String, CaseIterable, Identifiable {
         case all, recorded, pending
@@ -48,7 +49,6 @@ struct HistoryView: View {
                             FilmBar(allowsRename: false)
 
                             progressCard
-                            statRow
                             filterPicker
                             shotList
                         }
@@ -92,64 +92,38 @@ struct HistoryView: View {
 
     private var progressCard: some View {
         CardContainer {
-            HStack(spacing: SLSpacing.large) {
-                ProgressRing(progress: store.progress)
-
-                VStack(alignment: .leading, spacing: SLSpacing.small) {
-                    Text("\(store.recordedCount) / \(store.shots.count)")
-                        // bold 统一为 title3（20pt）：与进度环百分比、统计块数字同级同大
-                        .font(.title3.weight(.bold).monospacedDigit())
-                    Text("这部影片已经拍了 \(store.recordedCount) 个镜头")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    footnote
+            if typeSize.isAccessibilitySize {
+                VStack(spacing: SLSpacing.medium) {
+                    ProgressRing(progress: store.progress)
+                    stats
                 }
-                .accessibilityElement(children: .combine)
-
-                Spacer(minLength: 0)
+            } else {
+                HStack(spacing: SLSpacing.medium) {
+                    ProgressRing(progress: store.progress)
+                    stats
+                }
             }
         }
     }
 
-    /// 还有镜头没拍时给「下一个」的指路；都拍完了就给一句收尾。
-    @ViewBuilder
-    private var footnote: some View {
-        if let next = pendingShots.first {
-            Button {
-                filter = .pending
-            } label: {
-                Label(
-                    "还差 \(pendingShots.count) 个镜头 · 下一个：镜头 \(next.paddedNumber)",
-                    systemImage: "arrow.right.circle.fill"
-                )
-                .font(.footnote)
-            }
-            .accessibilityHint("查看这部影片还没拍的全部镜头，包含以前拍过的镜头")
-        } else {
-            Label("这部影片的镜头都拍完了", systemImage: "checkmark.seal.fill")
-                .font(.footnote)
-                .foregroundStyle(.green)
-        }
-    }
-
-    private var statRow: some View {
-        HStack(spacing: SLSpacing.small) {
-            statTile(
+    /// 圆盘右侧三项统计，点按即可筛选。不再单独占一行卡片，避免和进度环说两遍同一件事。
+    private var stats: some View {
+        HStack(spacing: 0) {
+            statColumn(
                 value: recordedShots.count,
                 systemImage: "checkmark.circle.fill",
                 tint: .green,
                 caption: "已拍",
                 filterTarget: .recorded
             )
-            statTile(
+            statColumn(
                 value: pendingShots.count,
                 systemImage: "circle.dashed",
                 tint: .orange,
                 caption: "未拍",
                 filterTarget: .pending
             )
-            statTile(
+            statColumn(
                 value: store.shots.count,
                 systemImage: "film.stack",
                 tint: .indigo,
@@ -159,14 +133,15 @@ struct HistoryView: View {
         }
     }
 
-    private func statTile(
+    private func statColumn(
         value: Int,
         systemImage: String,
         tint: Color,
         caption: String,
         filterTarget: Filter
     ) -> some View {
-        Button {
+        let isSelected = filter == filterTarget
+        return Button {
             filter = filterTarget
             Haptics.selection()
         } label: {
@@ -177,19 +152,19 @@ struct HistoryView: View {
                 Text("\(value)")
                     .font(.title3.weight(.bold).monospacedDigit())
                     .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                 Text(caption)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .font(.caption2.weight(isSelected ? .semibold : .regular))
+                    .foregroundStyle(isSelected ? tint : Color.secondary)
             }
-            .frame(maxWidth: .infinity, minHeight: 92)
-            .background(
-                Color(.secondarySystemGroupedBackground),
-                in: RoundedRectangle(cornerRadius: SLSize.cardCornerRadius, style: .continuous)
-            )
+            .frame(maxWidth: .infinity, minHeight: SLSize.minTouchTarget)
+            .contentShape(Rectangle())
         }
         .buttonStyle(ShotCardButtonStyle())
         .accessibilityLabel("\(caption) \(value) 个镜头")
         .accessibilityHint("点按筛选出这些镜头")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private var filterPicker: some View {
