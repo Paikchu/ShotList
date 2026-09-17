@@ -6,13 +6,15 @@ import SwiftUI
 /// 一部影片可以跨天续拍，「某天拍了什么」退化成影片的一个属性（最后更新时间），
 /// 而「其他天 / 从未拍」这类跨天分类随之失去意义。
 ///
-/// 顶部的影片条（与分镜页同一个组件）就是导航器：菜单里列出拍过的每一部影片，
-/// 用最后更新的日期加标题标识，选中即把它**载入**为当前影片——数据没有被复制
-/// 或移动，只是当前指针换了目标，分镜页于是接着编辑它。
+/// 有拍摄记录时，顶部影片条用来切换影片（不改名）。没有记录时不显示下拉，
+/// 空状态「创建影片」直接跳到分镜页。
 ///
 /// 页面主体是当前影片的拍摄记录：进度环 + 统计块 + 筛选 + 镜头卡片。
 struct HistoryView: View {
     @EnvironmentObject private var store: ShotStore
+
+    /// 与根标签页共用，空状态「创建影片」用来跳到分镜页。
+    @SceneStorage("root.selectedTab") private var selectedTabRaw: String = RootTabView.TabSelection.shots.rawValue
 
     @State private var sheet: ShotSheet?
     /// 默认看「全部」：进历史页就是想看这部影片一共拍了些什么。
@@ -36,25 +38,27 @@ struct HistoryView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: SLSpacing.medium) {
-                    // 影片条常驻：这部影片没有分镜时，用户仍然要能切到别的影片
-                    FilmBar()
+            Group {
+                if store.shots.isEmpty {
+                    emptyState
+                } else {
+                    ScrollView {
+                        VStack(spacing: SLSpacing.medium) {
+                            // 有拍摄记录才显示影片条。历史页不改名，下拉只用来切换影片。
+                            FilmBar(allowsRename: false)
 
-                    if store.shots.isEmpty {
-                        emptyState
-                    } else {
-                        progressCard
-                        statRow
-                        filterPicker
-                        shotList
+                            progressCard
+                            statRow
+                            filterPicker
+                            shotList
+                        }
+                        .padding(.horizontal, SLSpacing.medium)
+                        .padding(.bottom, SLSpacing.large)
                     }
+                    .background(Color(.systemGroupedBackground))
+                    .contentMargins(.top, SLSpacing.pageTopInset, for: .scrollContent)
                 }
-                .padding(.horizontal, SLSpacing.medium)
-                .padding(.bottom, SLSpacing.large)
             }
-            .background(Color(.systemGroupedBackground))
-            .contentMargins(.top, SLSpacing.pageTopInset, for: .scrollContent)
             .navigationTitle("历史记录")
             // 标题与右侧内容同行（inlineLarge），不单独占一行；三页起始位置一致
             .toolbarTitleDisplayMode(.inlineLarge)
@@ -232,10 +236,18 @@ struct HistoryView: View {
 
     private var emptyState: some View {
         ContentUnavailableView {
-            Label("这部影片还没有分镜", systemImage: "clock.arrow.circlepath")
+            Label("还没有历史记录", systemImage: "clock.arrow.circlepath")
         } description: {
-            Text("到「分镜」标签页添加镜头，这里就能回看这部影片拍了些什么。也可以用上方的影片菜单切换或新建影片。")
+            Text("先创建影片并拍下镜头，之后就能在这里回看。")
+        } actions: {
+            Button("创建影片") {
+                Haptics.impact(.light)
+                selectedTabRaw = RootTabView.TabSelection.shots.rawValue
+            }
+            .buttonStyle(.borderedProminent)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(.systemGroupedBackground))
     }
 }
 

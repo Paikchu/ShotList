@@ -11,6 +11,9 @@ import SwiftUI
 struct FilmBar: View {
     @EnvironmentObject private var store: ShotStore
 
+    /// 历史页只用来切换影片，不提供改名。分镜页的三点菜单才改标题。
+    var allowsRename: Bool = true
+
     @State private var isEditingTitle = false
     @State private var titleDraft = ""
     @State private var isConfirmingRemake = false
@@ -18,16 +21,23 @@ struct FilmBar: View {
     var body: some View {
         CardContainer(padding: SLSpacing.small + 2) {
             HStack(spacing: SLSpacing.small) {
-                Button(action: beginTitleEdit) {
+                if allowsRename {
+                    Button(action: beginTitleEdit) {
+                        titleBlock
+                    }
+                    .buttonStyle(ShotCardButtonStyle())
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(accessibilityLabel)
+                    .accessibilityHint("点按修改影片标题")
+                    .accessibilityAddTraits(.isButton)
+                } else {
                     titleBlock
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(accessibilityLabel)
                 }
-                .buttonStyle(ShotCardButtonStyle())
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(accessibilityLabel)
-                .accessibilityHint("点按修改影片标题")
-                .accessibilityAddTraits(.isButton)
 
                 FilmSwitcherMenu(
+                    showsTitleEdit: allowsRename,
                     isEditingTitle: $isEditingTitle,
                     titleDraft: $titleDraft,
                     isConfirmingRemake: $isConfirmingRemake
@@ -108,6 +118,8 @@ struct FilmBar: View {
 struct FilmSwitcherMenu<MenuLabel: View>: View {
     @EnvironmentObject private var store: ShotStore
 
+    var showsTitleEdit: Bool = true
+
     @Binding var isEditingTitle: Bool
     @Binding var titleDraft: String
     @Binding var isConfirmingRemake: Bool
@@ -125,12 +137,14 @@ struct FilmSwitcherMenu<MenuLabel: View>: View {
 
             Divider()
 
-            Button {
-                Haptics.impact(.light)
-                titleDraft = store.currentFilm?.trimmedTitle ?? ""
-                isEditingTitle = true
-            } label: {
-                Label("修改标题", systemImage: "pencil")
+            if showsTitleEdit {
+                Button {
+                    Haptics.impact(.light)
+                    titleDraft = store.currentFilm?.trimmedTitle ?? ""
+                    isEditingTitle = true
+                } label: {
+                    Label("修改标题", systemImage: "pencil")
+                }
             }
 
             Button {
@@ -149,7 +163,11 @@ struct FilmSwitcherMenu<MenuLabel: View>: View {
         // 需求 4 的安全底线：「载入不会删除当前影片」。菜单里加不了常驻小字
         // （原生菜单只有一列可选中的行），这句话就落在无障碍提示里——
         // 屏幕朗读的用户同样需要知道切换是安全的。
-        .accessibilityHint("切换影片、修改标题、重制影片。切换不会删除当前影片，它仍留在影片库里。")
+        .accessibilityHint(
+            showsTitleEdit
+            ? "切换影片、修改标题、重制影片。切换不会删除当前影片，它仍留在影片库里。"
+            : "切换影片、重制影片。切换不会删除当前影片，它仍留在影片库里。"
+        )
     }
 
     /// 选中即载入：把这部影片设为当前影片，分镜页接着编辑它。
