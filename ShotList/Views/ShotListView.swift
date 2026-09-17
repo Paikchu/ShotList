@@ -15,9 +15,6 @@ struct ShotListView: View {
     @State private var isEditingTitle = false
     @State private var titleDraft = ""
     @State private var isConfirmingRemake = false
-    /// 导航栏标题的可编辑文本。和 `titleDraft`（弹窗）分开，避免一边打字一边改另一边。
-    @State private var navigationTitleText = ""
-    @FocusState private var isRenamingTitle: Bool
 
     /// 刚新增的镜头，用来在列表里把它指出来（卡片 accent 描边 + 导轨上段变色）。
     @State private var flashID: Shot.ID?
@@ -37,29 +34,11 @@ struct ShotListView: View {
                     shotList
                 }
             }
-            .navigationTitle($navigationTitleText)
-            // 标题不单独占一行：inlineLarge 让它和右侧的添加按钮同在一行，
-            // 内容起点尽量靠上；「历史」「导出」两页同款，三页起始位置一致
+            // 字符串标题负责左对齐的 inlineLarge 版式；`.largeTitle` 里的 Button
+            // 盖在同一位置上，因为纯 `navigationTitle` 在标签根页上点了没反应。
+            .navigationTitle(filmTitle)
             .toolbarTitleDisplayMode(.inlineLarge)
-            .renameAction($isRenamingTitle)
             .toolbar { toolbarContent }
-            .onAppear { syncNavigationTitle() }
-            .onChange(of: store.currentFilmID) { _, _ in
-                if !isRenamingTitle { syncNavigationTitle() }
-            }
-            .onChange(of: store.currentFilm?.title) { _, _ in
-                if !isRenamingTitle { syncNavigationTitle() }
-            }
-            .onChange(of: isRenamingTitle) { _, editing in
-                if editing {
-                    Haptics.impact(.light)
-                    if store.currentFilm?.hasTitle != true {
-                        navigationTitleText = ""
-                    }
-                } else {
-                    commitNavigationTitle()
-                }
-            }
             .filmActionDialogs(
                 isEditingTitle: $isEditingTitle,
                 titleDraft: $titleDraft,
@@ -278,33 +257,33 @@ struct ShotListView: View {
 
     // MARK: - 导航栏
 
-    /// 还没起名时显示「未命名影片」，点进去再变成空输入。
-    private func syncNavigationTitle() {
-        navigationTitleText = store.currentFilm?.displayTitle ?? "分镜"
+    private var filmTitle: String {
+        store.currentFilm?.displayTitle ?? "分镜"
     }
 
-    private func commitNavigationTitle() {
-        guard let id = store.currentFilmID else {
-            syncNavigationTitle()
-            return
+    /// 点标题改名。放在 `.largeTitle` 位：系统 `navigationTitle` 在标签根页上是纯文本，点了没反应。
+    private var filmTitleButton: some View {
+        Button(action: beginTitleEdit) {
+            Text(filmTitle)
+                .font(.largeTitle.bold())
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .contentShape(Rectangle())
         }
-        let trimmed = navigationTitleText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let newTitle: String
-        if store.currentFilm?.hasTitle != true, trimmed.isEmpty || trimmed == "未命名影片" {
-            newTitle = ""
-        } else {
-            newTitle = trimmed
-        }
-        let oldTitle = store.currentFilm?.title ?? ""
-        store.renameFilm(id, to: newTitle)
-        if newTitle != oldTitle { Haptics.selection() }
-        syncNavigationTitle()
+        .buttonStyle(.plain)
+        .accessibilityHint("点按修改影片标题")
     }
 
     // MARK: - 工具栏
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .largeTitle) {
+            filmTitleButton
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+
         ToolbarItem(placement: .topBarTrailing) {
             Menu {
                 Section("批量录入") {
@@ -345,6 +324,12 @@ struct ShotListView: View {
             get: { pendingDeletion != nil },
             set: { presented in if !presented { pendingDeletion = nil } }
         )
+    }
+
+    private func beginTitleEdit() {
+        Haptics.impact(.light)
+        titleDraft = store.currentFilm?.trimmedTitle ?? ""
+        isEditingTitle = true
     }
 
     private func addShot() {
