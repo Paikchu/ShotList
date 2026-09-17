@@ -1,12 +1,19 @@
 import SwiftUI
 
 /// 「分镜」标签页：录入编号 1、2、3… 的镜头，并把每个镜头变成可点击添加视频的模块。
+///
+/// 导航栏大标题是当前影片的名字（不再写死「分镜」——标签栏已经标明这是哪一页）。
+/// 加号点一下加一个镜头，长按一次加 3 / 5 / 10 个；三点打开影片菜单（切换、改标题、重制）。
 struct ShotListView: View {
     @EnvironmentObject private var store: ShotStore
 
     @State private var sheet: ShotSheet?
     @State private var pendingDeletion: Shot?
     @State private var pendingClear: Shot?
+
+    @State private var isEditingTitle = false
+    @State private var titleDraft = ""
+    @State private var isConfirmingRemake = false
 
     /// 刚新增的镜头，用来在列表里把它指出来（卡片 accent 描边 + 导轨上段变色）。
     @State private var flashID: Shot.ID?
@@ -19,27 +26,24 @@ struct ShotListView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                // 影片条常驻：即使这部影片还没有镜头，用户也要能看见标题、
-                // 能切换影片、能重制。它不随内容有无而消失。
-                FilmBar()
-                    .padding(.horizontal, SLSpacing.medium)
-                    .padding(.top, SLSpacing.pageTopInset)
-                    .padding(.bottom, SLSpacing.small)
-
-                Group {
-                    if store.shots.isEmpty {
-                        emptyState
-                    } else {
-                        shotList
-                    }
+            Group {
+                if store.shots.isEmpty {
+                    emptyState
+                } else {
+                    shotList
                 }
             }
-            .navigationTitle("分镜")
+            .navigationTitle(navigationFilmTitle)
+            .navigationSubtitle(navigationFilmSubtitle)
             // 标题不单独占一行：inlineLarge 让它和右侧的添加按钮同在一行，
             // 内容起点尽量靠上；「历史」「导出」两页同款，三页起始位置一致
             .toolbarTitleDisplayMode(.inlineLarge)
             .toolbar { toolbarContent }
+            .filmActionDialogs(
+                isEditingTitle: $isEditingTitle,
+                titleDraft: $titleDraft,
+                isConfirmingRemake: $isConfirmingRemake
+            )
             .alert("删除这个分镜？", isPresented: deletionBinding, presenting: pendingDeletion) { shot in
                 Button("删除", role: .destructive) { store.delete(shot) }
                 Button("取消", role: .cancel) {}
@@ -247,20 +251,30 @@ struct ShotListView: View {
             Button("添加分镜") { addShot() }
                 .buttonStyle(.borderedProminent)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(.systemGroupedBackground))
+    }
+
+    // MARK: - 导航栏
+
+    /// 导航栏大标题就是当前影片的名字；还没起名时回落为「未命名影片」。
+    private var navigationFilmTitle: String {
+        store.currentFilm?.displayTitle ?? "分镜"
+    }
+
+    /// 原来影片条上的那行进度，现在贴在大标题下面。
+    private var navigationFilmSubtitle: String {
+        guard let film = store.currentFilm else { return "还没有影片" }
+        guard !film.shots.isEmpty else {
+            return film.hasTitle ? "还没添加镜头" : "给这部影片起个名字"
+        }
+        return film.subtitleText(recordedCount: store.recordedCount(of: film))
     }
 
     // MARK: - 工具栏
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        ToolbarItem(placement: .topBarTrailing) {
-            Button {
-                addShot()
-            } label: {
-                Label("添加分镜", systemImage: "plus")
-            }
-        }
-
         ToolbarItem(placement: .topBarTrailing) {
             Menu {
                 Section("批量录入") {
@@ -275,7 +289,21 @@ struct ShotListView: View {
                     }
                 }
             } label: {
-                Label("更多添加方式", systemImage: "ellipsis.circle")
+                Label("添加分镜", systemImage: "plus")
+            } primaryAction: {
+                addShot()
+            }
+            .menuIndicator(.hidden)
+            .accessibilityHint("点按添加一个镜头，长按一次添加多个")
+        }
+
+        ToolbarItem(placement: .topBarTrailing) {
+            FilmSwitcherMenu(
+                isEditingTitle: $isEditingTitle,
+                titleDraft: $titleDraft,
+                isConfirmingRemake: $isConfirmingRemake
+            ) {
+                Label("影片菜单", systemImage: "ellipsis.circle")
             }
         }
     }
