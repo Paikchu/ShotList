@@ -242,16 +242,30 @@ struct ShotListView: View {
 
     // MARK: - 空状态
 
+    /// 还没有镜头时的整页提示。
+    ///
+    /// **必须放在滚动容器里。** 分镜页的标题改名按钮挂在 `largeTitle` 位、占据整条
+    /// 标题行；实测（iOS 26.5 / iPhone 17 Pro Max）当根页内容不是滚动容器时——也就是
+    /// 这里把 `ContentUnavailableView` 直接铺在根上——整条导航栏的触摸会被吃掉：
+    /// 右上角的加号、三点以及标题按钮全都点不动，而且没有任何反馈。列表状态没有这个
+    /// 问题，因为那一份内容本身就是 `List`。去掉标题按钮或把它换成滚动容器后都恢复
+    /// 正常，所以这里与列表状态保持一致（详见 P1-9）。
+    ///
+    /// `containerRelativeFrame` 让它仍然占满一屏（居中版式与改前逐像素一致），
+    /// 内容不满一屏时也不回弹。
     private var emptyState: some View {
-        ContentUnavailableView {
-            Label("这部影片还没有分镜", systemImage: "film.stack")
-        } description: {
-            Text("添加第 1 个镜头，开始搭建这部影片的分镜清单。")
-        } actions: {
-            Button("添加分镜") { addShot() }
-                .buttonStyle(.borderedProminent)
+        ScrollView {
+            ContentUnavailableView {
+                Label("这部影片还没有分镜", systemImage: "film.stack")
+            } description: {
+                Text("添加第 1 个镜头，开始搭建这部影片的分镜清单。")
+            } actions: {
+                Button("添加分镜") { addShot() }
+                    .buttonStyle(.borderedProminent)
+            }
+            .containerRelativeFrame(.vertical)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .scrollBounceBehavior(.basedOnSize)
         .background(Color(.systemGroupedBackground))
     }
 
