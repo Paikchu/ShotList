@@ -7,7 +7,7 @@ import SwiftUI
 /// 三点菜单，所以这条只出现在历史页。
 ///
 /// 下拉不是系统 `Menu`：点箭头后从白条下方浮出一块与它同宽的面板
-/// （影片清单 + 重制入口），悬在下方内容之上、不挤压版式；
+/// （影片清单 + 新建影片入口），悬在下方内容之上、不挤压版式；
 /// 点影片载入、点面板外收起。
 ///
 /// 标题为空时画一道虚线（虚线在这套界面里一直是「这里还没有内容」的意思，
@@ -109,10 +109,10 @@ struct FilmBar: View {
 
     // MARK: - 悬浮面板
 
-    /// 与白条同宽、悬浮在其下方的影片清单：当前影片打勾，末尾是重制入口。
+    /// 与白条同宽、悬浮在其下方的影片清单：当前影片打勾，末尾是新建影片入口。
     ///
     /// 面板挂在 `.overlay` 里，不参与外层 `ScrollView` 的内容高度，超出屏幕的部分既画不出来
-    /// 也滚不到。所以影片多到放不下时，清单在面板内部滚动；重制等操作行固定在清单下面，
+    /// 也滚不到。所以影片多到放不下时，清单在面板内部滚动；新建影片等操作行固定在清单下面，
     /// 不随清单滚走。
     private var dropdownPanel: some View {
         VStack(spacing: 0) {
@@ -128,7 +128,7 @@ struct FilmBar: View {
                     }
                 }
 
-                actionRow(title: "重制", systemImage: "film.stack") {
+                actionRow(title: "新建影片", systemImage: "film.stack") {
                     isConfirmingRemake = true
                 }
             }
@@ -331,13 +331,13 @@ private struct FilmBarHeightKey: PreferenceKey {
     }
 }
 
-/// 切换影片、改标题、重制。
+/// 切换影片、改标题、新建影片。
 ///
 /// 分镜页三点按钮的入口，保留系统 `Menu`（历史页的影片条已换成与白条同宽的
 /// 自展开面板，见 `FilmBar`）。菜单项只放一行「日期 · 标题」，
 /// 当前影片由 `Picker` 自动打勾——不进第二层模态，也不需要自绘列表。
 ///
-/// 改标题弹窗和重制确认挂在外层（`filmActionDialogs`），不挂在 `Menu` 上：
+/// 改标题弹窗和新建影片确认挂在外层（`filmActionDialogs`），不挂在 `Menu` 上：
 /// 菜单一关掉，挂在它身上的弹层有时会一起被收掉。
 struct FilmSwitcherMenu<MenuLabel: View>: View {
     @EnvironmentObject private var store: ShotStore
@@ -375,9 +375,9 @@ struct FilmSwitcherMenu<MenuLabel: View>: View {
                 Haptics.impact(.light)
                 isConfirmingRemake = true
             } label: {
-                // 只写动词。括注「收起当前影片，开一部空白影片」交给确认弹层——
+                // 只写动作。括注「收起当前影片，开一部空白影片」交给确认弹层——
                 // 菜单项是原生单行文本，长句会被截断，而弹层里那句话说全了。
-                Label("重制", systemImage: "film.stack")
+                Label("新建影片", systemImage: "film.stack")
             }
         } label: {
             label()
@@ -389,8 +389,8 @@ struct FilmSwitcherMenu<MenuLabel: View>: View {
         // 屏幕朗读的用户同样需要知道切换是安全的。
         .accessibilityHint(
             showsTitleEdit
-            ? "切换影片、修改标题、重制影片。切换不会删除当前影片，它仍留在影片库里。"
-            : "切换影片、重制影片。切换不会删除当前影片，它仍留在影片库里。"
+            ? "切换影片、修改标题、新建影片。切换不会删除当前影片，它仍留在影片库里。"
+            : "切换影片、新建影片。切换不会删除当前影片，它仍留在影片库里。"
         )
     }
 
@@ -408,7 +408,7 @@ struct FilmSwitcherMenu<MenuLabel: View>: View {
     }
 }
 
-/// 改标题弹窗 + 重制确认。分镜页和历史页共用，避免两套文案。
+/// 改标题弹窗 + 新建影片确认。分镜页和历史页共用，避免两套文案。
 private struct FilmActionDialogs: ViewModifier {
     @EnvironmentObject private var store: ShotStore
 
@@ -425,12 +425,11 @@ private struct FilmActionDialogs: ViewModifier {
             } message: {
                 Text("留空也可以，之后在影片菜单里按日期找得到。")
             }
-            .confirmationDialog(
-                "重制当前影片？",
-                isPresented: $isConfirmingRemake,
-                titleVisibility: .visible
+            .alert(
+                "新建影片？",
+                isPresented: $isConfirmingRemake
             ) {
-                Button("开一部空白影片") { remake() }
+                Button("新建影片") { remake() }
                 Button("取消", role: .cancel) {}
             } message: {
                 Text(remakeMessage)
@@ -448,8 +447,8 @@ private struct FilmActionDialogs: ViewModifier {
         Haptics.success()
     }
 
-    /// 「重制」这个词本身就暗示会丢东西，所以这里必须把「东西去哪了」说清楚。
-    /// 确认按钮同理——写「开一部空白影片」，而不是复述一遍「重制」。
+    /// 「新建影片」不会覆盖当前影片，所以这里必须把「东西去哪了」说清楚。
+    /// 确认按钮同理——写「新建影片」，而不是复述一遍「开一部空白影片」。
     private var remakeMessage: String {
         guard let film = store.currentFilm else { return "现在打开一部空白影片。" }
         let subject = film.hasTitle ? "《\(film.trimmedTitle)》" : "当前影片"

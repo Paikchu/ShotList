@@ -4,7 +4,7 @@ import SwiftUI
 ///
 /// 导航栏大标题是当前影片的名字（不再写死「分镜」——标签栏已经标明这是哪一页），
 /// 点标题即可改名。加号点一下加一个镜头，长按一次加 3 / 5 / 10 个；
-/// 三点打开影片菜单（切换、改标题、重制）。
+/// 三点打开影片菜单（切换、改标题、新建影片）。
 struct ShotListView: View {
     @EnvironmentObject private var store: ShotStore
 
