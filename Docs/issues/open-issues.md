@@ -100,7 +100,7 @@
 
 ### P2-43 · 保存拍摄与相册导入都会对已经属于本应用的临时文件再整份复制一次
 
-**验证状态：** 代码级确认（未实测 APFS 克隆行为）
+**验证状态：** 代码级确认；APFS 克隆行为已隔离实测（见「影响范围与维护成本」），问题本身的复现方法仍未走
 
 **代码位置：** ShotList/Models/ShotStore.swift · `addClip(from:duration:to:)`（第 482–511 行，第 486 行的 `temporaryCopy`）；ShotList/Support/MediaImport.swift · `ImportedMovie.transferRepresentation`（第 27–34 行）、`MediaFileCopy.temporaryCopy`（第 96–110 行）；ShotList/Views/CameraCaptureView.swift · `save(_:continuing:)`（第 534–568 行）
 
@@ -115,7 +115,13 @@
 
 **根因证据：** `ShotStore.swift:485-486` 的注释写的是「大文件复制显式离开主协程，暂存文件不进入素材枚举和孤儿清理范围」——这两个目的在源文件已经是应用私有临时文件时都已经满足（它本来就不在 `clipsDirectory` 里），这一步是冗余的。
 
-**影响范围与维护成本：** 多出一份临时文件、一次可能失败的 I/O（`addClip` 因此多一条失败路径与一条取消路径），在设备空间紧张时会让本可成功的保存失败。**未证实**：APFS 同卷 `copyItem` 是否被系统优化成克隆没有实测，因此这里不声称具体的字节与秒数代价；即便被克隆，多一步可失败的中转仍是可核实的维护成本。定为 P2。
+**影响范围与维护成本：** 多出一份临时文件、一次可能失败的 I/O（`addClip` 因此多一条失败路径与一条取消路径）。定为 P2。
+
+**已实测：`copyItem` 确实被优化成 COW 克隆，这一步不按文件大小收费。** 用 iPhoneSimulator SDK 编译探针、`simctl spawn` 在模拟器里以 iOS Foundation 运行，在真实 app 容器内对一个 600 MB 文件从 `tmp/` 复制到 `Documents/分镜视频/`：`FileManager.copyItem` 耗时 0.000 秒，`volumeAvailableCapacityForImportantUsage` 零变化（`linkItem` 同样结果）。同时确认容器的 `tmp` 与 `Documents` 同卷（`stat -f %d` 相同），这是克隆能成立的前提。
+
+据此修正原先的影响判断：**「设备空间紧张时会让本可成功的保存失败」不成立**——克隆不预先占用空间。剩下的仍然是可核实的成本：多一份临时文件条目、多一条可失败的 I/O 与一条取消路径。**未证实**：真机的数据保护（`NSFileProtection`）分级是否会让跨保护类的 `copyItem` 退化成真实拷贝，模拟器不实现数据保护，测不出来。
+
+**关于建议修复方案的一处约束（新增）：** 直接把源文件 `moveItem` 到目的地会**破坏**「提交 JSON 前源视频可重试」这条约束——`commit()` 失败时的回滚是删掉已暂存的目标文件（`ShotStore.swift` 的 `stagedFileNames` 分支），源文件此时已经被移走，就再也退不回去了。中转的那一份克隆正是这条约束的实现方式。要去掉中转，必须同时把回滚从「删除目标」改成「把目标移回源位置」，这会动到崩溃安全那套机制。修复时二选一：要么按上面的方式改回滚，要么保留克隆（实测代价近似为零）只做清理性重构。
 
 **复现方法**
 
