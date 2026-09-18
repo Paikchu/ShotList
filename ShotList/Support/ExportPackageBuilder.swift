@@ -250,24 +250,26 @@ enum ExportError: LocalizedError {
 /// 更早的片段收进「备用片段」目录，这样导入剪映时主素材顺序干净，
 /// 想换某一条也有备份可选。
 ///
-/// 命名规则：先标分镜号，再标子片段号。拍了多条的镜头，所有片段（含主素材）
-/// 都带「-第几条」后缀，例如 `01-1_…`、`01-2_…`、`01-3_…`（第 3 条是主素材）；
-/// 只拍一条的镜头保持 `01_….mov`，不带后缀。
+/// 命名规则：`影片标题-分镜号[-片段序号]`。同一个分镜拍了好几条、需要二选一时，
+/// 靠片段序号区分（数字越大拍得越晚）：`夏日vlog-01-1.mov`、`夏日vlog-01-2.mov`、
+/// `夏日vlog-01-3.mov`（第 3 条是主素材）；只拍一条的镜头不带片段序号，写作
+/// `夏日vlog-02.mov`。**分镜描述不进文件名**（见 `exportedFileName`）。
 ///
-/// 包内结构（镜头 01 拍了 3 条、镜头 02 拍了 1 条时）：
+/// 包内结构（影片「夏日vlog」，镜头 01 拍了 3 条、镜头 02 拍了 1 条）：
 /// ```
-/// 分镜导出_20260914/
-/// ├── 01-3_无人机缓慢上升.mov   每个镜头的最新一条
-/// ├── 02_街景横摇.mov
+/// 分镜导出_夏日vlog_20260914/
+/// ├── 夏日vlog-01-3.mov   每个镜头的最新一条
+/// ├── 夏日vlog-02.mov
 /// ├── 备用片段/
-/// │   ├── 01-1_无人机缓慢上升.mov  同一个镜头更早拍的
-/// │   └── 01-2_无人机缓慢上升.mov
+/// │   ├── 夏日vlog-01-1.mov  同一个镜头更早拍的
+/// │   └── 夏日vlog-01-2.mov
 /// ├── 分镜清单.csv
 /// ├── 分镜文字内容指南.md        给 AI 剪辑用的分镜文字内容与素材对应表
 /// ├── 剪辑风格.md                这部影片的剪辑要求（用户写的一段话），没有要求时不产出
 /// └── 导出说明.txt
 /// ```
-/// 视频按编号加前缀命名，这样导入剪映后素材顺序与分镜顺序一致。
+/// 同一部影片的每个片段都带同一个片名前缀，后面的分镜号才是排序依据，
+/// 因此导入剪映后素材顺序仍与分镜顺序一致。
 ///
 /// 视频格式默认是**原片**（导入与拍摄都保留原始文件），需要小体积或更好的兼容性时，
 /// 由用户在导出页选一个转码格式（`ExportTranscodeOption`）——打包时逐条重编，
@@ -426,11 +428,12 @@ nonisolated enum ExportPackageBuilder {
                 let takeIndex = offset + 1
                 let isMain = clip.id == latest.id
                 let fileName = Self.exportedFileName(
+                    // 影片标题进文件名：同一个导出包里的片段一眼看出属于哪部片子。
+                    filmTitle: filmTitle,
                     number: shot.number,
                     // 使用快照里的原始条号，缺失素材留下空号，不重编号。
-                    // 只有一条时保持 01_xxx.mov，不加后缀。
+                    // 只有一条时不带片段序号。
                     takeIndex: takeTotal > 1 ? takeIndex : nil,
-                    note: shot.fileNameBase,
                     // 扩展名跟随源文件；选了转码就换成转码后的容器，
                     // 与镜头面板、导出页示例读的是同一处规则。
                     fileExtension: option.exportedFileExtension(
@@ -651,29 +654,32 @@ nonisolated enum ExportPackageBuilder {
         }
     }
 
-    /// 主素材（只拍一条时）的文件名，例如「01_无人机缓慢上升.mov」。
+    /// 导出文件名：`影片标题-分镜号[-片段序号]`，扩展名由调用方给出。
     ///
-    /// 编辑页拿它做实时预览，导出时走的是同一个函数，规则改动两边一起变。
-    /// 扩展名由调用方给出（取自片段本身）：相册导入的 mp4 不该在这里被写成 `.mov`。
-    static func mainFileName(number: Int, note: String, fileExtension: String = "mov") -> String {
-        exportedFileName(number: number, takeIndex: nil, note: note, fileExtension: fileExtension)
-    }
-
-    /// 导出文件名：分镜号在前，子片段号在后。
+    /// 例：`夏日vlog-01.mov`（这个分镜只拍了一条）、`夏日vlog-01-3.mov`（第 3 条）。
     ///
-    /// `takeIndex` 非 nil 时生成「01-3_描述.mov」形式（第 3 条），
-    /// 为 nil 时生成「01_描述.mov」。拍了多条的镜头，主素材与备用片段
-    /// 都带子片段号，保证三条片段在文件名上一眼可辨先后。
+    /// `takeIndex` 非 nil 时带上片段序号——同一个分镜拍了好几条、要在里面挑一条时，
+    /// 靠它区分先后（数字越大拍得越晚）；只拍一条时不带，名字短一截，也不会让人
+    /// 误以为还有别的候选。
+    ///
+    /// **分镜描述不进文件名**：描述是给人读的整句话，进了文件名会又长又容易重名
+    /// （同一部片子里好几个镜头写着差不多的描述），而且改一次描述就换一次文件名。
+    /// 编号才是稳定的身份，描述与编号的对应关系写在包内的「分镜清单.csv」与
+    /// 「分镜文字内容指南.md」里。
+    ///
+    /// 影片标题为空时省掉标题那一节（`01.mov`），不写「未命名影片」：
+    /// 那几个字对辨认没有帮助，只会让每个文件名都长一截。
     static func exportedFileName(
+        filmTitle: String,
         number: Int,
         takeIndex: Int?,
-        note: String,
         fileExtension: String
     ) -> String {
-        if let takeIndex {
-            return String(format: "%02d-%d_%@.%@", number, takeIndex, sanitize(note), fileExtension)
-        }
-        return String(format: "%02d_%@.%@", number, sanitize(note), fileExtension)
+        let numberPart = takeIndex.map { String(format: "%02d-%d", number, $0) }
+            ?? String(format: "%02d", number)
+        let title = sanitizedToken(filmTitle)
+        let base = title.isEmpty ? numberPart : "\(title)-\(numberPart)"
+        return "\(base).\(fileExtension)"
     }
 
     /// 导出命名沿用源文件的扩展名，保证容器与扩展名一致
@@ -682,13 +688,21 @@ nonisolated enum ExportPackageBuilder {
         return ext.isEmpty ? "mov" : ext
     }
 
-    /// 去掉文件名里不安全的字符，同时保留中文
-    private static func sanitize(_ raw: String) -> String {
+    /// 清掉文件名里不安全的字符（中文保留），并裁到 24 字。
+    ///
+    /// 清完什么都不剩时返回空串，由调用方决定怎么兜底：目录名要写「镜头」，
+    /// 影片标题则应该整节省掉——文件名里塞一个占位词只让名字更长。
+    private static func sanitizedToken(_ raw: String) -> String {
         let illegal = CharacterSet(charactersIn: "/\\:*?\"<>|\n\r\t")
         let cleaned = raw.components(separatedBy: illegal).joined(separator: "-")
         let trimmed = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
-        let limited = trimmed.count > 24 ? String(trimmed.prefix(24)) : trimmed
-        return limited.isEmpty ? "镜头" : limited
+        return trimmed.count > 24 ? String(trimmed.prefix(24)) : trimmed
+    }
+
+    /// 目录名用的清理：不允许空串，兜底为「镜头」
+    private static func sanitize(_ raw: String) -> String {
+        let cleaned = sanitizedToken(raw)
+        return cleaned.isEmpty ? "镜头" : cleaned
     }
 
     /// 生成「分镜清单.csv」。
@@ -778,6 +792,12 @@ nonisolated enum ExportPackageBuilder {
         let alternateCount = exported.filter(\.isAlternate).count
         let pendingRows = manifest.filter { $0.exportedPath == nil }
 
+        // 目录说明里的例子由命名函数生成，而不是写死一段文案：
+        // 片名有没有、扩展名换成什么，说明里的例子都跟着实际落盘的名字一起变。
+        let singleName = exportedFileName(filmTitle: filmTitle, number: 1, takeIndex: nil, fileExtension: "mov")
+        let multiName = exportedFileName(filmTitle: filmTitle, number: 1, takeIndex: 3, fileExtension: "mov")
+        let alternateName = exportedFileName(filmTitle: filmTitle, number: 1, takeIndex: 1, fileExtension: "mov")
+
         var text = """
         分镜助手 · 导出说明
         ============================
@@ -791,20 +811,21 @@ nonisolated enum ExportPackageBuilder {
 
         目录内容
         ----------------------------
-        * 01_xxx.mov          每个镜头最新拍的一条（主素材），文件名前缀即镜头编号；
-                              镜头拍了多条时主素材也带子片段号，形如 01-3_xxx.mov（第 3 条）
-        * 备用片段/           同一个镜头更早拍的片段，命名形如 01-1_xxx.mov（第 1 条）
-        * 分镜清单.csv        每个镜头的描述、屏幕字幕、角标文字与每条片段的时长、文件名
-        * 分镜文字内容指南.md  每个镜头的文字内容与视频文件名对照表，供 AI 按分镜处理视频
-        * 剪辑风格.md         这部影片的剪辑要求，用户自己写的一段话，照它剪
-        * 导出说明.txt        本文件
+        * \(singleName)          每个镜头最新拍的一条（主素材），片名后面的数字即镜头编号；
+                                 镜头拍了多条时主素材也带片段序号，形如 \(multiName)（第 3 条）
+        * 备用片段/               同一个镜头更早拍的片段，命名形如 \(alternateName)（第 1 条）
+        * 分镜清单.csv            每个镜头的描述、屏幕字幕、角标文字与每条片段的时长、文件名
+        * 分镜文字内容指南.md      每个镜头的文字内容与视频文件名对照表，供 AI 按分镜处理视频
+        * 剪辑风格.md             这部影片的剪辑要求，用户自己写的一段话，照它剪
+        * 导出说明.txt            本文件
 
         导入剪映
         ----------------------------
         1. 解压本压缩包；
         2. 打开剪映，新建项目后点「导入」，选择根目录下的视频文件；
-        3. 全部文件按编号前缀排序，导入顺序与分镜顺序一致；
-        4. 想换某个镜头的素材，就到「备用片段」目录里挑，不导入时它们不占时间线。
+        3. 全部文件按名字里的镜头编号排序，导入顺序与分镜顺序一致；
+        4. 文件名里不含分镜描述，这一镜拍的是什么，看同目录的「分镜清单.csv」；
+        5. 想换某个镜头的素材，就到「备用片段」目录里挑，不导入时它们不占时间线。
 
         导入电脑
         ----------------------------
@@ -902,6 +923,13 @@ nonisolated enum ExportPackageBuilder {
             ? "本片有那份文件，开始前先读它。"
             : "本片没有那份文件，说明用户没有特别要求，这几项由你按常规判断。"
 
+        // 例子由命名函数生成，而不是写死一段文案：片名有没有、扩展名是什么，
+        // 这份说明里的例子都跟着实际落盘的名字一起变。
+        let singleName = exportedFileName(filmTitle: filmTitle, number: 1, takeIndex: nil, fileExtension: "mov")
+        let takeNames = (1...3)
+            .map { exportedFileName(filmTitle: filmTitle, number: 1, takeIndex: $0, fileExtension: "mov") }
+            .joined(separator: "、")
+
         var text = """
         # 分镜文字内容指南
 
@@ -923,10 +951,15 @@ nonisolated enum ExportPackageBuilder {
 
         ## 一、素材与分镜的对应关系
 
-        - 视频文件名以两位编号开头，编号即分镜编号，与「三、镜头清单」一一对应。
-        - 分镜号后面是子片段号：拍了多条的镜头，文件名形如 01-1_…、01-2_…、01-3_…，
-          数字越大拍得越晚；只拍一条的镜头命名为 01_…，不带子片段号。
-        - 根目录里的视频是每个镜头的主素材（该镜头最新拍的一条，即子片段号最大的那条）。
+        - 视频文件名由「影片标题-分镜号-片段序号」组成，例如 \(singleName)；
+          片名后面的**两位数字就是分镜编号**，与「三、镜头清单」一一对应。
+        - 编号后面还有数字时，那是片段序号：同一个分镜拍了好几条，文件名形如
+          \(takeNames)，数字越大拍得越晚；只拍一条的分镜就是 \(singleName)，
+          不带片段序号。
+        - 文件名里**没有分镜描述**，这是有意的：描述是整句话，进了文件名又长又容易
+          重名，改一个字还会换一次名。这一镜拍的是什么，以本文件与同目录的
+          「分镜清单.csv」为准，不要从文件名去猜。
+        - 根目录里的视频是每个镜头的主素材（该镜头最新拍的一条，即片段序号最大的那条）。
         - 「备用片段」目录里是同一个镜头更早拍的片段，主素材不合适时用它替换；
           不需要替换时不要导入它们。
         - 未拍摄的镜头没有对应文件，按编号跳过，不占时间线。

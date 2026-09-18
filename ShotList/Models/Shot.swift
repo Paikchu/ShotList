@@ -62,7 +62,7 @@ nonisolated extension Array where Element == ShotClip {
 
 /// 一条分镜记录。
 ///
-/// 编号 `number` 决定拍摄顺序，同时也是导出时视频文件名与清单的前缀，
+/// 编号 `number` 决定拍摄顺序，同时也是导出时视频文件名与清单里的分镜号，
 /// 因此在列表内始终按数组顺序连续编号（1、2、3…）。
 ///
 /// 文字分成三样，各管一件事，**互不冒充**：
@@ -224,12 +224,6 @@ nonisolated extension Shot {
     /// 界面上展示的字幕；为空时回退成一行说明，用在面板的预览行上
     var displayCaption: String {
         hasCaption ? trimmedCaption : "未写字幕，成片上不出字"
-    }
-
-    /// 导出文件名用的描述，为空时回退为「镜头」
-    var fileNameBase: String {
-        let trimmed = trimmedNote
-        return trimmed.isEmpty ? "镜头" : trimmed
     }
 
     /// 最近一条的时长文本

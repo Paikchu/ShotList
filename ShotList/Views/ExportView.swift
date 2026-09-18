@@ -301,8 +301,8 @@ struct ExportView: View {
 
     private var contentsSection: some View {
         Section {
-            contentsRow(exampleMainFileName, "每个镜头最新的一条（主素材）；拍了多条时统一带「分镜号-子片段号」，只拍一条时命名为 01_xxx.mov")
-            contentsRow(exampleAlternateFileName, "同一个镜头更早拍的片段，子片段号越小拍得越早")
+            contentsRow(exampleMainFileName, "每个镜头最新的一条（主素材）；同一个分镜拍了好几条时，末尾的片段序号用来区分候选，只拍一条时不带")
+            contentsRow(exampleAlternateFileName, "同一个分镜更早拍的片段，片段序号越小拍得越早")
             contentsRow("分镜清单.csv", "编号、描述、屏幕字幕、角标文字，以及每条片段的时长与文件名")
             contentsRow("分镜文字内容指南.md", "镜头文字内容与素材的对照表，可直接交给 AI 剪辑")
             contentsRow("剪辑风格.md", "你写的那段剪辑要求：怎么剪、要什么观感；没写就不产出这个文件")
@@ -320,27 +320,40 @@ struct ExportView: View {
         store.shots.first { $0.hasClip } ?? store.shots.first
     }
 
-    /// 主素材示例，例如「01-3_无人机缓慢上升.mov」。
+    /// 主素材示例，例如「夏日vlog-01-3.mov」。
     /// 复用导出时的命名函数，页面展示与实际打包结果永远一致：
-    /// 拍了多条的镜头带子片段号（主素材条号按拍摄时间确定），只拍一条时不带。
+    /// 拍了多条的镜头带片段序号（主素材条号按拍摄时间确定），只拍一条时不带。
+    ///
+    /// 一个镜头都没有时给的是纯编号（`01.mov`）——文件名里已经没有描述这一节，
+    /// 不必再编一段假描述当占位。
     private var exampleMainFileName: String {
-        guard let shot = exampleShot else {
-            return "01_镜头描述.\(transcodeOption.exportedFileExtension(sourceExtension: "mov"))"
-        }
+        let takeIndex: Int? = {
+            guard let shot = exampleShot, shot.clipCount > 1 else { return nil }
+            return shot.latestTakeIndex
+        }()
         return ExportPackageBuilder.exportedFileName(
-            number: shot.number,
-            takeIndex: shot.clipCount > 1 ? shot.latestTakeIndex : nil,
-            note: shot.fileNameBase,
-            fileExtension: transcodeOption.exportedFileExtension(sourceExtension: shot.mainFileExtension)
+            filmTitle: filmTitleToken,
+            number: exampleShot?.number ?? 1,
+            takeIndex: takeIndex,
+            fileExtension: transcodeOption.exportedFileExtension(
+                sourceExtension: exampleShot?.mainFileExtension ?? "mov"
+            )
         )
     }
 
-    /// 备用片段示例，例如「备用片段/01-1_….mov」，编号与主素材示例保持一致。
+    /// 备用片段示例，例如「备用片段/夏日vlog-01-1.mov」，编号与主素材示例保持一致。
     private var exampleAlternateFileName: String {
-        let padded = exampleShot?.paddedNumber ?? "01"
-        let ext = (exampleMainFileName as NSString).pathExtension
-        return "备用片段/\(padded)-1_….\(ext)"
+        let name = ExportPackageBuilder.exportedFileName(
+            filmTitle: filmTitleToken,
+            number: exampleShot?.number ?? 1,
+            takeIndex: 1,
+            fileExtension: (exampleMainFileName as NSString).pathExtension
+        )
+        return "备用片段/\(name)"
     }
+
+    /// 当前影片标题在文件名里的那一节；没起片名时为空串，文件名里就不出现标题
+    private var filmTitleToken: String { store.currentFilm?.exportTitleToken ?? "" }
 
     private func contentsRow(_ name: String, _ caption: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {

@@ -101,15 +101,15 @@ final class ExportPackageBuilderTests: XCTestCase {
             let csv = try XCTUnwrap(fm.exportedFiles.first { $0.key.hasSuffix("分镜清单.csv") }.map { String(decoding: $0.value, as: UTF8.self) })
             let guide = try XCTUnwrap(fm.exportedFiles.first { $0.key.hasSuffix("分镜文字内容指南.md") }.map { String(decoding: $0.value, as: UTF8.self) })
             for index in remaining {
-                let name = "01-\(index)_Test.mov"
+                let name = "01-\(index).mov"
                 XCTAssertTrue(fm.exportedFiles.contains { $0.key.hasSuffix(name) && $0.value == Data("video \(index)".utf8) })
                 XCTAssertTrue(csv.contains("第 \(index) 条 / 共 3 条"))
                 XCTAssertTrue(csv.contains(name))
                 XCTAssertTrue(guide.contains(name))
             }
-            XCTAssertTrue(guide.contains("主素材文件：01-\(remaining.max()!)_Test.mov"))
+            XCTAssertTrue(guide.contains("主素材文件：01-\(remaining.max()!).mov"))
             for missing in Set(1...3).subtracting(remaining) {
-                XCTAssertFalse(csv.contains("01-\(missing)_Test.mov"))
+                XCTAssertFalse(csv.contains("01-\(missing).mov"))
             }
         }
     }
@@ -162,11 +162,14 @@ final class ExportPackageBuilderTests: XCTestCase {
         ])
         for clip in shot.clips { try Data(clip.fileName.utf8).write(to: root.appendingPathComponent(clip.fileName)) }
         XCTAssertEqual(shot.latestTakeIndex, 1)
-        let preview = ExportPackageBuilder.exportedFileName(number: shot.number, takeIndex: shot.latestTakeIndex, note: shot.note, fileExtension: shot.mainFileExtension)
-        _ = try await ExportPackageBuilder.build(request([shot], root), fileManager: fm)
+        let preview = ExportPackageBuilder.exportedFileName(
+            filmTitle: "夏日vlog", number: shot.number, takeIndex: shot.latestTakeIndex,
+            fileExtension: shot.mainFileExtension
+        )
+        _ = try await ExportPackageBuilder.build(request([shot], root, filmTitle: "夏日vlog"), fileManager: fm)
         let guide = try XCTUnwrap(fm.exportedFiles.first { $0.key.hasSuffix("分镜文字内容指南.md") }).value
         XCTAssertTrue(String(decoding: guide, as: UTF8.self).contains("主素材文件：\(preview)"))
-        XCTAssertEqual(preview, "01-1_Rollback.mov")
+        XCTAssertEqual(preview, "夏日vlog-01-1.mov")
         XCTAssertNil(Shot(number: 2).latestTakeIndex)
     }
 
@@ -202,6 +205,8 @@ final class ExportPackageBuilderTests: XCTestCase {
             fileManager: fm
         )
         XCTAssertTrue(result.zipURL.lastPathComponent.hasPrefix("分镜导出_夏日vlog_"))
+        // 片名同时进每个视频文件名
+        XCTAssertTrue(fm.exportedFiles.keys.contains { $0.hasSuffix("夏日vlog-01.mov") })
 
         let guide = try XCTUnwrap(
             fm.exportedFiles.first { $0.key.hasSuffix("分镜文字内容指南.md") }
@@ -213,6 +218,11 @@ final class ExportPackageBuilderTests: XCTestCase {
         )
         XCTAssertTrue(guide.contains("影片：夏日vlog"))
         XCTAssertTrue(readme.contains("影片：夏日vlog"))
+        // 包内说明与指南里的示范名也带片名：这两处由命名函数生成，不是写死的文案，
+        // 所以片名一改（或以后命名规则再变）它们跟着一起变，不会留下过期的例子。
+        XCTAssertTrue(readme.contains("夏日vlog-01.mov"))
+        XCTAssertTrue(readme.contains("夏日vlog-01-3.mov"))
+        XCTAssertTrue(guide.contains("夏日vlog-01-1.mov"))
     }
 
     func testUntitledFilmStillNamesItselfInTextFiles() async throws {
@@ -231,6 +241,52 @@ final class ExportPackageBuilderTests: XCTestCase {
                 .map { String(decoding: $0.value, as: UTF8.self) }
         )
         XCTAssertTrue(guide.contains("影片：未命名影片"))
+    }
+
+    // MARK: - 导出文件名
+
+    /// 命名规则：`影片标题-分镜号[-片段序号]`，分镜描述不参与。
+    func testExportedFileNameCarriesFilmTitleShotNumberAndTakeIndex() {
+        XCTAssertEqual(
+            ExportPackageBuilder.exportedFileName(filmTitle: "夏日vlog", number: 1, takeIndex: nil, fileExtension: "mov"),
+            "夏日vlog-01.mov"
+        )
+        // 同一个分镜的多条候选靠片段序号区分
+        XCTAssertEqual(
+            ExportPackageBuilder.exportedFileName(filmTitle: "夏日vlog", number: 2, takeIndex: 3, fileExtension: "mov"),
+            "夏日vlog-02-3.mov"
+        )
+        // 没起片名时整节省掉，不写「未命名影片」这类占位词
+        XCTAssertEqual(
+            ExportPackageBuilder.exportedFileName(filmTitle: "   ", number: 5, takeIndex: nil, fileExtension: "mp4"),
+            "05.mp4"
+        )
+        // 标题里不安全的字符换成短横，中文保留
+        XCTAssertEqual(
+            ExportPackageBuilder.exportedFileName(filmTitle: "a/b:c", number: 1, takeIndex: nil, fileExtension: "mov"),
+            "a-b-c-01.mov"
+        )
+    }
+
+    /// 描述不进包内文件名：它又长又会重名，改一次描述不该换一次文件名。
+    /// 描述与编号的对应关系落在 CSV 与指南里，剪辑侧照样找得到。
+    func testDescriptionStaysOutOfFileNamesAndLivesInTextFiles() async throws {
+        let shot = Shot(
+            number: 1,
+            note: "无人机缓慢上升，配一句开场旁白",
+            clips: [ShotClip(fileName: "a.mov", duration: 3)]
+        )
+        let (root, fm) = try singleShotRoot(shot)
+
+        _ = try await ExportPackageBuilder.build(request([shot], root, filmTitle: "夏日vlog"), fileManager: fm)
+
+        XCTAssertTrue(fm.exportedFiles.keys.contains { $0.hasSuffix("夏日vlog-01.mov") })
+        XCTAssertFalse(fm.exportedFiles.keys.contains { $0.contains("无人机") })
+        XCTAssertTrue(try exportedText(fm, "分镜清单.csv").contains("无人机缓慢上升，配一句开场旁白"))
+        XCTAssertTrue(
+            try exportedText(fm, "分镜文字内容指南.md")
+                .contains("- 分镜描述：无人机缓慢上升，配一句开场旁白")
+        )
     }
 
     // MARK: - 格式选项
@@ -268,17 +324,17 @@ final class ExportPackageBuilderTests: XCTestCase {
         )
 
         XCTAssertEqual(result.clipCount, 1)
-        XCTAssertEqual(recorder.names, ["01_Transcode.mov"])
+        XCTAssertEqual(recorder.names, ["01.mov"])
         XCTAssertEqual(recorder.options, [.compatible])
         // 源文件不再复制，剩下的那一次是系统打 zip 自己做的拷贝
         XCTAssertEqual(fm.copyCount, 1)
-        XCTAssertTrue(fm.exportedFiles.contains { $0.key.hasSuffix("01_Transcode.mov") && $0.value == Data("transcoded".utf8) })
+        XCTAssertTrue(fm.exportedFiles.contains { $0.key.hasSuffix("01.mov") && $0.value == Data("transcoded".utf8) })
 
         let csv = try XCTUnwrap(fm.exportedFiles.first { $0.key.hasSuffix("分镜清单.csv") }.map { String(decoding: $0.value, as: UTF8.self) })
         let readme = try XCTUnwrap(fm.exportedFiles.first { $0.key.hasSuffix("导出说明.txt") }.map { String(decoding: $0.value, as: UTF8.self) })
         let guide = try XCTUnwrap(fm.exportedFiles.first { $0.key.hasSuffix("分镜文字内容指南.md") }.map { String(decoding: $0.value, as: UTF8.self) })
-        XCTAssertTrue(csv.contains("01_Transcode.mov"))
-        XCTAssertTrue(csv.contains("01_Transcode.mp4") == false)
+        XCTAssertTrue(csv.contains("01.mov"))
+        XCTAssertTrue(csv.contains("01.mp4") == false)
         XCTAssertTrue(readme.contains(ExportTranscodeOption.compatible.documentText))
         XCTAssertTrue(guide.contains(ExportTranscodeOption.compatible.documentText))
     }
@@ -302,7 +358,7 @@ final class ExportPackageBuilderTests: XCTestCase {
             XCTFail("应当报转码失败")
         } catch {
             guard case ExportError.transcodeFailed(let fileName, _) = error else { return XCTFail("Expected transcode error: \(error)") }
-            XCTAssertEqual(fileName, "02_Broken.mov")
+            XCTAssertEqual(fileName, "02.mov")
             XCTAssertTrue(error.localizedDescription.contains("改回「原片」"))
         }
         // 失败后工作目录要清干净，不能留下半成品

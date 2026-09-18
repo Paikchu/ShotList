@@ -5,8 +5,8 @@ import SwiftUI
 ///
 /// 描述**就在这一页写**，不再跳一个编辑器页面——点开镜头是为了拍，顺手能改描述才顺手；
 /// 单独开一页的结果是「只想改一句话也要跳两层、还得点保存」。
-/// 同一页上还留着导出文件名预览与编号，这两样原本是编辑器页的职责：
-/// 文件名由描述派生（改描述要能立刻看到会不会太长），编号即位置（改动会移动镜头）。
+/// 同一页上还留着导出文件名预览与编号：文件名由「影片标题 + 镜头编号 + 片段序号」
+/// 决定（不含描述），编号即位置（改动会移动镜头），所以预览跟在「顺序」一节里。
 ///
 /// 文字分成三样，各写各的：**描述**是拍什么（给剪辑侧挑素材用），
 /// **字幕**是成片上显示的那句话，**角标文字**是常驻角标上要显示的整段字
@@ -81,18 +81,21 @@ struct ClipOptionsSheet: View {
         return text.isEmpty ? nil : text
     }
 
-    /// 与导出结果同一套命名规则：边打字边看到最终文件名。
+    /// 与导出结果同一套命名规则：改编号或换影片时，这里实时看到最终文件名。
+    ///
+    /// 文件名是「影片标题-镜头编号[-片段序号]」，**不含描述**：描述是给剪辑侧读的
+    /// 整句话，进文件名会又长又容易重名，所以它在 CSV 与指南里，不在这里。
     ///
     /// 扩展名取自该镜头主素材的真实格式（相册导入的 mp4 导出后仍是 mp4）；
     /// 导出页选了转码格式时换成转码后的容器——预览与打包读的是同一个函数，
     /// 不会出现「预览写 .mp4、导出却是 .mov」。
-    /// 镜头拍了多条时，主素材（按拍摄时间选择的最新一条）带子片段号，
+    /// 镜头拍了多条时，主素材（按拍摄时间选择的最新一条）带片段序号，
     /// 与 `ExportPackageBuilder.build` 的落盘命名保持一致；只拍一条时不带。
     private var previewFileName: String {
         ExportPackageBuilder.exportedFileName(
+            filmTitle: store.currentFilm?.exportTitleToken ?? "",
             number: draftNumber,
             takeIndex: live.clipCount > 1 ? live.latestTakeIndex : nil,
-            note: draftNote,
             fileExtension: transcodeOption.exportedFileExtension(sourceExtension: live.mainFileExtension)
         )
     }
@@ -134,19 +137,6 @@ struct ClipOptionsSheet: View {
                     .lineLimit(3...8)
                     .focused($isNoteFocused)
                     .accessibilityLabel("分镜描述")
-
-                    LabeledContent {
-                        Text(previewFileName)
-                            .font(.footnote.monospaced())
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    } label: {
-                        Label("导出文件名", systemImage: "doc.text")
-                    }
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("导出文件名")
-                    .accessibilityValue(previewFileName)
                 }
 
                 Section {
@@ -209,6 +199,21 @@ struct ClipOptionsSheet: View {
                     }
                     .accessibilityLabel("镜头编号")
                     .accessibilityValue("\(draftNumber)")
+
+                    // 导出文件名跟在编号这一节：名字由「影片标题 + 编号 + 片段序号」组成，
+                    // 描述不再参与。放在「分镜描述」下面会让人以为改描述就能改名。
+                    LabeledContent {
+                        Text(previewFileName)
+                            .font(.footnote.monospaced())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    } label: {
+                        Label("导出文件名", systemImage: "doc.text")
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("导出文件名")
+                    .accessibilityValue(previewFileName)
                 }
 
                 // 片段列表放最后：已拍镜头可能有十几条，摆太靠上会把描述挤到屏幕外，
