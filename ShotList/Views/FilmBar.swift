@@ -3,8 +3,11 @@ import SwiftUI
 /// 影片条：历史页顶部的影片切换器。
 ///
 /// 一行交代三件事——**这是哪部影片**（标题）、**它进行到哪了**（最后更新 + 进度）、
-/// **怎么换一部**（右侧影片菜单）。分镜页把标题放进导航栏、把同一份菜单放进
-/// 三点按钮，所以这条只出现在历史页；切换影片的交互仍然只维护一处。
+/// **怎么换一部**（右侧下拉箭头）。分镜页把标题放进导航栏、把切换影片放进
+/// 三点菜单，所以这条只出现在历史页。
+///
+/// 下拉不是系统 `Menu`：点箭头后这条白卡片本身向下展开成一整块与自身同宽的面板
+/// （影片清单 + 重制入口），点影片载入、点面板外收起。
 ///
 /// 标题为空时画一道虚线（虚线在这套界面里一直是「这里还没有内容」的意思，
 /// 见 `NotePlaceholder`），不写「未命名」之类的字——空着本身就是信息。
@@ -14,47 +17,184 @@ struct FilmBar: View {
     /// 历史页只用来切换影片，不提供改名。分镜页的三点菜单才改标题。
     var allowsRename: Bool = true
 
+    /// 支持调试启动参数 `-expandFilmDropdown`：验收截图直接停在展开态。
+    /// 与 `-preselectTab` / `-preselectFilm` 同一套用法。
+    @State private var isExpanded =
+        ProcessInfo.processInfo.arguments.contains("-expandFilmDropdown")
     @State private var isEditingTitle = false
     @State private var titleDraft = ""
     @State private var isConfirmingRemake = false
 
     var body: some View {
         CardContainer(padding: SLSpacing.small + 2) {
-            HStack(spacing: SLSpacing.small) {
-                if allowsRename {
-                    Button(action: beginTitleEdit) {
-                        titleBlock
-                    }
-                    .buttonStyle(ShotCardButtonStyle())
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(accessibilityLabel)
-                    .accessibilityHint("点按修改影片标题")
-                    .accessibilityAddTraits(.isButton)
-                } else {
-                    titleBlock
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel(accessibilityLabel)
-                }
+            VStack(spacing: 0) {
+                header
 
-                FilmSwitcherMenu(
-                    showsTitleEdit: allowsRename,
-                    isEditingTitle: $isEditingTitle,
-                    titleDraft: $titleDraft,
-                    isConfirmingRemake: $isConfirmingRemake
-                ) {
-                    Image(systemName: "chevron.down")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(Color.primary)
-                        .frame(width: SLSize.minTouchTarget, height: SLSize.minTouchTarget)
-                        .contentShape(Rectangle())
+                if isExpanded {
+                    dropdownList
+                        .transition(.opacity)
                 }
             }
         }
+        // 展开时把整块卡片（连同铺满全屏的点击收起层）抬到后面的进度卡之上。
+        .zIndex(isExpanded ? 1 : 0)
+        .background {
+            if isExpanded {
+                outsideTapCatcher
+            }
+        }
+        .animation(.spring(duration: 0.32), value: isExpanded)
         .filmActionDialogs(
             isEditingTitle: $isEditingTitle,
             titleDraft: $titleDraft,
             isConfirmingRemake: $isConfirmingRemake
         )
+    }
+
+    private var header: some View {
+        HStack(spacing: SLSpacing.small) {
+            if allowsRename {
+                Button(action: beginTitleEdit) {
+                    titleBlock
+                }
+                .buttonStyle(ShotCardButtonStyle())
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(accessibilityLabel)
+                .accessibilityHint("点按修改影片标题")
+                .accessibilityAddTraits(.isButton)
+            } else {
+                titleBlock
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(accessibilityLabel)
+            }
+
+            chevron
+        }
+    }
+
+    private var chevron: some View {
+        Button {
+            Haptics.impact(.light)
+            isExpanded.toggle()
+        } label: {
+            Image(systemName: "chevron.down")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Color.primary)
+                .frame(width: SLSize.minTouchTarget, height: SLSize.minTouchTarget)
+                .contentShape(Rectangle())
+                .rotationEffect(.degrees(isExpanded ? 180 : 0))
+        }
+        .accessibilityLabel(isExpanded ? "收起影片列表" : "展开影片列表")
+        .accessibilityAddTraits(.isButton)
+    }
+
+    // MARK: - 展开面板
+
+    /// 与白条同宽的影片清单：当前影片打勾，末尾是重制入口。
+    private var dropdownList: some View {
+        VStack(spacing: 0) {
+            ForEach(store.sortedFilms) { film in
+                dropdownRow(film)
+            }
+
+            rowDivider
+
+            if allowsRename {
+                actionRow(title: "修改标题", systemImage: "pencil") {
+                    titleDraft = store.currentFilm?.trimmedTitle ?? ""
+                    isEditingTitle = true
+                }
+            }
+
+            actionRow(title: "重制", systemImage: "film.stack") {
+                isConfirmingRemake = true
+            }
+        }
+        .padding(.top, SLSpacing.tiny)
+    }
+
+    private func dropdownRow(_ film: Film) -> some View {
+        let isCurrent = film.id == store.currentFilmID
+        return Button {
+            if !isCurrent, store.loadFilm(film.id) { Haptics.selection() }
+            isExpanded = false
+        } label: {
+            HStack(spacing: SLSpacing.small) {
+                Image(systemName: "checkmark")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .opacity(isCurrent ? 1 : 0)
+                    .frame(width: 20)
+                    .accessibilityHidden(true)
+
+                Text("\(SLDateText.monthDay(film.updatedAt)) · \(film.displayTitle)")
+                    .font(.body)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(minHeight: SLSize.minTouchTarget)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isCurrent ? [.isSelected] : [])
+    }
+
+    private func actionRow(
+        title: String,
+        systemImage: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button {
+            Haptics.impact(.light)
+            isExpanded = false
+            action()
+        } label: {
+            HStack(spacing: SLSpacing.small) {
+                Image(systemName: systemImage)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.primary)
+                    .frame(width: 20)
+                    .accessibilityHidden(true)
+
+                Text(title)
+                    .font(.body)
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(minHeight: SLSize.minTouchTarget)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var rowDivider: some View {
+        Divider()
+            .padding(.vertical, SLSpacing.tiny)
+            .accessibilityHidden(true)
+    }
+
+    /// 铺满整屏的透明点击层：面板外任意位置点一下就收起。
+    ///
+    /// 放在 `.background` 里（卡片内容仍在它上面，行照常可点），靠 `zIndex`
+    /// 抬到同屏后面的卡片之上——否则后面那些不透明的卡片会把触摸截走。
+    private var outsideTapCatcher: some View {
+        GeometryReader { proxy in
+            let frame = proxy.frame(in: .global)
+            Color.clear
+                .contentShape(Rectangle())
+                .frame(
+                    width: UIScreen.main.bounds.width,
+                    height: UIScreen.main.bounds.height
+                )
+                .position(
+                    x: UIScreen.main.bounds.width / 2 - frame.minX,
+                    y: UIScreen.main.bounds.height / 2 - frame.minY
+                )
+                .onTapGesture { isExpanded = false }
+        }
+        .accessibilityHidden(true)
     }
 
     // MARK: - 标题区
@@ -110,8 +250,9 @@ struct FilmBar: View {
 
 /// 切换影片、改标题、重制。
 ///
-/// 分镜页用三点按钮当入口，历史页的影片条用下拉箭头当入口。菜单项只放一行
-/// 「日期 · 标题」，当前影片由 `Picker` 自动打勾——不进第二层模态，也不需要自绘列表。
+/// 分镜页三点按钮的入口，保留系统 `Menu`（历史页的影片条已换成与白条同宽的
+/// 自展开面板，见 `FilmBar`）。菜单项只放一行「日期 · 标题」，
+/// 当前影片由 `Picker` 自动打勾——不进第二层模态，也不需要自绘列表。
 ///
 /// 改标题弹窗和重制确认挂在外层（`filmActionDialogs`），不挂在 `Menu` 上：
 /// 菜单一关掉，挂在它身上的弹层有时会一起被收掉。
