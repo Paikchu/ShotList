@@ -177,7 +177,8 @@ nonisolated extension Shot {
 // MARK: - 派生属性
 
 nonisolated extension Shot {
-    /// 这个镜头是否至少拍过一条
+    /// 这个镜头**记录里**是否至少有一条片段（只看 JSON，不问磁盘）。
+    /// 界面上「已拍 / 未拍」的判断用 `ShotStore.isRecorded(_:)`。
     var hasClip: Bool { !clips.isEmpty }
 
     /// 拍了几条

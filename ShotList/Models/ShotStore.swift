@@ -156,6 +156,22 @@ final class ShotStore: ObservableObject {
     /// 当前影片已经拍过的镜头数量（以磁盘上真的有文件为准）
     var recordedCount: Int { availableShotCount }
 
+    /// 某个分镜是否「已拍」：至少有一条片段的文件确实在磁盘上。
+    ///
+    /// 全应用「已拍 / 未拍」只认这一个判据：每部影片的统计（`applySnapshot`）、
+    /// 进度环、历史页与导出页的镜头列表都读它，导出包筛镜头也是同一条规则。
+    /// 不要用 `Shot.hasClip`——它只看 JSON 里有没有记录，一旦「记录还在、文件不在磁盘上」
+    /// （目录枚举失败时记录原样保留、写盘失败回滚旧记录），就会和进度环对不上。
+    func isRecorded(_ shot: Shot) -> Bool {
+        shot.clips.contains { existingClipFileNames.contains($0.fileName) }
+    }
+
+    /// 当前影片里已拍的镜头（磁盘口径）
+    var recordedShots: [Shot] { shots.filter(isRecorded) }
+
+    /// 当前影片里未拍的镜头（磁盘口径）。与 `recordedShots` 不重不漏，合起来就是 `shots`
+    var pendingShots: [Shot] { shots.filter { !isRecorded($0) } }
+
     /// 当前影片的全部片段数量（只数磁盘上真的有文件的那几条）
     var clipCount: Int { availableClipCount }
 
@@ -634,7 +650,6 @@ final class ShotStore: ObservableObject {
         for film in films {
             var stats = FilmStats()
             for shot in film.shots {
-                var hasMaterial = false
                 for clip in shot.clips {
                     // 只认磁盘上真的有的文件：不在的不计段数、不计时长、不计空间。
                     // 走到这里时 `shot.clips` 通常已经与磁盘对齐（见
@@ -646,9 +661,9 @@ final class ShotStore: ObservableObject {
                     stats.clipCount += 1
                     stats.duration += clip.duration ?? 0
                     stats.bytes += bytes
-                    hasMaterial = true
                 }
-                if hasMaterial { stats.shotCount += 1 }
+                // 与界面列表共用 `isRecorded`；它读的 `existingClipFileNames` 在上面已经更新过
+                if isRecorded(shot) { stats.shotCount += 1 }
             }
             statsByFilm[film.id] = stats
         }

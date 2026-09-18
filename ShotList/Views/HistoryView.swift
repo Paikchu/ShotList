@@ -68,15 +68,12 @@ struct HistoryView: View {
 
     // MARK: - 数据
 
-    private var recordedShots: [Shot] { store.shots.filter(\.hasClip) }
-
-    private var pendingShots: [Shot] { store.shots.filter { !$0.hasClip } }
-
+    // 「已拍 / 未拍」读 `store` 的磁盘口径，与进度环、影片条的「N/M 已拍」是同一个判据
     private var filteredShots: [Shot] {
         switch filter {
         case .all: return store.shots
-        case .recorded: return recordedShots
-        case .pending: return pendingShots
+        case .recorded: return store.recordedShots
+        case .pending: return store.pendingShots
         }
     }
 
@@ -110,14 +107,14 @@ struct HistoryView: View {
     private var stats: some View {
         HStack(spacing: 0) {
             statColumn(
-                value: recordedShots.count,
+                value: store.recordedShots.count,
                 systemImage: "checkmark.circle.fill",
                 tint: .green,
                 caption: "已拍",
                 filterTarget: .recorded
             )
             statColumn(
-                value: pendingShots.count,
+                value: store.pendingShots.count,
                 systemImage: "circle.dashed",
                 tint: .orange,
                 caption: "未拍",
