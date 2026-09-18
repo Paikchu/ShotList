@@ -197,6 +197,30 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
         }
     }
 
+    /// 把音频会话切到回看用的播放模式，切完再返回。
+    ///
+    /// `setCategory` + `setActive` 是**同步**的系统调用，要等音频路由真的切过去才返回，
+    /// 耗时取决于当前的输出设备（外放、蓝牙耳机差别很大）。它原先写在
+    /// 「停止录制 → 进回看」那一步的主线程上，这段时间里界面画不了东西。
+    ///
+    /// 挪到 `sessionQueue` 而不是随便一条后台队列，是因为切回录制模式的
+    /// `resumeSession()` 也走它：两个方向的切换排在同一条串行队列上按入队顺序执行，
+    /// 「回看 → 重拍」不会出现播放模式后到、把刚设好的录制模式盖掉，
+    /// 结果回到取景却录不到声音。
+    ///
+    /// 调用方要自己处理「等这一下的工夫里页面已经不在了」：这里只保证切换完成，
+    /// 不关心谁还在等。
+    func activatePlaybackAudioSession() async {
+        await withCheckedContinuation { continuation in
+            sessionQueue.async {
+                let audioSession = AVAudioSession.sharedInstance()
+                try? audioSession.setCategory(.playback, mode: .moviePlayback)
+                try? audioSession.setActive(true)
+                continuation.resume()
+            }
+        }
+    }
+
     /// 关闭相机并收尾。
     ///
     /// 标 `@MainActor` 是因为它要碰计时器与 `recordingStart` 这两个主线程资源；

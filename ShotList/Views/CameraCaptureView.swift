@@ -28,6 +28,11 @@ struct CameraCaptureView: View {
 
     @State private var reviewURL: URL?
     @State private var reviewPlayer: AVPlayer?
+    /// 回看期间在后台切音频、解析时长的两条在途任务。
+    ///
+    /// 都要能被「重拍」和关页面取消：切完音频才开始播，而页面可能在这中间就没了。
+    @State private var playbackTask: Task<Void, Never>?
+    @State private var durationTask: Task<TimeInterval?, Never>?
     @State private var isSaving = false
     @State private var isVisible = false
     @State private var errorMessage: String?
@@ -77,6 +82,7 @@ struct CameraCaptureView: View {
         .onDisappear {
             isVisible = false
             reticleTask?.cancel()
+            cancelReviewTasks()
             // `stop()` 会摘掉录制回调：正在录的那一条就此作废，收尾回调会把
             // 临时文件删掉，不会再回到这个已经消失的页面上执行「进入回看」
             // （那会把音频会话切成播放模式，而归还焦点的代码早就跑完了）。
@@ -502,22 +508,58 @@ struct CameraCaptureView: View {
         }
     }
 
+    /// 进入回看。
+    ///
+    /// 这一步刻意不做任何会阻塞主线程的事。切音频会话是同步的系统调用，原先就写在这里，
+    /// 于是它有多慢、用户在「停止」之后就要多等多久；现在先把回看界面和播放器立起来，
+    /// 音频交给 `CameraRecorder.activatePlaybackAudioSession` 在后台切，切完再开始播。
+    /// 画面的第一帧不用等音频。
+    ///
+    /// 时长解析也提前到这里：用户正在看回放，这段时间足够把它算完，
+    /// 点「保存」时就不必再等一次 `AVURLAsset` 加载。
+    ///
+    /// 切音频与暂停会话的先后顺序保持不变（音频在前）：两件事都排在 recorder 的
+    /// 同一条串行队列上，顺序由这里的调用顺序决定。
     private func enterReview(_ url: URL) {
-        recorder.pauseSession()
-
-        let audioSession = AVAudioSession.sharedInstance()
-        try? audioSession.setCategory(.playback, mode: .moviePlayback)
-        try? audioSession.setActive(true)
+        cancelReviewTasks()
 
         reviewURL = url
         let player = AVPlayer(url: url)
         reviewPlayer = player
-        player.play()
         Haptics.success()
+
+        durationTask = Task { await VideoMetadata.duration(of: url) }
+        playbackTask = Task {
+            await recorder.activatePlaybackAudioSession()
+            // 切音频的这段时间里可能已经重拍或把页面关掉了，那时这个播放器已经不是当前这一个
+            guard !Task.isCancelled, reviewPlayer === player else { return }
+            player.play()
+        }
+
+        recorder.pauseSession()
+    }
+
+    /// 取消回看期间的在途任务。重拍、关页面、以及进入下一次回看之前都要收干净。
+    private func cancelReviewTasks() {
+        playbackTask?.cancel()
+        playbackTask = nil
+        durationTask?.cancel()
+        durationTask = nil
+    }
+
+    /// 取回看这一条的时长。
+    ///
+    /// 正常走 `enterReview` 里那条已经跑完（或快跑完）的后台任务；任务被取消过时
+    /// 当场再解析一次，保证时长不会因为这条优化而丢掉。
+    private func resolvedDuration(of url: URL) async -> TimeInterval? {
+        guard let task = durationTask else { return await VideoMetadata.duration(of: url) }
+        durationTask = nil
+        return await task.value
     }
 
     private func retake() {
         guard !isSaving else { return }
+        cancelReviewTasks()
         reviewPlayer?.pause()
         reviewPlayer = nil
         if let reviewURL {
@@ -543,7 +585,7 @@ struct CameraCaptureView: View {
                     reviewURL = nil
                 }
             }
-            let duration = await VideoMetadata.duration(of: url)
+            let duration = await resolvedDuration(of: url)
             do {
                 try await store.addClip(from: url, duration: duration, to: shot.id)
                 reviewPlayer?.pause()
