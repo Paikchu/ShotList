@@ -40,7 +40,12 @@ struct ClipOptionsSheet: View {
     @State private var draftNote: String
     @State private var draftCaption: String
     @State private var draftBadgeText: String
-    @State private var draftNumber: Int
+    /// 用户在这一页拨过的编号；没拨过就是 `nil`，编号一律取仓库当前值。
+    ///
+    /// 不能像三样文字那样在打开时抄一份：这一页开着期间，这个镜头的编号可能被别的路径改掉
+    /// （删除补偿找回镜头时会整库重编号）。过期的副本一旦跟着别的字段一起落盘，
+    /// 就会把镜头按旧编号挪回原位，用户明明只改了几个字。
+    @State private var numberEdit: Int?
     @State private var draftSaveTask: Task<Void, Never>?
     @FocusState private var isNoteFocused: Bool
 
@@ -59,10 +64,16 @@ struct ClipOptionsSheet: View {
         _draftNote = State(initialValue: shot.note)
         _draftCaption = State(initialValue: shot.caption)
         _draftBadgeText = State(initialValue: shot.badgeText)
-        _draftNumber = State(initialValue: shot.number)
     }
 
     private var live: Shot { store.shot(withID: shot.id) ?? shot }
+
+    /// Stepper 与文件名预览显示的编号：拨过就用拨的，否则跟着仓库。
+    private var displayedNumber: Int { numberEdit ?? live.number }
+
+    private var numberBinding: Binding<Int> {
+        Binding(get: { displayedNumber }, set: { numberEdit = $0 })
+    }
 
     private var numberRange: ClosedRange<Int> {
         1...max(1, store.shots.count)
@@ -94,7 +105,7 @@ struct ClipOptionsSheet: View {
     private var previewFileName: String {
         ExportPackageBuilder.exportedFileName(
             filmTitle: store.currentFilm?.exportTitleToken ?? "",
-            number: draftNumber,
+            number: displayedNumber,
             takeIndex: live.clipCount > 1 ? live.latestTakeIndex : nil,
             fileExtension: transcodeOption.exportedFileExtension(sourceExtension: live.mainFileExtension)
         )
@@ -188,17 +199,17 @@ struct ClipOptionsSheet: View {
                 }
 
                 Section("顺序") {
-                    Stepper(value: $draftNumber, in: numberRange) {
+                    Stepper(value: numberBinding, in: numberRange) {
                         HStack {
                             Text("镜头编号")
                             Spacer()
-                            Text("\(draftNumber)")
+                            Text("\(displayedNumber)")
                                 .font(.body.monospacedDigit())
                                 .foregroundStyle(.secondary)
                         }
                     }
                     .accessibilityLabel("镜头编号")
-                    .accessibilityValue("\(draftNumber)")
+                    .accessibilityValue("\(displayedNumber)")
 
                     // 导出文件名跟在编号这一节：名字由「影片标题 + 编号 + 片段序号」组成，
                     // 描述不再参与。放在「分镜描述」下面会让人以为改描述就能改名。
@@ -262,7 +273,10 @@ struct ClipOptionsSheet: View {
         .onChange(of: draftNote) { _, _ in scheduleDraftSave() }
         .onChange(of: draftCaption) { _, _ in scheduleDraftSave() }
         .onChange(of: draftBadgeText) { _, _ in scheduleDraftSave() }
-        .onChange(of: draftNumber) { _, _ in scheduleDraftSave() }
+        .onChange(of: numberEdit) { _, edit in
+            // 落盘成功后 `numberEdit` 会被清回 nil，那不是用户操作，不必再排一次写盘
+            if edit != nil { scheduleDraftSave() }
+        }
         .task {
             // 等弹层落位再把光标放进去，否则键盘会和转场打架
             guard autoFocusNote else { return }
@@ -324,7 +338,8 @@ struct ClipOptionsSheet: View {
     }
 
     /// 把草稿写回仓库。三样文字都裁掉首尾空白（否则行尾多一个回车就会被当成
-    /// 「写过字幕」），编号夹进有效区间。
+    /// 「写过字幕」），拨过的编号夹进有效区间；没拨过编号就沿用仓库当前值，
+    /// 不会把它当成一次移动。
     ///
     /// 与仓库当前值一致时直接返回，所以「同时打开又关掉」不会产生一次多余的写盘。
     @discardableResult
@@ -335,20 +350,26 @@ struct ClipOptionsSheet: View {
         let trimmedNote = draftNote.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedCaption = draftCaption.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedBadgeText = draftBadgeText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let clamped = min(max(draftNumber, numberRange.lowerBound), numberRange.upperBound)
+        let number = numberEdit.map { min(max($0, numberRange.lowerBound), numberRange.upperBound) } ?? live.number
 
         guard trimmedNote != live.trimmedNote
             || trimmedCaption != live.trimmedCaption
             || trimmedBadgeText != live.trimmedBadgeText
-            || clamped != live.number
-        else { return true }
+            || number != live.number
+        else {
+            // 拨过又拨回去：与仓库一致，不必再保留这份编辑，否则之后仓库编号变了仍会被它盖回
+            numberEdit = nil
+            return true
+        }
 
         var edited = live
         edited.note = trimmedNote
         edited.caption = trimmedCaption
         edited.badgeText = trimmedBadgeText
-        edited.number = clamped
-        return store.update(edited)
+        edited.number = number
+        guard store.update(edited) else { return false }
+        numberEdit = nil
+        return true
     }
 
     // MARK: - 头部
