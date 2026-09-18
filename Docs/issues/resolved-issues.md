@@ -31,6 +31,7 @@
 | ☑ | P2-37 | [缩放上限被硬编码为 8×，不随设备与格式变化](#p2-37) |
 | ☑ | P2-38 | [有镜头的列表状态下点导航栏标题无反应，改名弹窗不出现](#p2-38) |
 | ☑ | P2-39 | [镜头面板把没改过的编号也当成一次编辑写回，面板打开期间编号被重排后，只改描述也会把镜头挪回旧位置](#p2-39) |
+| ☑ | P2-41 | [历史页进度环按磁盘口径、右侧三项统计按记录口径，同一屏两个数字会互相矛盾](#p2-41) |
 | ☑ | P2-47 | [影片条的点击收起层用已在 iOS 26 废弃的 UIScreen.main 取屏幕尺寸，是全项目仅有的编译告警](#p2-47) |
 
 <a id="p0-4"></a>
@@ -817,6 +818,59 @@
 **未验证：** 真机；Stepper 与文字落在同一个 400 毫秒窗口内一起写盘（工具点击间隔超过 400 毫秒，代码上是同一个 `edited`）；400 毫秒内把 Stepper 拨过又拨回原值那条分支（仅代码级）；面板开着时由真实的「文件删失败」自然触发补偿（探针执行的是同一段恢复代码，不是自然故障）。
 
 **修复 commit：** 51eb320e54e75d63ec3ba325da5050c38373e09b
+
+<a id="p2-41"></a>
+
+### P2-41 · 历史页进度环按磁盘口径、右侧三项统计按记录口径，同一屏两个数字会互相矛盾
+
+**验证状态：** 模拟器实测（隔离模拟器 + 演示数据 + 目录权限故障注入；未在真机验证）
+
+**代码位置：** ShotList/Views/HistoryView.swift · `progressCard`、`recordedShots` / `pendingShots`、`stats`；ShotList/Views/ExportView.swift · `recordedShots`、`exampleShot`；ShotList/Models/ShotStore.swift · `progress`、`availableShotCount`、`applySnapshot`、新增的 `isRecorded(_:)`（行号为修复前，已省略；修复后历史页与导出页直接读 `store.recordedShots` / `store.pendingShots`）
+
+**问题详情**
+
+**预期行为：** 同一屏上的「完成百分比」与「已拍 / 未拍 / 全部」三个数字出自同一个口径，不会互相矛盾。
+
+**实际行为：** `ProgressRing(progress: store.progress)` 的分子是 `availableShotCount`——`applySnapshot` 按**磁盘上真的有文件**算出来的；而右侧 `statColumn` 用的是 `store.shots.filter(\.hasClip).count`——JSON 记录口径。两者在「记录还在、文件已经不在磁盘上」时会给出不同的数字，例如进度环显示 40%（2/5），右边「已拍」却写 3。
+
+**根因证据：**
+
+- `HistoryView.swift:71` `store.shots.filter(\.hasClip)`，`Shot.hasClip` 只看 `clips.isEmpty`（Shot.swift:181），不问磁盘；
+- `ShotStore.swift:200-202` `progress` 用 `recordedCount`，即 `availableShotCount`；
+- `ShotStore.swift:143-151` 的注释已经写明设立磁盘口径就是为了避免这类「界面显示已拍、实际给不出文件」，历史页这一半没有跟上。
+
+**影响范围：** `reconcileClipsWithDisk` 会在每次切回前台时把失效记录清掉，所以两个数字对不上的窗口很窄——需要素材在应用位于前台期间失效、或目录枚举失败（`snapshot.isComplete == false`，此时 `applySnapshot` 保留旧统计而记录不变）。定级依据：显示不一致、不影响数据，且窗口窄，定为 P2。同一口径问题也出现在导出页的「单独分享某个镜头」一节（ExportView.swift:25 `recordedShots` 同样用 `hasClip`），属同一根因，一并在此登记，不另开编号。
+
+**复现方法**
+
+1. 隔离测试数据：准备一部含 5 个镜头、其中 3 个已拍的测试影片（使用隔离的 Documents 目录，不要动用户真实素材）。
+2. 代码级验证：在 `HistoryView.recordedShots` 与 `ShotStore.progress` 各加一条探针，打印两个口径的计数。
+3. 让 `diskSnapshot()` 返回 `.unreadable`（临时把 `clipsDirectory` 指向一个不可读路径），使 `applySnapshot` 保留旧统计、`reconcileClipsWithDisk` 不动记录。
+4. 进入历史页，观察进度环百分比与右侧「已拍」数字。
+5. 预期正确结果：两处读同一个口径，数字一致；实际会出现进度环与「已拍」不一致。
+6. 验证完成后移除探针与隔离数据。
+
+**修复状态：** 已修复
+
+**修复说明：** 根因是「已拍」有两套判据。进度环、影片条的「N/M 已拍」、导出页概览读的是 `applySnapshot` 按磁盘枚举结果算出的缓存；历史页右侧三项统计与筛选列表、导出页「单独分享某个镜头」读的是 `Shot.hasClip`，只看 JSON 记录，不问磁盘。
+
+修复在 `ShotStore` 里只留一个判据 `isRecorded(_:)`：至少有一条片段的文件名在最近一次成功枚举的磁盘文件名集合里（与导出包筛镜头同一条规则），并据此给出 `recordedShots` / `pendingShots`。`applySnapshot` 里每部影片的「已拍镜头数」也改调同一个函数，不再单独维护一份；历史页统计与筛选、导出页「单独分享」与示例文件名取镜头（`exampleShot`）都改读它。已拍 + 未拍恒等于全部。`Shot.hasClip` 保留——删除确认文案、镜头面板里确实要按记录判断的地方仍用它——注释里注明它只看记录。
+
+**未改：** 分镜页时间线节点（`ShotListView.swift` 的 `NumberBadge(isRecorded: shot.hasClip)`）仍按记录判断。故障注入下它显示「已拍」而缩略图为空（模拟器实测，基线截图），但该页没有计数与之并列，不构成本条的「同屏两个数字」，不在此改。
+
+**验证结果：** iOS 26.5 / iPhone 17 模拟器（为本次验证新建的独立设备，不影响其他会话的模拟器）；演示数据由 `Tools/seed-simulator.py` 灌入（「夏日vlog」5 个镜头、3 个已拍）；页面用 `-preselectTab` 直达；截图取自 `xcrun simctl io screenshot`。**当前环境没有点击 / 滑动自动化，所以没有点按筛选条与卡片。**
+
+故障注入不需要改代码：把容器里的 `Documents/分镜视频` 目录 `chmod 000`，`contentsOfDirectory` 抛错，`diskSnapshot()` 返回 `.unreadable`，`applySnapshot` 保留旧统计、`reconcileClipsWithDisk` 不动记录，正是复现步骤 3 的状态。
+
+- **修复前（基线构建，同一份数据）：** 历史页进度环 **0% 已完成**、影片条 **0/5 已拍**，右侧却是 **已拍 3 / 未拍 2 / 全部 5**——同屏三处数字互相矛盾，与问题描述一致。
+- **修复后（同一份数据，目录仍不可读）：** 历史页进度环 0%、影片条 0/5，右侧 **已拍 0 / 未拍 5 / 全部 5**，三处一致；导出页概览「已拍 0 / 5 个镜头」0%，「单独分享某个镜头」一节显示「还没有拍好的镜头。」（该节在页面下部、无法滑动到达，验收时临时把它提到列表最前截图，探针已在提交前移除）。
+- **正常路径（恢复目录权限）：** 历史页 60%、影片条 3/5、已拍 3 / 未拍 2 / 全部 5；导出页概览「已拍 3 / 5 个镜头」60%，「单独分享」列出镜头 1、2、3，各带分享按钮。
+- **磁盘缺一个文件（枚举成功，走 `reconcileClipsWithDisk` 校正）：** 删掉镜头 3 的片段文件后重启，历史页 40%、影片条 2/5、已拍 2 / 未拍 3 / 全部 5，镜头 3 卡片变为未拍占位，三处一致。
+- **构建：** Debug 构建 `BUILD SUCCEEDED`，输出里没有来自 `ShotStore` / `HistoryView` / `ExportView` / `Shot.swift` 的告警。
+
+**未验证：** 真机；点按「已拍 / 未拍」筛选后的列表（无点击自动化，仅代码级：列表与三项统计读同一个 `store.recordedShots` / `store.pendingShots`）；写盘失败回滚（`commit()` 的 catch 分支）自然触发的那条不一致路径（仅代码级）。**代码级推断、未实测：** 目录持续不可读时切换影片，进度环分子 `availableShotCount` 仍是上一次成功枚举时「上一部影片」的缓存，而列表按当前影片的记录派生，两者仍可能不一致；这是 `applySnapshot`「枚举失败时保留旧值」的既有取舍，iOS 上 `Documents` 目录持续不可读的情形罕见，本次不改。
+
+**修复 commit：** d61bd44adc2d7db75dd2e6b0ac9df385ec6cb01c
 
 <a id="p2-47"></a>
 
