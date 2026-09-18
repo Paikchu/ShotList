@@ -31,6 +31,7 @@
 | ☑ | P2-37 | [缩放上限被硬编码为 8×，不随设备与格式变化](#p2-37) |
 | ☑ | P2-38 | [有镜头的列表状态下点导航栏标题无反应，改名弹窗不出现](#p2-38) |
 | ☑ | P2-39 | [镜头面板把没改过的编号也当成一次编辑写回，面板打开期间编号被重排后，只改描述也会把镜头挪回旧位置](#p2-39) |
+| ☑ | P2-46 | [删除补偿日志清理失败时整个应用停在「无法读取分镜记录」，标题与实际原因不符](#p2-46) |
 | ☑ | P2-47 | [影片条的点击收起层用已在 iOS 26 废弃的 UIScreen.main 取屏幕尺寸，是全项目仅有的编译告警](#p2-47) |
 
 <a id="p0-4"></a>
@@ -817,6 +818,70 @@
 **未验证：** 真机；Stepper 与文字落在同一个 400 毫秒窗口内一起写盘（工具点击间隔超过 400 毫秒，代码上是同一个 `edited`）；400 毫秒内把 Stepper 拨过又拨回原值那条分支（仅代码级）；面板开着时由真实的「文件删失败」自然触发补偿（探针执行的是同一段恢复代码，不是自然故障）。
 
 **修复 commit：** 51eb320e54e75d63ec3ba325da5050c38373e09b
+
+<a id="p2-46"></a>
+
+### P2-46 · 删除补偿日志清理失败时整个应用停在「无法读取分镜记录」，标题与实际原因不符
+
+**验证状态：** 模拟器实测（iPhone 17 / iOS 26.5 模拟器，隔离测试数据；故障注入用临时探针与文件系统层故障，探针已在提交前移除）
+
+**代码位置：** ShotList/Models/ShotStore.swift · `commit()`、`writeLibrary()`、`loadStoredLibrary()`；ShotList/Views/RootTabView.swift · `loadError` 分支（原第 861–866、982–985、35–43 行为修复前行号；修复后对应 `LoadFailure`、`loadStoredLibrary()`、`loadLegacyLibrary()`、`startEmptyLibrary()`、`commit()` 与 `LoadFailure.Kind.title` / `retryTitle`）
+
+**问题详情**
+
+**预期行为：** 错误页的标题应当说明真正发生了什么，并给出用户能执行的下一步。
+
+**实际行为：** `commit()` 末尾调 `recoverPendingDeletions()`，它失败时把 `loadError` 置成「删除尚未完成，已保留恢复记录和剩余素材。请检查存储后重试。」；而 `RootTabView` 只要看到 `loadError != nil` 就整页换成 `ContentUnavailableView`，标题固定写「**无法读取分镜记录**」。于是用户看到的是一个说「读不出记录」的标题，配一段说「删除没完成」的正文，两者说的不是一回事——而记录其实读得好好的。
+
+**根因证据：**
+
+- `ShotStore.swift:864-866` 用 `loadError` 这一个通道表达了两类完全不同的状态（读不出来 / 删除收尾没完成）；
+- `RootTabView.swift:36-38` 的标题写死为「无法读取分镜记录」，不区分 `loadError` 的来源；
+- 副作用：`writeLibrary()`（第 983 行）在 `loadError != nil` 时直接抛错，因此这一状态下所有编辑都会失败，而错误页的「重新读取」按钮调的是 `retryLoad()` → `load()`，恰好会重走一次 `recoverPendingDeletions()`，有可能自愈——但标题没告诉用户这一点。
+
+**影响范围：** 需要「文件删不掉」这类存储异常才会触发；触发后应用整体不可编辑，但数据完好、重试可恢复，定为 P2。
+
+**复现方法**
+
+1. 隔离测试数据：使用专门的模拟器与其应用容器，不要对用户真实数据操作。
+2. 故障注入（修复时补正，见下）：让 `recoverPendingDeletions()` 末尾的 `removeItem` 抛错。
+3. 在应用里做任意一次会落盘的编辑（分镜页右上角「＋」加一个镜头即可）。
+4. 观察整页错误界面：标题为「无法读取分镜记录」，正文为「删除尚未完成……」。
+5. 预期正确结果：标题与正文说的是同一件事，并明确「记录没有丢、重试即可」。
+6. 验证完成后移除注入与隔离数据。
+
+**复现条件补正（修复时核对）**
+
+- 原步骤 2「把 `deletionRecoveryURL` 替换成不可删的目录」到不了目标路径：`commit()` 的第一步是 `write(to: deletionRecoveryURL, options: .atomic)`，目标是目录时原子写入直接失败（实测 `NSCocoaErrorDomain 4`，目录原样保留），走的是 `commit()` 的回滚分支，界面只出「未能保存本次更改」的内联提示，根本到不了 `recoverPendingDeletions()`。
+- 实际可用的注入有两种：① 临时探针——在 `recoverPendingDeletions()` 末尾 `removeItem` 之前，容器里出现 `probe-fail-recovery` 文件就抛错，然后在应用里点「＋」加镜头，走的正是 `commit()` 末尾这条路径；② 文件系统层、无需改代码——把一份有效的 `pending-deletions.json`（复制 `films.json` 即可）放进容器并 `chflags uchg`，冷启动时恢复清理在最后的 `removeItem` 处失败。
+- 补充一个原条目没有列出的入口（同一根因）：`loadStoredLibrary()` 用同一个 `catch` 兜住「解码 `films.json`」与「`recoverPendingDeletions()`」，清理失败也被记成「无法读取分镜记录」，还把读好的影片从内存里清空。因此冷启动遇到残留日志清理失败、以及在错误页点「重新读取」重试时，页面都会写成「无法读取分镜记录……请恢复可用的分镜记录后重试」——记录其实读得好好的，「恢复可用的分镜记录」这一步用户既做不到也不需要。
+
+**根因（修复时定位）**
+
+`ShotStore.loadError` 是一个 `String?`，同时承担「读不出记录」「旧版升级失败」「删除收尾没做完」三种状态，界面只能对所有状态写死同一个标题和同一个「重新读取」按钮；`loadStoredLibrary()` 又把「读取失败」与「清理失败」并进一个 `catch`，同一种失败在 `commit()`、冷启动、重试三条路径上被贴了不同的标签。
+
+**修复状态：** 已修复
+
+**修复说明：** `loadError` 改为 `LoadFailure?`（类别 `Kind` + 正文 `message`）：`unreadable`（`films.json` 读不出，或素材还在却一份记录都没有）、`upgradeFailed`（旧版 `shots.json` 升级失败）、`deletionPending`（记录读得好好的，只是删除补偿日志没清理完）。所有 `loadError == nil` 的门闩不动。`RootTabView` 的标题与重试按钮按类别给：「无法读取分镜记录 / 重新读取」「无法升级旧版分镜记录 / 重试升级」「删除尚未完成 / 重试清理」；`deletionPending` 的正文明确「分镜记录没有丢失，只是删除后的收尾清理没有完成」，并保留系统错误描述。`loadStoredLibrary()` 拆成「解码 `films.json`」与「恢复清理」两段：只有前者失败才算 `unreadable`（沿用原文案并清空内存）；后者失败记 `deletionPending` 且不再清空内存，与 `commit()` 里同一种失败一致——「重试清理」调用的 `retryLoad()` 会重读 `films.json` 并重走一次清理，所以这一态可以自愈。不动：`writeLibrary()` 在 `loadError != nil` 时拒写的保护（防止覆盖尚未恢复的关联）、`unreadable` 与 `upgradeFailed` 的正文。
+
+**验证结果：** Xcode 27.0，专用的 `iPhone 17` 模拟器（iOS 26.5，浅色、竖屏），演示数据来自 `Tools/seed-simulator.py`，触摸由模拟器输入注入；修复前后同一条路径各走一遍。构建：`xcodebuild -project ShotList.xcodeproj -scheme ShotList -destination 'id=<UDID>' -configuration Debug clean build`，BUILD SUCCEEDED，源码告警 0 条（仅有与代码无关的 `appintentsmetadataprocessor` 提示）。
+
+*修复前（复现，探针版构建）：*
+
+- 原路径：容器里放 `probe-fail-recovery`，点「＋」加镜头 → 整页错误，标题「无法读取分镜记录」，正文「删除尚未完成，已保留恢复记录和剩余素材。请检查存储后重试。」+ 探针错误，按钮「重新读取」——标题与正文对不上；此时 `films.json` 已含新镜头（6 个），日志文件仍在。
+- 重试入口：故障未撤时点「重新读取」，正文翻成「无法读取分镜记录，已暂停编辑和文件清理……请恢复可用的分镜记录后重试」。
+- 冷启动入口（文件系统层）：`pending-deletions.json` 设 `chflags uchg` 后启动 → 标题与正文都写「无法读取分镜记录……请恢复可用的分镜记录后重试」，附「未能移除 pending-deletions.json，因为你没有访问许可」。
+
+*修复后（同一路径）：*
+
+- 原路径：点「＋」→ 标题「删除尚未完成」，正文「分镜记录没有丢失，只是删除后的收尾清理没有完成……」+ 探针错误，按钮「重试清理」。
+- 故障未撤时点「重试清理」：仍是同一类页面，不再翻成「无法读取分镜记录」；撤掉故障后再点：回到分镜页，镜头 7 个（触发这次失败的那次编辑也保住了），`pending-deletions.json` 已被消费。
+- 冷启动入口（探针版构建一次，去掉探针的最终构建再用 `uchg` 一次）：残留日志 + 探针 / `uchg` → 「删除尚未完成」；撤掉故障后点「重试清理」→ 分镜页，日志被清掉。
+- 回归：把 `films.json` 写成非法内容 → 标题「无法读取分镜记录」、按钮「重新读取」，还原文件后点重试 → 分镜页；写旧版 `shots.json` 并把 `ShotList` 元数据目录设为只读 → 「无法升级旧版分镜记录」/「重试升级」，恢复写权限后点重试 → 升级成功（`films.json` 与 `shots.json.migrated` 都在）。
+
+**未验证：** 真机；「文件删不掉」的自然故障（探针与 `uchg` 执行的是同一段恢复代码，不是自然触发）；特大辅助字号与 VoiceOver 下的错误页；`unreadable` 里「素材还在却一份记录都没有」入口（`startEmptyLibrary()`，仅代码级：与其余 `unreadable` 共用同一类别与文案）；按 AGENTS 约定未构建 / 运行 Unit Test。
+
+**修复 commit：** 8550a74b7ce7677c5e38000f1cbd6230a499cc29
 
 <a id="p2-47"></a>
 
