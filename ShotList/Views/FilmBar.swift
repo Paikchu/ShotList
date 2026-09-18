@@ -47,7 +47,7 @@ struct FilmBar: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        // 展开时把整块卡片（连同铺满全屏的点击收起层）抬到后面的进度卡之上。
+        // 展开时把整块卡片（连同铺满滚动区的点击收起层）抬到后面的进度卡之上。
         .zIndex(isExpanded ? 1 : 0)
         .background {
             if isExpanded {
@@ -193,27 +193,30 @@ struct FilmBar: View {
             .accessibilityHidden(true)
     }
 
-    /// 铺满整屏的透明点击层：面板外任意位置点一下就收起。
+    /// 铺满整个滚动区的透明点击层：面板外任意位置点一下就收起。
     ///
     /// 放在 `.background` 里（卡片内容仍在它上面，行照常可点），靠 `zIndex`
     /// 抬到同屏后面的卡片之上——否则后面那些不透明的卡片会把触摸截走。
+    ///
+    /// 范围取外层 `ScrollView` 的可视区（`bounds(of: .scrollView)` 直接换算到本视图
+    /// 坐标系，随滚动自动跟随），再向四周多铺 `outsideTapBleed`：内容会延伸到导航栏、
+    /// 标签栏下面，而 `.scrollView` 的可视区不含这两带。多出滚动视图的部分收不到触摸。
+    /// 不在滚动视图里时退化为白条自身。
     private var outsideTapCatcher: some View {
         GeometryReader { proxy in
-            let frame = proxy.frame(in: .global)
+            let viewport = (proxy.bounds(of: .scrollView) ?? proxy.frame(in: .local))
+                .insetBy(dx: -Self.outsideTapBleed, dy: -Self.outsideTapBleed)
             Color.clear
                 .contentShape(Rectangle())
-                .frame(
-                    width: UIScreen.main.bounds.width,
-                    height: UIScreen.main.bounds.height
-                )
-                .position(
-                    x: UIScreen.main.bounds.width / 2 - frame.minX,
-                    y: UIScreen.main.bounds.height / 2 - frame.minY
-                )
+                .frame(width: viewport.width, height: viewport.height)
+                .position(x: viewport.midX, y: viewport.midY)
                 .onTapGesture { isExpanded = false }
         }
         .accessibilityHidden(true)
     }
+
+    /// 点击收起层向四周多铺的距离，只需大于导航栏 / 标签栏所占的高度，不是测量值。
+    private static let outsideTapBleed: CGFloat = 200
 
     // MARK: - 标题区
 
