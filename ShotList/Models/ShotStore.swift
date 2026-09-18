@@ -6,6 +6,32 @@ nonisolated enum ShotStoreError: LocalizedError {
     var errorDescription: String? { "目标分镜已被删除，请重新选择分镜后再导入。" }
 }
 
+/// 让整个界面停下来的存储失败。
+///
+/// 带上类别是因为「读不出记录」和「删除收尾没做完」是两回事：前者数据本身不可用，
+/// 后者记录读得好好的，只是清理没做完。共用一句话的话，错误页只能写一个
+/// 对不上正文的标题，也没法告诉用户「记录没丢」。
+nonisolated struct LoadFailure {
+    enum Kind {
+        /// `films.json` 读不出来，或素材还在却一份记录都没有
+        case unreadable
+        /// 旧版 `shots.json` 升级失败，原文件原样保留
+        case upgradeFailed
+        /// 记录读得好好的，只是删除补偿日志没清理完；重试会重走一次清理
+        case deletionPending
+    }
+
+    let kind: Kind
+    let message: String
+
+    static func deletionPending(_ error: Error) -> LoadFailure {
+        LoadFailure(
+            kind: .deletionPending,
+            message: "分镜记录没有丢失，只是删除后的收尾清理没有完成。已保留恢复记录和剩余素材，暂时不能编辑。请检查设备存储后重试。\n\(error.localizedDescription)"
+        )
+    }
+}
+
 /// 分镜数据仓库。
 ///
 /// 职责：
@@ -49,7 +75,7 @@ final class ShotStore: ObservableObject {
     /// 视图读的是缓存——`body` 里不做跨 N 个片段的同步文件 I/O。
     @Published private(set) var filmStats: [Film.ID: FilmStats] = [:]
 
-    @Published private(set) var loadError: String?
+    @Published private(set) var loadError: LoadFailure?
 
     @Published var saveError: String?
     private var committedFilms: [Film] = []
@@ -480,13 +506,13 @@ final class ShotStore: ObservableObject {
     /// 目标镜头必须属于**当前影片**——`index(of:)` 只在当前影片里找，
     /// 所以切片途中在途的导入会自然失败，而不会把片段写进另一部影片。
     func addClip(from sourceURL: URL, duration: TimeInterval?, to shotID: Shot.ID) async throws {
-        if let loadError { throw NSError(domain: "ShotStore", code: 1, userInfo: [NSLocalizedDescriptionKey: loadError]) }
+        if let loadError { throw NSError(domain: "ShotStore", code: 1, userInfo: [NSLocalizedDescriptionKey: loadError.message]) }
         guard index(of: shotID) != nil else { throw ShotStoreError.targetMissing }
         // 大文件复制显式离开主协程，暂存文件不进入素材枚举和孤儿清理范围。
         let prepared = try await mediaFileCopy.temporaryCopy(of: sourceURL)
         defer { try? fileManager.removeItem(at: prepared) }
         try Task.checkCancellation()
-        if let loadError { throw NSError(domain: "ShotStore", code: 1, userInfo: [NSLocalizedDescriptionKey: loadError]) }
+        if let loadError { throw NSError(domain: "ShotStore", code: 1, userInfo: [NSLocalizedDescriptionKey: loadError.message]) }
         // 等待期间分镜可能被删除、重排，甚至整部影片被切走，必须重新解析目标和编号。
         guard let filmIndex = currentFilmIndex,
               let shotIndex = films[filmIndex].shots.firstIndex(where: { $0.id == shotID })
@@ -732,31 +758,43 @@ final class ShotStore: ObservableObject {
     /// - Returns: `true` 表示已经处理完毕——成功加载，或者失败并已置 `loadError`
     ///   让界面停下来；`false` 表示文件不存在，应该继续尝试从旧版数据升级。
     private func loadStoredLibrary() -> Bool {
+        let library: FilmLibrary
         do {
-            let library = try JSONDecoder().decode(FilmLibrary.self, from: Data(contentsOf: metadataURL))
-            films = library.films
-            // 指针可能指向一部已经不存在的影片（外部编辑过 JSON），回落到第一部
-            currentFilmID = library.currentFilmID.flatMap { id in
-                films.contains { $0.id == id } ? id : nil
-            } ?? films.first?.id
-            committedFilms = films
-            committedCurrentFilmID = currentFilmID
-            loadError = nil
-            try recoverPendingDeletions()
-            if ensureFilmExists() { persist() }
-            return true
+            library = try JSONDecoder().decode(FilmLibrary.self, from: Data(contentsOf: metadataURL))
         } catch {
             let failure = error as NSError
             if failure.domain == NSCocoaErrorDomain, failure.code == NSFileReadNoSuchFileError {
                 return false
             }
-            loadError = "无法读取分镜记录，已暂停编辑和文件清理，原文件不会被覆盖。请恢复可用的分镜记录后重试。\n\(error.localizedDescription)"
+            loadError = LoadFailure(
+                kind: .unreadable,
+                message: "无法读取分镜记录，已暂停编辑和文件清理，原文件不会被覆盖。请恢复可用的分镜记录后重试。\n\(error.localizedDescription)"
+            )
             films = []
             currentFilmID = nil
             orphanFileNames = []
             orphanBytes = 0
             return true
         }
+
+        films = library.films
+        // 指针可能指向一部已经不存在的影片（外部编辑过 JSON），回落到第一部
+        currentFilmID = library.currentFilmID.flatMap { id in
+            films.contains { $0.id == id } ? id : nil
+        } ?? films.first?.id
+        committedFilms = films
+        committedCurrentFilmID = currentFilmID
+        loadError = nil
+        do {
+            try recoverPendingDeletions()
+        } catch {
+            // 记录是读出来了的，只是删除补偿日志没清理完：不能算「读不出记录」，
+            // 内存也不清空——与 `commit()` 里同一种失败保持一致，重试会重走一次清理。
+            loadError = .deletionPending(error)
+            return true
+        }
+        if ensureFilmExists() { persist() }
+        return true
     }
 
     /// 把旧版 `shots.json`（一份全局分镜清单）升级成影片库。
@@ -791,7 +829,10 @@ final class ShotStore: ObservableObject {
             try fileManager.moveItem(at: legacyMetadataURL, to: migratedMetadataURL)
             return true
         } catch {
-            loadError = "无法升级旧版分镜记录，已保留原文件、不做任何改动。请检查设备存储后重试。\n\(error.localizedDescription)"
+            loadError = LoadFailure(
+                kind: .upgradeFailed,
+                message: "无法升级旧版分镜记录，已保留原文件、不做任何改动。请检查设备存储后重试。\n\(error.localizedDescription)"
+            )
             films = []
             currentFilmID = nil
             orphanFileNames = []
@@ -808,7 +849,10 @@ final class ShotStore: ObservableObject {
     private func startEmptyLibrary() {
         let snapshot = diskSnapshot()
         guard snapshot.isComplete, snapshot.sizes.isEmpty else {
-            loadError = "无法读取分镜记录，已暂停编辑和文件清理，原文件不会被覆盖。请恢复可用的分镜记录后重试。"
+            loadError = LoadFailure(
+                kind: .unreadable,
+                message: "无法读取分镜记录，已暂停编辑和文件清理，原文件不会被覆盖。请恢复可用的分镜记录后重试。"
+            )
             films = []
             currentFilmID = nil
             orphanFileNames = []
@@ -862,7 +906,7 @@ final class ShotStore: ObservableObject {
             try recoverPendingDeletions()
         } catch {
             // 恢复日志仍在磁盘上；暂停变更，不能让下一次提交覆盖尚未恢复的关联。
-            loadError = "删除尚未完成，已保留恢复记录和剩余素材。请检查存储后重试。\n\(error.localizedDescription)"
+            loadError = .deletionPending(error)
         }
         if !failures.isEmpty { reportDeletionFailures(failures) }
         applySnapshot(diskSnapshot())
@@ -981,7 +1025,7 @@ final class ShotStore: ObservableObject {
 
     private func writeLibrary() throws {
         if let loadError {
-            throw NSError(domain: "ShotStore", code: 1, userInfo: [NSLocalizedDescriptionKey: loadError])
+            throw NSError(domain: "ShotStore", code: 1, userInfo: [NSLocalizedDescriptionKey: loadError.message])
         }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

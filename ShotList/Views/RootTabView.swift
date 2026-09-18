@@ -34,11 +34,11 @@ struct RootTabView: View {
     var body: some View {
         if let loadError = store.loadError {
             ContentUnavailableView {
-                Label("无法读取分镜记录", systemImage: "exclamationmark.triangle")
+                Label(loadError.kind.title, systemImage: "exclamationmark.triangle")
             } description: {
-                Text(loadError)
+                Text(loadError.message)
             } actions: {
-                Button("重新读取") { store.retryLoad() }
+                Button(loadError.kind.retryTitle) { store.retryLoad() }
                     .buttonStyle(.borderedProminent)
             }
         } else {
@@ -62,6 +62,25 @@ struct RootTabView: View {
         }
         .tabBarMinimizeBehavior(.onScrollDown)
         .safeAreaInset(edge: .top) { StorageSaveErrorBanner() }
+    }
+}
+
+/// 整页错误的标题与重试按钮按类别写，让它们和正文说的是同一件事。
+private extension LoadFailure.Kind {
+    var title: String {
+        switch self {
+        case .unreadable: "无法读取分镜记录"
+        case .upgradeFailed: "无法升级旧版分镜记录"
+        case .deletionPending: "删除尚未完成"
+        }
+    }
+
+    var retryTitle: String {
+        switch self {
+        case .unreadable: "重新读取"
+        case .upgradeFailed: "重试升级"
+        case .deletionPending: "重试清理"
+        }
     }
 }
 
