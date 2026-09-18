@@ -6,8 +6,9 @@ import SwiftUI
 /// **怎么换一部**（右侧下拉箭头）。分镜页把标题放进导航栏、把切换影片放进
 /// 三点菜单，所以这条只出现在历史页。
 ///
-/// 下拉不是系统 `Menu`：点箭头后这条白卡片本身向下展开成一整块与自身同宽的面板
-/// （影片清单 + 重制入口），点影片载入、点面板外收起。
+/// 下拉不是系统 `Menu`：点箭头后从白条下方浮出一块与它同宽的面板
+/// （影片清单 + 重制入口），悬在下方内容之上、不挤压版式；
+/// 点影片载入、点面板外收起。
 ///
 /// 标题为空时画一道虚线（虚线在这套界面里一直是「这里还没有内容」的意思，
 /// 见 `NotePlaceholder`），不写「未命名」之类的字——空着本身就是信息。
@@ -25,15 +26,25 @@ struct FilmBar: View {
     @State private var titleDraft = ""
     @State private var isConfirmingRemake = false
 
+    /// 白条自身的实际高度（含内边距），用来把悬浮面板锚在它的下沿。
+    @State private var cardHeight: CGFloat = 0
+
     var body: some View {
         CardContainer(padding: SLSpacing.small + 2) {
-            VStack(spacing: 0) {
-                header
-
-                if isExpanded {
-                    dropdownList
-                        .transition(.opacity)
-                }
+            header
+        }
+        .background {
+            GeometryReader { proxy in
+                Color.clear.preference(key: FilmBarHeightKey.self, value: proxy.size.height)
+            }
+        }
+        .onPreferenceChange(FilmBarHeightKey.self) { cardHeight = $0 }
+        // 悬浮面板：锚在白条下沿，同宽、浮在下方内容之上。
+        .overlay(alignment: .topLeading) {
+            if isExpanded {
+                dropdownPanel
+                    .padding(.top, cardHeight + SLSpacing.tiny)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         // 展开时把整块卡片（连同铺满全屏的点击收起层）抬到后面的进度卡之上。
@@ -88,10 +99,10 @@ struct FilmBar: View {
         .accessibilityAddTraits(.isButton)
     }
 
-    // MARK: - 展开面板
+    // MARK: - 悬浮面板
 
-    /// 与白条同宽的影片清单：当前影片打勾，末尾是重制入口。
-    private var dropdownList: some View {
+    /// 与白条同宽、悬浮在其下方的影片清单：当前影片打勾，末尾是重制入口。
+    private var dropdownPanel: some View {
         VStack(spacing: 0) {
             ForEach(store.sortedFilms) { film in
                 dropdownRow(film)
@@ -110,7 +121,14 @@ struct FilmBar: View {
                 isConfirmingRemake = true
             }
         }
-        .padding(.top, SLSpacing.tiny)
+        .padding(SLSpacing.small + 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color(.secondarySystemGroupedBackground),
+            in: RoundedRectangle(cornerRadius: SLSize.cardCornerRadius, style: .continuous)
+        )
+        // 悬浮感：柔和投影把面板从下方内容上托起来。
+        .shadow(color: .black.opacity(0.14), radius: 18, x: 0, y: 10)
     }
 
     private func dropdownRow(_ film: Film) -> some View {
@@ -247,6 +265,14 @@ struct FilmBar: View {
 }
 
 // MARK: - 影片菜单
+
+/// 白条实际高度（含内边距），供悬浮面板锚定下沿用。
+private struct FilmBarHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
 
 /// 切换影片、改标题、重制。
 ///
