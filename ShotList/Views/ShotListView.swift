@@ -25,12 +25,6 @@ struct ShotListView: View {
     /// `-preselectShot` 只生效一次，用户关掉面板后不再弹回来
     @State private var didApplyPreselect = false
 
-    /// `.largeTitle` 槽里标题要往上抬多少（见 `filmTitleButton`）。
-    ///
-    /// 实测这个偏移随字号变化很小（特大辅助字号下比系统标题高约 2pt），所以用常量而不是
-    /// `@ScaledMetric`——后者会把偏移放得过大。
-    private let filmTitleLift: CGFloat = 4.8
-
     var body: some View {
         NavigationStack {
             Group {
@@ -40,9 +34,8 @@ struct ShotListView: View {
                     shotList
                 }
             }
-            // 字符串标题负责左对齐的 inlineLarge 版式；`.largeTitle` 里的 Button
-            // 盖在同一位置上，因为纯 `navigationTitle` 在标签根页上点了没反应。
-            .navigationTitle(filmTitle)
+            // 不设 `navigationTitle`：标题由 `filmTitleButton` 自己画（见该属性）。留着它
+            // 会在标题行再画一份系统大标题，两份叠着——实测那一份既盖住按钮又吃掉点击。
             .toolbarTitleDisplayMode(.inlineLarge)
             .toolbar { toolbarContent }
             .filmActionDialogs(
@@ -250,12 +243,14 @@ struct ShotListView: View {
 
     /// 还没有镜头时的整页提示。
     ///
-    /// **必须放在滚动容器里。** 分镜页的标题改名按钮挂在 `largeTitle` 位、占据整条
+    /// **必须放在滚动容器里。** 当时分镜页的标题改名按钮还挂在 `largeTitle` 位、占据整条
     /// 标题行；实测（iOS 26.5 / iPhone 17 Pro Max）当根页内容不是滚动容器时——也就是
     /// 这里把 `ContentUnavailableView` 直接铺在根上——整条导航栏的触摸会被吃掉：
     /// 右上角的加号、三点以及标题按钮全都点不动，而且没有任何反馈。列表状态没有这个
     /// 问题，因为那一份内容本身就是 `List`。去掉标题按钮或把它换成滚动容器后都恢复
-    /// 正常，所以这里与列表状态保持一致（详见 P1-9）。
+    /// 正常，所以这里与列表状态保持一致（详见 P1-9）。标题按钮后来改挂 `.topBarLeading`
+    /// 位（P2-38），这个滚动容器保持不动：它同时决定空状态的内容版式（居中 + 满屏），
+    /// 拿掉会一并动到版式和导航栏触摸，没必要为已经修好的问题重开风险。
     ///
     /// `containerRelativeFrame` 让它仍然占满一屏（居中版式与改前逐像素一致），
     /// 内容不满一屏时也不回弹。
@@ -281,17 +276,29 @@ struct ShotListView: View {
         store.currentFilm?.displayTitle ?? "分镜"
     }
 
-    /// 点标题改名。放在 `.largeTitle` 位：系统 `navigationTitle` 在标签根页上是纯文本，点了没反应。
+    /// 点标题改名。放在 `.topBarLeading` 位。
     ///
-    /// 自己往这个槽里放文字，有两处必须补（iOS 26.5 / iPhone 17 Pro Max 实测）：
+    /// **为什么是 `.topBarLeading` 而不是 `.largeTitle`（P2-38）。** 早先挂在 `.largeTitle` 位，
+    /// 根页内容是 `List` 时那个槽位交给内容的可点矩形只剩底部约 10pt 一条：实测标题墨迹在
+    /// y 70.7–102（点），而只有 y=104/108 两个点能触发改名弹窗，点标题正中（y=85）没有任何反应；
+    /// 同一时刻右上角的加号、三点都正常。把 action 换成别的、换成 `onTapGesture`、换成真
+    /// UIKit 控件、换 `.principal` 都一样——触摸根本到不了按钮。对照：空状态下同一个槽位正常，
+    /// 换成 `.topBarLeading` 后列表/空两种状态都正常（实测 y=72/84/96 均可触发）。
     ///
-    /// 1. **字号**：槽位给内容的高度提案比大标题的行盒矮，`minimumScaleFactor` 会一路压到 0.7 地板，
-    ///    34pt 的字看起来只有 23.8pt（CJK 墨高 59px）——比「历史记录」这类系统标题（86px）小一圈。
-    ///    `.fixedSize(horizontal: false, vertical: true)` 放开高度、只留宽度约束，字才按 34pt 排。
-    /// 2. **纵向**：放开高度后内容盒是 34pt 行盒（含下行空间），槽位把盒心摆在比右上角按钮那行
-    ///    低 14.5px 的位置，标题整体下坠。用「上边距 −L / 下边距 +L」在盒内顶回去：盒高不变，
-    ///    所以导航栏高度不变（改用内边距会撑高 19px，三页内容起始线就对不齐了），
-    ///    点击区也随布局一起上移。
+    /// **宽度必须显式给。** 交给槽位自己协商时内容会被压到 36pt 宽（`minimumScaleFactor` 把字
+    /// 缩成一小团）；显式 `frame(width:)` 后按 34pt 排。高度交给内容自身（`fixedSize`），
+    /// 命中矩形与绘制矩形重合——这正是大标题槽做不到的那一步。
+    ///
+    /// **左边缘落在工具栏前导槽的 24pt 上，比历史页的「历史记录」右 4.3pt**（实测标题墨迹
+    /// 25.33pt vs 21.00pt）。大标题槽的内容左边缘是 20pt、工具栏前导槽是 24pt，这是系统版式
+    /// 差异。试过把内容往左顶（负内边距 / 负偏移 4.4pt）：墨迹左端停在 24.00pt 不动，墨宽却从
+    /// 132.67pt 缩到 129.67pt——工具栏宿主把 item 的内容裁在它的布局原点，画到 24pt 左边的部分
+    /// 被直接切掉，第一个字会缺一角。也就是说工具栏槽里做不到 20pt 前导，这类常量就不留了。
+    ///
+    /// **要关掉工具栏项的共享背景。** 换到工具栏槽位后，iOS 26 会给这个 `Button` 套一层玻璃胶囊，
+    /// 尺寸跟着上面那个 230pt 的框走——标题右侧拖出一大片空白，整体也就不再像「页面标题」而像一个
+    /// 控件（历史页的标题是纯文本，两页放一起很跳）。`sharedBackgroundVisibility(.hidden)`（iOS 26）
+    /// 只关背景，按钮本身与无障碍语义都留着，不用退成 `Text` + 手势。
     ///
     /// 宽度用 `SLSize.inlineTitleMaxWidth` 封顶：影片名是用户起的，过长时先缩到 0.7 再截断，
     /// 不会压到右边的「添加」「影片菜单」上。
@@ -303,10 +310,8 @@ struct ShotListView: View {
                 .foregroundStyle(.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
-                .frame(maxWidth: SLSize.inlineTitleMaxWidth, alignment: .leading)
+                .frame(width: SLSize.inlineTitleMaxWidth, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, -filmTitleLift)
-                .padding(.bottom, filmTitleLift)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -317,10 +322,10 @@ struct ShotListView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        ToolbarItem(placement: .largeTitle) {
+        ToolbarItem(placement: .topBarLeading) {
             filmTitleButton
-                .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .sharedBackgroundVisibility(.hidden)
 
         ToolbarItem(placement: .topBarTrailing) {
             Menu {
