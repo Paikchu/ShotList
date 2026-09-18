@@ -29,6 +29,14 @@ struct FilmBar: View {
     /// 白条自身的实际高度（含内边距），用来把悬浮面板锚在它的下沿。
     @State private var cardHeight: CGFloat = 0
 
+    /// 白条下沿到滚动区可视区下沿的距离，决定面板最高能有多高。
+    /// 面板展开后才由 `outsideTapCatcher` 量；量不到（还没量 / 不在滚动视图里）时为 `nil`，不设上限。
+    @State private var spaceBelowBar: CGFloat?
+    /// 影片清单全部行加起来的高度，与面板底部固定区的高度：
+    /// 清单只能占面板上限减去这一块之外的高度，见 `filmListHeight`。
+    @State private var filmListContentHeight: CGFloat = 0
+    @State private var panelFooterHeight: CGFloat = 0
+
     var body: some View {
         CardContainer(padding: SLSpacing.small + 2) {
             header
@@ -43,7 +51,7 @@ struct FilmBar: View {
         .overlay(alignment: .topLeading) {
             if isExpanded {
                 dropdownPanel
-                    .padding(.top, cardHeight + SLSpacing.tiny)
+                    .padding(.top, cardHeight + Self.panelGap)
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
@@ -102,26 +110,33 @@ struct FilmBar: View {
     // MARK: - 悬浮面板
 
     /// 与白条同宽、悬浮在其下方的影片清单：当前影片打勾，末尾是重制入口。
+    ///
+    /// 面板挂在 `.overlay` 里，不参与外层 `ScrollView` 的内容高度，超出屏幕的部分既画不出来
+    /// 也滚不到。所以影片多到放不下时，清单在面板内部滚动；重制等操作行固定在清单下面，
+    /// 不随清单滚走。
     private var dropdownPanel: some View {
         VStack(spacing: 0) {
-            ForEach(store.sortedFilms) { film in
-                dropdownRow(film)
-            }
+            filmList
 
-            rowDivider
+            VStack(spacing: 0) {
+                rowDivider
 
-            if allowsRename {
-                actionRow(title: "修改标题", systemImage: "pencil") {
-                    titleDraft = store.currentFilm?.trimmedTitle ?? ""
-                    isEditingTitle = true
+                if allowsRename {
+                    actionRow(title: "修改标题", systemImage: "pencil") {
+                        titleDraft = store.currentFilm?.trimmedTitle ?? ""
+                        isEditingTitle = true
+                    }
+                }
+
+                actionRow(title: "重制", systemImage: "film.stack") {
+                    isConfirmingRemake = true
                 }
             }
-
-            actionRow(title: "重制", systemImage: "film.stack") {
-                isConfirmingRemake = true
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                panelFooterHeight = height
             }
         }
-        .padding(SLSpacing.small + 2)
+        .padding(Self.panelPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             Color(.secondarySystemGroupedBackground),
@@ -130,6 +145,40 @@ struct FilmBar: View {
         // 悬浮感：柔和投影把面板从下方内容上托起来。
         .shadow(color: .black.opacity(0.14), radius: 18, x: 0, y: 10)
     }
+
+    /// 高度跟着内容走、到了上限才滚动：`ScrollView` 会占满给它的高度，
+    /// 直接 `.frame(maxHeight:)` 会让只有两三部影片时也撑出一个空荡荡的大面板
+    /// （做法同 `CameraChrome.noteBody`）。
+    private var filmList: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                ForEach(store.sortedFilms) { film in
+                    dropdownRow(film)
+                }
+            }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                filmListContentHeight = height
+            }
+        }
+        .frame(height: filmListHeight)
+        .scrollBounceBehavior(.basedOnSize)
+    }
+
+    /// 清单的实际高度：内容多高就多高，但面板整体不能超出滚动区可视区的下沿，
+    /// 且至少留一行——空间小到极端（横屏）时也不至于把清单压没。
+    private var filmListHeight: CGFloat {
+        let content = max(filmListContentHeight, 1)
+        guard let spaceBelowBar else { return content }
+        let panelMaxHeight = spaceBelowBar - Self.panelGap - Self.panelBottomMargin
+        let room = panelMaxHeight - Self.panelPadding * 2 - panelFooterHeight
+        return min(content, max(room, SLSize.minTouchTarget))
+    }
+
+    private static let panelPadding: CGFloat = SLSpacing.small + 2
+    /// 面板与白条下沿的间隙。
+    private static let panelGap: CGFloat = SLSpacing.tiny
+    /// 面板下沿与滚动区可视区下沿之间留的空，别让投影和圆角贴着标签栏。
+    private static let panelBottomMargin: CGFloat = SLSpacing.medium
 
     private func dropdownRow(_ film: Film) -> some View {
         let isCurrent = film.id == store.currentFilmID
@@ -212,6 +261,11 @@ struct FilmBar: View {
                 .position(x: viewport.midX, y: viewport.midY)
                 .onTapGesture { isExpanded = false }
         }
+        // 顺带量出白条下沿到可视区下沿还剩多少空间，给面板定高度上限。
+        // 这一层只在展开时存在，所以收起状态下滚动不会触发任何重新布局。
+        .onGeometryChange(for: CGFloat?.self) { proxy in
+            proxy.bounds(of: .scrollView).map { $0.maxY - proxy.size.height }
+        } action: { spaceBelowBar = $0 }
         .accessibilityHidden(true)
     }
 
