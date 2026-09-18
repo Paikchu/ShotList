@@ -30,6 +30,7 @@
 | ☑ | P2-35 | [一次只能选一段视频，多段素材要重复走一遍导入流程](#p2-35) |
 | ☑ | P2-37 | [缩放上限被硬编码为 8×，不随设备与格式变化](#p2-37) |
 | ☑ | P2-38 | [有镜头的列表状态下点导航栏标题无反应，改名弹窗不出现](#p2-38) |
+| ☑ | P2-47 | [影片条的点击收起层用已在 iOS 26 废弃的 UIScreen.main 取屏幕尺寸，是全项目仅有的编译告警](#p2-47) |
 
 <a id="p0-4"></a>
 
@@ -765,3 +766,59 @@
 滚动与页面版式也一并核对：把镜头补到 35 个再滚到底，标题仍以纯文本停在导航栏上，不被列表内容压住或裁切；标题下方首张卡片的顶边为 124.67pt，与修复前的同页截图一致（修复前 124.67pt），换槽位没有挪动页面版式。**未验证**：特大辅助字号下的排布、超长影片名（>230pt，走 `minimumScaleFactor` 0.7 再截断）的实际观感。
 
 **修复 commit：** 2f7c422d202afb5383b141079212e5d525faf40e
+
+<a id="p2-47"></a>
+
+### P2-47 · 影片条的点击收起层用已在 iOS 26 废弃的 UIScreen.main 取屏幕尺寸，是全项目仅有的编译告警
+
+**验证状态：** 模拟器实测（修复前后各一次干净构建对比告警；交互在 iPhone 17 Pro / iOS 26.5 模拟器上验收）
+
+**代码位置：** ShotList/Views/FilmBar.swift · `outsideTapCatcher`（第 205–217 行）、`outsideTapBleed`（第 219 行）
+
+**问题详情**
+
+**预期行为：** 全项目零告警；取屏幕尺寸走当前上下文（`GeometryReader` 已经在手边）。
+
+**实际行为：** `outsideTapCatcher` 用 `UIScreen.main.bounds` 铺一块全屏透明层。`UIScreen.main` 在 iOS 26.0 已被废弃（SDK 声明：`API_DEPRECATED("Use a UIScreen instance found through context instead (i.e, view.window.windowScene.screen)…", ios(2.0, 26.0))`），而本项目的部署目标正是 iOS 26.0（project.yml），因此每次构建都会产生 4 条告警。
+
+**根因证据：** 一次干净构建的告警列表里只有这 4 条（另有一条与代码无关的 `appintentsmetadataprocessor` 提示），全部指向 `FilmBar.swift:206/207/210/211`。
+
+**影响范围与维护成本：** 当前是 iPhone 竖屏单场景，取值正确，功能不受影响；代价是把项目从「零告警」拉成「有告警」，后续新告警会淹没在噪声里，并且这条 API 在后续系统版本移除时会直接编译失败。定为 P2（有明确影响的非最佳实现）。
+
+**复现方法**
+
+1. 在仓库根目录执行：`xcodebuild -project ShotList.xcodeproj -scheme ShotList -destination 'generic/platform=iOS Simulator' -configuration Debug clean build`。
+2. 过滤输出中的 `warning:` 行。
+3. 观察：4 条 `'main' was deprecated in iOS 26.0` 全部指向 `ShotList/Views/FilmBar.swift`。
+4. 预期正确结果：构建输出中没有来自本项目源码的告警。
+
+**根因（修复时定位）**
+
+`UIScreen.main` 只是取「整屏有多大」的一种写法；收起层真正要的是「覆盖整个可触摸的滚动区，含被导航栏、标签栏压住的那两带」。SwiftUI 里能在 `FilmBar` 内部拿到的几个候选，实测都不等于整屏（iPhone 17 Pro，屏高 874pt，页面顶部内容边距 121pt，底部标签栏区 83pt）：
+
+- `proxy.bounds(of: .scrollView)` 与 `containerRelativeFrame`：得到 402×670，即**扣掉上下内容边距后的可视区**（874 − 121 − 83），位置随滚动跟随。只用它会漏掉导航栏与标签栏那两带——内容延伸到标签栏下面，那里的卡片在面板展开时仍可点开，且滚到底后内容下方的空白也点不到收起。这是第一版实现的实际回归，被验收时与旧构建对拍发现。
+- 在 `ScrollView` 上声明具名坐标空间再 `bounds(of:)`：得到 402×675，是 SwiftUI 给 `ScrollView` 的布局框（约 116–791pt），同样不含两带。
+- 在 `NavigationStack` 外声明具名坐标空间：`bounds(of:)` 返回 nil，坐标空间不跨过 `NavigationStack` 的承载边界。
+- `safeAreaInsets`：在滚动内容里恒为 0，算不出栏高。
+
+**修复状态：** 已修复
+
+**修复说明：** 收起层改为读外层 `ScrollView` 的可视区（`bounds(of: .scrollView)` 直接换算到本视图坐标系，随滚动自动跟随，不在滚动视图里时退化为白条自身），再向四周多铺 `outsideTapBleed = 200pt` 盖住导航栏、标签栏那两带；超出滚动视图的部分收不到触摸，所以这个值只需大于栏高、不是测量值。只改 `FilmBar.swift`，不需要调用方（`HistoryView`）配合，也不引入 UIKit 全局查询。
+
+**验证结果：** Xcode 27.0，`iPhone 17 Pro` 模拟器（iOS 26.5，竖屏、深色），演示数据来自 `Tools/seed-simulator.py`，触摸由模拟器输入注入。
+
+*构建*：同一条命令 `xcodebuild -project ShotList.xcodeproj -scheme ShotList -destination 'generic/platform=iOS Simulator' -configuration Debug clean build`。修复前 4 条 `'main' was deprecated in iOS 26.0`（`FilmBar.swift:206/207/210/211`）；修复后 BUILD SUCCEEDED，源码告警 0 条，仅剩与代码无关的 `appintentsmetadataprocessor` 提示。
+
+*交互*（均在最终构建上执行；面板展开态下点面板外，应「只收起、不触发被点的控件」）：
+
+- 点筛选条上的「未拍」：面板收起，筛选仍停在「全部」；
+- 点镜头卡片正文：面板收起，不打开镜头面板；
+- 点落在标签栏那一带的镜头 04 卡片右侧（x=365, y=812）：面板收起，不打开镜头面板；
+- 向上滚动约 178pt（到底）后：点镜头 03 卡片、点内容下方的空白（y=808）均收起；旧构建对内容下方空白的同一点击也会收起，两者一致；
+- 内容较短、无法滚动的影片（咖啡店探店，3 个镜头）：点内容下方空白收起；
+- 点下拉里的另一部影片：切换成功且面板收起；点镜头卡片：收起态下正常打开镜头面板，说明收起层只在展开时存在；
+- 点导航栏区域（y=108）：面板不收起，旧构建同样不收起（导航栏先接触摸），无变化。
+
+**未验证：** 应用仅支持竖屏、单场景，未测横屏与多窗口；未测特大辅助字号与 VoiceOver 下的收起。真机未验证。
+
+**修复 commit：** 5fb0a623c522c1cfe6c4b27b3ff368e2e3a422a3

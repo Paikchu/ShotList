@@ -1,6 +1,6 @@
 # 分镜助手 · 未关闭问题
 
-更新日期：2026-09-18。共 **10 项未修复**：**P0 0 项、P1 0 项、P2 10 项**。保留原问题编号，按优先级及编号排序。
+更新日期：2026-09-18。共 **9 项未修复**：**P0 0 项、P1 0 项、P2 9 项**。保留原问题编号，按优先级及编号排序。
 
 未修复问题保留在优先级分组；完成项移至 [resolved-issues](resolved-issues.md)，保留验证和修复提交以便追溯。复现状态沿用已有审查证据；涉及文件破坏或故障注入的步骤使用隔离测试数据。
 
@@ -17,7 +17,6 @@
 | ☐ | P2-44 | [历史页影片下拉面板不滚动，影片较多时底部的影片与「重制」落到屏幕外点不到](#p2-44) |
 | ☐ | P2-45 | [任何一次分镜编辑都会立刻删掉已生成的导出包，分享还没完成时会被中断](#p2-45) |
 | ☐ | P2-46 | [删除补偿日志清理失败时整个应用停在「无法读取分镜记录」，标题与实际原因不符](#p2-46) |
-| ☐ | P2-47 | [影片条的点击收起层用已在 iOS 26 废弃的 UIScreen.main 取屏幕尺寸，是全项目仅有的编译告警](#p2-47) |
 
 ☐ 未修复；☑ 修复并验证通过。
 
@@ -371,38 +370,5 @@
 **修复说明：** 待修复；建议把「读不出记录」与「删除收尾未完成」分成两种状态（或给 `loadError` 带上类别），错误页按类别给标题与按钮文案。
 
 **验证结果：** 待验证；本轮仅做代码级确认，未做故障注入实测。
-
-**修复 commit：** 待提交；完成后填写实际修复提交的完整 SHA。
-
-<a id="p2-47"></a>
-
-### P2-47 · 影片条的点击收起层用已在 iOS 26 废弃的 UIScreen.main 取屏幕尺寸，是全项目仅有的编译告警
-
-**验证状态：** 构建实测（`xcodebuild -scheme ShotList -destination 'generic/platform=iOS Simulator' clean build`，Xcode 27.0 / Build 27A266a，BUILD SUCCEEDED，4 条告警全部来自这一处）
-
-**代码位置：** ShotList/Views/FilmBar.swift · `outsideTapCatcher`（第 200–216 行，`UIScreen.main.bounds` 出现在第 206、207、210、211 行）
-
-**问题详情**
-
-**预期行为：** 全项目零告警；取屏幕尺寸走当前上下文（`GeometryReader` 已经在手边）。
-
-**实际行为：** `outsideTapCatcher` 用 `UIScreen.main.bounds` 铺一块全屏透明层。`UIScreen.main` 在 iOS 26.0 已被废弃（SDK 声明：`API_DEPRECATED("Use a UIScreen instance found through context instead (i.e, view.window.windowScene.screen)…", ios(2.0, 26.0))`），而本项目的部署目标正是 iOS 26.0（project.yml），因此每次构建都会产生 4 条告警。
-
-**根因证据：** 一次干净构建的告警列表里只有这 4 条（另有一条与代码无关的 `appintentsmetadataprocessor` 提示），全部指向 `FilmBar.swift:206/207/210/211`。
-
-**影响范围与维护成本：** 当前是 iPhone 竖屏单场景，取值正确，功能不受影响；代价是把项目从「零告警」拉成「有告警」，后续新告警会淹没在噪声里，并且这条 API 在后续系统版本移除时会直接编译失败。定为 P2（有明确影响的非最佳实现）。
-
-**复现方法**
-
-1. 在仓库根目录执行：`xcodebuild -project ShotList.xcodeproj -scheme ShotList -destination 'generic/platform=iOS Simulator' -configuration Debug clean build`。
-2. 过滤输出中的 `warning:` 行。
-3. 观察：4 条 `'main' was deprecated in iOS 26.0` 全部指向 `ShotList/Views/FilmBar.swift`。
-4. 预期正确结果：构建输出中没有来自本项目源码的告警。
-
-**修复状态：** 未修复
-
-**修复说明：** 待修复；`outsideTapCatcher` 外层已有 `GeometryReader`，可改为用一个覆盖全屏的容器坐标（例如把收起层挂到更外层、或用 `.contentShape` + 更大的负 padding），不必再问 `UIScreen`。
-
-**验证结果：** 待验证；告警本身已由本轮干净构建实测确认，修复后需重跑同一条命令确认告警清零，并在模拟器上核对「点面板外收起」仍然有效。
 
 **修复 commit：** 待提交；完成后填写实际修复提交的完整 SHA。
