@@ -12,7 +12,7 @@
 
 ### 开发新需求
 
-未完成需求统一维护 [open-requirements](Docs/open-requirements.md)，已交付需求维护 [delivered-requirements](Docs/delivered-requirements.md)；沿用现有汇总 Checklist、优先级分组、标题和锚点格式，不另建平行清单。
+未完成需求统一维护 [open-requirements](Docs/requirements/open-requirements.md)，已交付需求维护 [delivered-requirements](Docs/requirements/delivered-requirements.md)；沿用现有汇总 Checklist、优先级分组、标题和锚点格式，不另建平行清单。
 
 #### 需求优先级
 
@@ -31,7 +31,7 @@
 - 编号一经分配保持稳定。若调整优先级，更新所在分组并明确记录当前优先级及调整原因，保留原编号、锚点和追踪关系。
 - 每个需求必须有明确标题。标题概括使用情境和要达成的结果；在该标题下完整记录需求详情及可执行的验收方法，不能只写「加个功能」「优化体验」。
 - 接到需求后同步更新汇总 Checklist、对应详情、更新日期及未完成数量，按当前优先级和编号排序。
-- 已交付需求移至 [delivered-requirements](Docs/delivered-requirements.md)，保留编号、详情和验收步骤，并登记验证结果与实现 commit。未完成统计不包含已交付项。
+- 已交付需求移至 [delivered-requirements](Docs/requirements/delivered-requirements.md)，保留编号、详情和验收步骤，并登记验证结果与实现 commit。未完成统计不包含已交付项。
 
 #### 需求条目模板
 
@@ -73,7 +73,7 @@
 
 1. **登记需求并建立分支**
    - 把用户原话补成可验收条目：预期结果、范围、不做的边界、对其他功能的影响。无法判断且影响实现方向时先澄清，不要带着缺口开工。
-   - 检查当前分支、基线及工作区，保留他人未提交改动。在 [open-requirements](Docs/open-requirements.md) 按最大序号加一登记，更新 Checklist、日期和未完成数量。
+   - 检查当前分支、基线及工作区，保留他人未提交改动。在 [open-requirements](Docs/requirements/open-requirements.md) 按最大序号加一登记，更新 Checklist、日期和未完成数量。
    - 基于本次实现应使用的代码创建 `feature-[需求号]` 分支，例如 `feature-R-1`。需求分支使用此命名，不添加其他前缀。
    - 同名分支已存在时先核实是否属于该需求；属于本次实现则继续使用。有无关改动影响切换时使用独立 worktree 隔离。
 
@@ -83,7 +83,7 @@
 
 3. **实现需求**
    - 只做本需求范围内的改动。不顺带无关重构、格式化、依赖升级或其他功能。
-   - 实现中新发现的独立缺陷按问题规则登记到 [open-issues](Docs/open-issues.md)，不塞进本需求条目。
+   - 实现中新发现的独立缺陷按问题规则登记到 [open-issues](Docs/issues/open-issues.md)，不塞进本需求条目。
    - 必要的错误反馈、状态恢复和资源清理属于实现范围。
 
 4. **沿验收方法验证**
@@ -95,7 +95,7 @@
 5. **提交实现并回填清单**
    - 检查差异，只暂存本需求相关代码、必要测试及文档，创建实现 commit；提交信息包含需求号，例如 `feat(R-1): 实现具体能力`。
    - 取得实际实现提交的完整 SHA，回填「实现 commit」，不得使用占位值、预计哈希或文档提交号代替。
-   - 仅在实现已提交且验证通过后，将 Checklist 改为 `☑`，标记「已交付」，补齐实现说明和验证结果，将条目及对应 Checklist 行从 [open-requirements](Docs/open-requirements.md) 移至 [delivered-requirements](Docs/delivered-requirements.md)，更新日期和未完成统计。
+   - 仅在实现已提交且验证通过后，将 Checklist 改为 `☑`，标记「已交付」，补齐实现说明和验证结果，将条目及对应 Checklist 行从 [open-requirements](Docs/requirements/open-requirements.md) 移至 [delivered-requirements](Docs/requirements/delivered-requirements.md)，更新日期和未完成统计。
    - 回填 SHA 后单独提交清单更新，例如 `docs(R-1): 登记实现提交和验证结果`；不要为把 commit 号写进其自身而反复 amend。
    - 直接合并到本地的 main 分支。Permission Needed：推送 origin/main 等待确认，未确认不能推送远程分支。
    - 最终报告需求号、方案要点、验证结果和实现 commit。
@@ -122,13 +122,13 @@
 
 #### 编号与文档维护
 
-- 未关闭问题统一维护 [open-issues](Docs/open-issues.md)，已修复问题维护 [resolved-issues](Docs/resolved-issues.md)；沿用现有汇总 Checklist、优先级分组、标题和锚点格式，不另建平行清单。
+- 未关闭问题统一维护 [open-issues](Docs/issues/open-issues.md)，已修复问题维护 [resolved-issues](Docs/issues/resolved-issues.md)；沿用现有汇总 Checklist、优先级分组、标题和锚点格式，不另建平行清单。
 - 问题号沿用 `P0-4`、`P1-8`、`P2-33` 格式。新增编号使用对应前缀下历史最大序号加一；检查 open-issues、resolved-issues 及必要的 Git 历史，不填补空号，不复用旧号。
 - 每个独立根因对应一个问题号；同一根因的多个入口补充到原问题中，避免重复登记。
 - 编号一经分配保持稳定。若调整优先级，更新所在分组并明确记录当前优先级及调整原因，保留原编号、锚点和追踪关系。
 - 每个问题必须有明确标题。标题概括触发条件和异常结果；在该标题下完整记录问题描述及可执行的复现路径，不能只写“逻辑异常”“界面有 bug”。
 - 发现问题后同步更新汇总 Checklist、对应详情、更新日期及未修复数量，按当前优先级和编号排序。
-- 已修复问题移至 [resolved-issues](Docs/resolved-issues.md)，保留编号、详情和复现步骤，并登记验证结果与修复 commit。未修复统计不包含已修复项。
+- 已修复问题移至 [resolved-issues](Docs/issues/resolved-issues.md)，保留编号、详情和复现步骤，并登记验证结果与修复 commit。未修复统计不包含已修复项。
 
 #### 问题条目模板
 
@@ -190,6 +190,6 @@
 5. **提交修复并回填清单**
    - 检查差异，只暂存本问题相关代码、必要测试及文档，创建修复 commit；提交信息包含问题号，例如 `fix(P2-34): 修复具体异常`。
    - 取得实际修复提交的完整 SHA，回填清单的“修复 commit”，不得使用占位值、预计哈希或文档提交号代替。
-   - 仅在修复已提交且验证通过后，将 Checklist 改为 `☑`，标记“已修复”，补齐修复说明和验证结果，将条目及对应 Checklist 行从 [open-issues](Docs/open-issues.md) 移至 [resolved-issues](Docs/resolved-issues.md)，更新日期和未修复统计。
+   - 仅在修复已提交且验证通过后，将 Checklist 改为 `☑`，标记“已修复”，补齐修复说明和验证结果，将条目及对应 Checklist 行从 [open-issues](Docs/issues/open-issues.md) 移至 [resolved-issues](Docs/issues/resolved-issues.md)，更新日期和未修复统计。
    - 回填 SHA 后单独提交清单更新，例如 `docs(P2-34): 登记修复提交和验证结果`；不要为把 commit 号写进其自身而反复 amend。
    - 最终报告问题号、根因、修复内容、验证结果和修复 commit。合并、推送或发布按用户明确要求执行。
