@@ -33,6 +33,7 @@
 | ☑ | P2-39 | [镜头面板把没改过的编号也当成一次编辑写回，面板打开期间编号被重排后，只改描述也会把镜头挪回旧位置](#p2-39) |
 | ☒ | P2-40 | [重排、插入、删除分镜时在主协程上逐条复制片段文件，素材多时界面卡住且短时占用双份磁盘](#p2-40) |
 | ☑ | P2-41 | [历史页进度环按磁盘口径、右侧三项统计按记录口径，同一屏两个数字会互相矛盾](#p2-41) |
+| ☑ | P2-43 | [保存拍摄与相册导入都会对已经属于本应用的临时文件再整份复制一次](#p2-43) |
 | ☑ | P2-44 | [历史页影片下拉面板不滚动，影片较多时底部的影片与「重制」落到屏幕外点不到](#p2-44) |
 | ☑ | P2-45 | [任何一次分镜编辑都会立刻删掉已生成的导出包，分享还没完成时会被中断](#p2-45) |
 | ☑ | P2-47 | [影片条的点击收起层用已在 iOS 26 废弃的 UIScreen.main 取屏幕尺寸，是全项目仅有的编译告警](#p2-47) |
@@ -937,6 +938,50 @@
 **未验证：** 真机；点按「已拍 / 未拍」筛选后的列表（无点击自动化，仅代码级：列表与三项统计读同一个 `store.recordedShots` / `store.pendingShots`）；写盘失败回滚（`commit()` 的 catch 分支）自然触发的那条不一致路径（仅代码级）。**代码级推断、未实测：** 目录持续不可读时切换影片，进度环分子 `availableShotCount` 仍是上一次成功枚举时「上一部影片」的缓存，而列表按当前影片的记录派生，两者仍可能不一致；这是 `applySnapshot`「枚举失败时保留旧值」的既有取舍，iOS 上 `Documents` 目录持续不可读的情形罕见，本次不改。
 
 **修复 commit：** d61bd44adc2d7db75dd2e6b0ac9df385ec6cb01c
+
+<a id="p2-43"></a>
+
+### P2-43 · 保存拍摄与相册导入都会对已经属于本应用的临时文件再整份复制一次
+
+**验证状态：** 隔离测试实测（iPhone 17 Pro · iOS 26.5 模拟器，应用内探针走真实 `addClip`；相册选择器界面与相机录制未走，真机沙盒下的 `linkItem` 未测）
+
+**代码位置：** ShotList/Models/ShotStore.swift · `addClip(from:duration:to:)`（第 482–511 行，第 486 行的 `temporaryCopy`）；ShotList/Support/MediaImport.swift · `ImportedMovie.transferRepresentation`（第 27–34 行）、`MediaFileCopy.temporaryCopy`（第 96–110 行）；ShotList/Views/CameraCaptureView.swift · `save(_:continuing:)`（第 534–568 行）；修复后 `addClip` 拆出 `clipTarget(for:sourceURL:)`，行号以现状为准
+
+**问题详情**
+
+**预期行为：** 一段素材从来源落到「分镜视频」目录，整条链路上只做必要的一次搬运。
+
+**实际行为：** `addClip` 的第一步就是 `mediaFileCopy.temporaryCopy(of: sourceURL)`，把源文件再复制一份到临时目录，然后 `moveItem` 到目的地，最后 `try? removeItem(at: sourceURL)` 删掉源。但它的**两个调用方给进来的 `sourceURL` 本来就是本应用自己的临时文件**：
+
+- 相册导入：`ImportedMovie` 的 `importing:` 已经调过一次 `MediaFileCopy.shared.temporaryCopy(of: received.file)`，交给 `addClip` 的已经是 `import-<uuid>.<ext>`；于是同一段素材在临时目录里被复制两次；
+- 相机拍摄：`CameraRecorder` 直接把视频录到 `tmp/shot-<uuid>.mov`，`save(_:)` 把它交给 `addClip`，又复制一次。
+
+**根因证据：** `ShotStore.swift:485-486` 的注释写的是「大文件复制显式离开主协程，暂存文件不进入素材枚举和孤儿清理范围」——这两个目的在源文件已经是应用私有临时文件时都已经满足（它本来就不在 `clipsDirectory` 里），这一步是冗余的。
+
+**影响范围与维护成本：** 多出一份临时文件、一次可能失败的 I/O（`addClip` 因此多一条失败路径与一条取消路径）。定为 P2。
+
+**已实测：`copyItem` 确实被优化成 COW 克隆，这一步不按文件大小收费。** 用 iPhoneSimulator SDK 编译探针、`simctl spawn` 在模拟器里以 iOS Foundation 运行，在真实 app 容器内对一个 600 MB 文件从 `tmp/` 复制到 `Documents/分镜视频/`：`FileManager.copyItem` 耗时 0.000 秒，`volumeAvailableCapacityForImportantUsage` 零变化（`linkItem` 同样结果）。同时确认容器的 `tmp` 与 `Documents` 同卷（`stat -f %d` 相同），这是克隆能成立的前提。
+
+据此修正原先的影响判断：**「设备空间紧张时会让本可成功的保存失败」不成立**——克隆不预先占用空间。剩下的仍然是可核实的成本：多一份临时文件条目、多一条可失败的 I/O 与一条取消路径。**未证实**：真机的数据保护（`NSFileProtection`）分级是否会让跨保护类的 `copyItem` 退化成真实拷贝，模拟器不实现数据保护，测不出来。
+
+**关于建议修复方案的一处约束（新增）：** 直接把源文件 `moveItem` 到目的地会**破坏**「提交 JSON 前源视频可重试」这条约束——`commit()` 失败时的回滚是删掉已暂存的目标文件（`ShotStore.swift` 的 `stagedFileNames` 分支），源文件此时已经被移走，就再也退不回去了。中转的那一份克隆正是这条约束的实现方式。要去掉中转，必须同时把回滚从「删除目标」改成「把目标移回源位置」，这会动到崩溃安全那套机制。修复时二选一：要么按上面的方式改回滚，要么保留克隆（实测代价近似为零）只做清理性重构。
+
+**复现方法**
+
+1. 隔离测试数据：准备一段体积较大的测试视频，不要使用用户真实素材。
+2. 在 `MediaFileCopy.temporaryCopy` 里临时加一条探针，打印每次调用的源路径与目的路径。
+3. 走一次「从相册导入」，观察探针：同一段素材会打印两次，第二次的源路径是第一次的目的路径（`tmp/import-*`）。
+4. 真机上走一次「用相机拍摄 → 使用这条」，观察探针：源路径是 `tmp/shot-*`，仍然被复制了一次。
+5. 预期正确结果：源文件已是应用私有临时文件时，直接 `moveItem`，探针只应出现在相册导入的第一跳。
+6. 验证完成后移除探针与隔离数据。
+
+**修复状态：** 已修复
+
+**修复说明：** 根因：`addClip` 无条件把来源复制成 `import-*` 再 `moveItem` 进「分镜视频」；这一跳是为「真复制」设计的（离开主协程、暂存文件不进素材枚举），但两个调用方给进来的本来就是本应用临时目录里的完整文件，属冗余。最小修复：`addClip` 先用 `FileManager.linkItem` 把来源硬链接到目标名——O(1)、不复制、不等待，来源名原样保留；`commit()` 失败时回滚只删目标名，「提交 JSON 前源视频可重试」不受影响；提交成功后再删来源名。链接不成（跨卷等）才退回原有的「`temporaryCopy` → 重新解析目标 → `moveItem`」路径。取舍：不用 `moveItem`，是为了不动 `commit()` 的回滚（崩溃安全机制）；不用同目录 `copyItem`，是因为它在无法克隆时会退化成整份复制，放在主协程上会卡界面，而硬链接要么立刻完成、要么立刻失败。入口补了一句 `Task.checkCancellation()`，保持「已取消的任务不落片」（原先由 `temporaryCopy` 首行保证）。两个调用点（`ImportedMovie.save`、`CameraCaptureView.save`）无需改动；`syncClipFileNames` 的重命名暂存同样用 `copyItem`，不在本条范围。测试辅助 `BlockingCopyFileManager` 让 `linkItem` 抛错，使三条复制路径用例继续覆盖退路。
+
+**验证结果：** iOS 26.5 / iPhone 17 Pro 模拟器（单独新建的 P2-43-verify，验证后删除），Debug 构建。因模拟器控制未获授权，改用临时应用内探针（真实 app 容器的 `tmp/` 与 `Documents/`）复用真实 `MediaFileCopy`、`ImportedMovie.save`、`ShotStore.addClip`，依次走：A 相册导入链（`importing:` 那一跳 + `save` → `addClip`）、B 相机链（`tmp/shot-*` → `addClip`）、C 提交 JSON 失败后重试、D 600 MB 素材。修复前 `MediaFileCopy.temporaryCopy` 的调用次数：A 两次（第二次源路径正是第一次的目的路径 `import-*`）、B 一次（`shot-*` → `import-*`）、C 每次尝试各一次、D 一次。修复后：A 仅第一跳一次，B / C / D 均为 0 次；C 首次失败时源文件仍在、内容逐字节一致、片段目录未多文件，修好元数据后重试成功且源文件被删除；A / B 之后临时目录无 `import-*` 残留；D 的 600 MB `addClip` 耗时 0.060 s → 0.002 s，可用空间变化 −32768 B → 0 B。移除探针后重新构建，并跑现有 `ShotStoreTests` 28 项全部通过（复制退路由 `BlockingCopyFileManager` 强制走到）。**未验证：** 相册选择器界面与相机录制没有走（模拟器控制未获授权、模拟器无摄像头），以上是同一条 `addClip` 代码路径而不是界面操作；真机 iOS 沙盒下 `linkItem` 是否可用、数据保护分级的影响未测——链接失败时会自动退回原有复制路径，行为与修复前一致。
+
+**修复 commit：** b6024a1404fc800450643318a80ec7980ac94647
 
 <a id="p2-44"></a>
 
