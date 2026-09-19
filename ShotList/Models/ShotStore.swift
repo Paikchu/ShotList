@@ -495,15 +495,45 @@ final class ShotStore: ObservableObject {
     /// 同一个镜头可以拍很多条，这里只追加、不覆盖之前的片段。
     /// 目标镜头必须属于**当前影片**——`index(of:)` 只在当前影片里找，
     /// 所以切片途中在途的导入会自然失败，而不会把片段写进另一部影片。
+    ///
+    /// 来源文件在 JSON 提交成功前一直原样保留，失败可以重试；成功后才删除。
     func addClip(from sourceURL: URL, duration: TimeInterval?, to shotID: Shot.ID) async throws {
-        if let loadError { throw NSError(domain: "ShotStore", code: 1, userInfo: [NSLocalizedDescriptionKey: loadError]) }
-        guard index(of: shotID) != nil else { throw ShotStoreError.targetMissing }
-        // 大文件复制显式离开主协程，暂存文件不进入素材枚举和孤儿清理范围。
-        let prepared = try await mediaFileCopy.temporaryCopy(of: sourceURL)
-        defer { try? fileManager.removeItem(at: prepared) }
         try Task.checkCancellation()
         if let loadError { throw NSError(domain: "ShotStore", code: 1, userInfo: [NSLocalizedDescriptionKey: loadError]) }
-        // 等待期间分镜可能被删除、重排，甚至整部影片被切走，必须重新解析目标和编号。
+        guard index(of: shotID) != nil else { throw ShotStoreError.targetMissing }
+
+        var target = try clipTarget(for: shotID, sourceURL: sourceURL)
+        do {
+            // 两个来源（相机录制的 shot-*、相册导入的 import-*）都已经是本应用临时目录里的完整文件，
+            // 与「分镜视频」同卷：用硬链接把它挂到目标名下，不再复制一份。
+            // 硬链接要么立刻完成、要么立刻失败，不像 copyItem 在无法克隆时会退化成整份复制而卡住主线程。
+            // 来源名原样保留：提交失败时回滚只删目标名，来源仍可重试。
+            try fileManager.linkItem(at: sourceURL, to: target.destination)
+        } catch {
+            // 链接不了（跨卷等）才真复制。大文件复制显式离开主协程，暂存文件不进入素材枚举和孤儿清理范围。
+            let prepared = try await mediaFileCopy.temporaryCopy(of: sourceURL)
+            defer { try? fileManager.removeItem(at: prepared) }
+            try Task.checkCancellation()
+            if let loadError { throw NSError(domain: "ShotStore", code: 1, userInfo: [NSLocalizedDescriptionKey: loadError]) }
+            // 等待期间分镜可能被删除、重排，甚至整部影片被切走，必须重新解析目标和编号。
+            target = try clipTarget(for: shotID, sourceURL: sourceURL)
+            try fileManager.moveItem(at: prepared, to: target.destination)
+        }
+        stagedFileNames.insert(target.fileName)
+
+        films[target.filmIndex].shots[target.shotIndex].clips.append(
+            ShotClip(fileName: target.fileName, duration: duration, recordedAt: Date())
+        )
+        films[target.filmIndex].updatedAt = Date()
+        try commit()
+        try? fileManager.removeItem(at: sourceURL)
+    }
+
+    /// 目标镜头在当前影片里的位置，以及新片段在片段目录里的不重名路径。
+    private func clipTarget(
+        for shotID: Shot.ID,
+        sourceURL: URL
+    ) throws -> (filmIndex: Int, shotIndex: Int, fileName: String, destination: URL) {
         guard let filmIndex = currentFilmIndex,
               let shotIndex = films[filmIndex].shots.firstIndex(where: { $0.id == shotID })
         else { throw ShotStoreError.targetMissing }
@@ -512,18 +542,7 @@ final class ShotStore: ObservableObject {
             number: films[filmIndex].shots[shotIndex].number,
             fileExtension: Self.fileExtension(ofFileName: sourceURL.lastPathComponent)
         )
-        let destination = clipsDirectory.appendingPathComponent(fileName, isDirectory: false)
-
-        // 先准备新文件，提交 JSON 前必须保留可重试的源视频。
-        try fileManager.moveItem(at: prepared, to: destination)
-        stagedFileNames.insert(fileName)
-
-        films[filmIndex].shots[shotIndex].clips.append(
-            ShotClip(fileName: fileName, duration: duration, recordedAt: Date())
-        )
-        films[filmIndex].updatedAt = Date()
-        try commit()
-        try? fileManager.removeItem(at: sourceURL)
+        return (filmIndex, shotIndex, fileName, clipsDirectory.appendingPathComponent(fileName, isDirectory: false))
     }
 
     /// 删除某一个片段，镜头与其它的片段都保留
