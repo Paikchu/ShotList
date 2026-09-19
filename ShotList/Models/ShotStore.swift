@@ -916,6 +916,7 @@ final class ShotStore: ObservableObject {
     ///
     /// 日志有两种格式：新版写 `FilmLibrary`，升级路径上可能残留旧版的 `[Shot]`。
     /// 两者都读——旧格式按「当前影片」恢复，因为升级那一刻库里只有那一部。
+    /// 两种都解不开的日志视为损坏，直接丢弃。
     private func recoverPendingDeletions() throws {
         guard fileManager.fileExists(atPath: deletionRecoveryURL.path) else { return }
         let data = try Data(contentsOf: deletionRecoveryURL)
@@ -937,8 +938,7 @@ final class ShotStore: ObservableObject {
                 lastRecoveredFilmID = recovered.id
                 restored = true
             }
-        } else {
-            let legacy = try JSONDecoder().decode([Shot].self, from: data)
+        } else if let legacy = try? JSONDecoder().decode([Shot].self, from: data) {
             if let index = currentFilmIndex {
                 if mergeRecovered(legacy, intoFilmAt: index) { restored = true }
             } else {
@@ -951,6 +951,13 @@ final class ShotStore: ObservableObject {
                 currentFilmID = films[0].id
                 restored = true
             }
+        } else {
+            // 两种格式都解不开：这份日志已经损坏，重试多少次都读不懂。它只是上一次提交前的
+            // 旧快照，丢掉最多让「文件没删成功」的那几个片段不再被自动找回——文件还在磁盘上，
+            // 会作为「未使用的文件」出现，由用户决定清不清。留着它只会让每次启动都卡在这里。
+            // 读不出来（`Data(contentsOf:)` 抛错）则不算损坏，仍按清理失败处理、可重试。
+            try fileManager.removeItem(at: deletionRecoveryURL)
+            return
         }
 
         if restored {
