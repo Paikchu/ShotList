@@ -23,16 +23,16 @@ enum SLSpacing {
     ///
     /// 三页容器各不相同（分镜＝`List(.plain)`、历史＝`ScrollView`、导出＝`List(.insetGrouped)`），
     /// 各自默认的顶部内边距并不一样：实测同样不加边距时，历史的首张卡片最贴顶，
-    /// 分镜的首张卡片要低 1pt，导出的首个小节标题更低 7pt。三页都用
+    /// 分镜的首张卡片要低 1pt，导出的首块内容比统一基准高 5pt。三页都用
     /// `.contentMargins(.top, …)` 显式指定，让首个内容块的上沿落在同一条水平线上：
     /// - **分镜**：行自带 `tiny`（4pt）纵向内边距（时间线导轨要从行顶画到行底），
     ///   加上 List 默认的 1pt，正好 5pt → 不额外加边距；
     /// - **历史**：补 `pageTopInset`；
-    /// - **导出**：把 insetGrouped 多出来的那份用负边距收回（`groupedListTopSlack`）。
+    /// - **导出**：首块是没有小节标题的素材卡片，与历史一样补 `pageTopInset`。
     static let pageTopInset: CGFloat = 5
 
-    /// 导出页（`List(.insetGrouped)`）首个小节标题默认比统一基准多出的 7pt，
-    /// 用负的内容边距收回去。
+    /// `List(.insetGrouped)` 首个小节带标题时，标题默认比统一基准多出的 7pt
+    /// （「剪辑风格」页用负的内容边距收回去）。
     static let groupedListTopSlack: CGFloat = 7
 }
 

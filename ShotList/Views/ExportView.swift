@@ -48,7 +48,7 @@ struct ExportView: View {
                 }
             }
             .listStyle(.insetGrouped)
-            .contentMargins(.top, -SLSpacing.groupedListTopSlack, for: .scrollContent)
+            .contentMargins(.top, SLSpacing.pageTopInset, for: .scrollContent)
             // 主操作固定在底部，不随列表滚动；列表末行自动让出它占的高度，
             // 滚到它下面的内容由系统做柔化，不会和按钮糊在一起
             .safeAreaBar(edge: .bottom) { exportButton }
@@ -111,8 +111,6 @@ struct ExportView: View {
             .accessibilityValue(
                 "\(filmName)，已拍 \(store.recordedCount) / \(store.shots.count)，\(store.clipCount) 段，\(store.totalDuration.slDurationText)，\(store.totalClipBytes.slByteText)"
             )
-        } header: {
-            SectionHeader(title: "素材", systemImage: "chart.pie")
         }
     }
 
@@ -190,8 +188,6 @@ struct ExportView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-        } header: {
-            SectionHeader(title: "打包导出", systemImage: "shippingbox")
         }
     }
 
