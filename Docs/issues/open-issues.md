@@ -1,6 +1,6 @@
 # 分镜助手 · 未关闭问题
 
-更新日期：2026-09-20。共 **1 项未修复**：**P0 0 项、P1 0 项、P2 1 项**。保留原问题编号，按优先级及编号排序。
+更新日期：2026-09-20。共 **2 项未修复**：**P0 0 项、P1 0 项、P2 2 项**。保留原问题编号，按优先级及编号排序。
 
 未修复问题保留在优先级分组；完成项移至 [resolved-issues](resolved-issues.md)，保留验证和修复提交以便追溯。复现状态沿用已有审查证据；涉及文件破坏或故障注入的步骤使用隔离测试数据。
 
@@ -9,6 +9,7 @@
 | 完成 | 编号 | 问题标题 |
 |:--:|---|---|
 | ☐ | P2-36 | [选择 4K 或 60 fps 后单条录制会更早触到 600 MB 上限，停止时不给任何说明](#p2-36) |
+| ☐ | P2-49 | [体积上限随画质放宽后磁盘可能被录满，而写满时仍然只是「自己停了」且没有任何说明](#p2-49) |
 
 ☐ 未修复；☑ 修复并验证通过。
 
@@ -75,3 +76,47 @@
 **修复 commit：** `bdbbba6d337055543dcc7aea6f355f880aaf7063`
 
 **编号说明：** 本条原登记为 P2-34。同一编号同时被 main 上并行登记的「相册导入触发系统整段转码，导入耗时长且画质被降」占用——本条登记于 2026-09-16 00:47，该条登记于同日 00:56，本条在先，但 main 为主干且其条目已先行合入，故由本条让号，改编号为 P2-36（当时 P2 前缀最大序号 35 加一）。原编号 P2-34 不再复用。
+
+<a id="p2-49"></a>
+
+### P2-49 · 体积上限随画质放宽后磁盘可能被录满，而写满时仍然只是「自己停了」且没有任何说明
+
+**验证状态：** 代码级确认（未做磁盘写满的故障注入实测）
+
+**代码位置：** ShotList/Camera/CameraRecorder.swift · `updateMaximumFileSize()`（第 614–629 行）、`stopReason(matching:)`（第 1033–1041 行）、`configureIfNeeded`（第 690–694 行，未设置 `minFreeDiskSpaceLimit`）
+
+**问题详情**
+
+**预期行为：** 单条录制不会把设备磁盘录到写满；真的写满时，界面要像撞上限那样明确说明「为什么停了、这条保没保住」。
+
+**实际行为：** [P2-36](#p2-36) 的修复把 `maxRecordedFileSize` 从固定 600 MB 改成按当前格式码率估算（`码率 ÷ 8 × 600 秒 × 1.15`，再与 600 MB 取 `max`）。这一步本身是对的——体积上限不该早于时长上限生效——但它同时拿掉了原先那道「单条最多 600 MB」的磁盘保险，而没有补上替代品：
+
+1. `AVCaptureMovieFileOutput.minFreeDiskSpaceLimit` 全项目没有设置过（已全仓检索确认），所以录制不会在剩余空间见底前主动收尾；
+2. 真的写满时，AVFoundation 返回 `AVError.diskFull` 并把 `recordingSuccessfullyFinished` 置为 true（素材完好）。`stopReason(matching:)` 只把 `.maximumFileSizeReached` / `.maximumDurationReached` 记为 `.reachedLimit`，`.diskFull` 落进 `default` 分支被记为 `.userRequested`，于是走静默成功路径：直接进回看，不弹任何提示。
+
+**根因证据：**
+
+- `CameraRecorder.swift:628` `movieOutput.maxRecordedFileSize = max(Int64(estimatedBytes), Self.maximumFileSize)`——高码率格式下这个值远大于 600 MB，实际约束退化为 10 分钟时长上限；
+- `CameraRecorder.swift:1036-1039` `case .maximumFileSizeReached, .maximumDurationReached: return .reachedLimit` / `default: return .userRequested`；
+- `grep -rn "minFreeDiskSpaceLimit" ShotList/` 无结果。
+
+**影响范围与定级依据：** 这正是 P2-36 原本要解决的症状（「突然自己停了、没有解释」），只是触发原因换成了磁盘写满；而 P2-36 的修复让单条录制可以写到 GB 级，使写满这条路径**更容易**碰到而不是更难。素材本身完好、可回看可保存，不丢数据，用户清理空间后可继续拍，有绕行方式，因此定为 P2 而不是 P1。**未实测**：具体在剩余多少空间时触发、以及 `.diskFull` 在本项目配置下的确切返回形态没有做故障注入验证，本条目不给出未经测量的数值。
+
+**复现方法**
+
+1. 隔离测试环境：真机，先用无关的大文件把可用空间压到很小（不要删除用户真实素材）。
+2. 进入任意镜头的取景页，在拍摄设置里选「4K」+「60 fps」。
+3. 开始录制，持续拍到磁盘写满。
+4. 观察：录制自行停止并直接进入回看，界面没有任何说明；对照 P2-36 修复后的行为，撞体积/时长上限会弹「已达录制上限」，而写满不会。
+5. 预期正确结果：要么在剩余空间见底前主动收尾并说明原因，要么在 `.diskFull` 路径上同样给出提示。
+6. 验证完成后清理测试用的占位文件。
+
+**修复状态：** 未修复
+
+**修复说明：** 待修复；两条一起做才完整：给 `movieOutput` 设一个 `minFreeDiskSpaceLimit`（在 `configureIfNeeded` 里与 `maxRecordedDuration` / `maxRecordedFileSize` 同处设置），并让 `stopReason(matching:)` 把 `.diskFull` 归为一种需要说明的停止原因（可复用 `.reachedLimit`，或另加一个 case 以便给出不同文案）。改动落在真机录制回调上，需真机验证后再合并。
+
+**验证结果：** 待验证；本轮为代码级确认与全仓检索，未做磁盘写满的故障注入实测。
+
+**修复 commit：** 待提交；完成后填写实际修复提交的完整 SHA。
+
+**来源：** 审查 [P2-36](#p2-36) 的修复实现时发现，属于独立根因（磁盘保险缺失 + `.diskFull` 未被识别），按 AGENTS.md 单独编号，不并入 P2-36 条目。
