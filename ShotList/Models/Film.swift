@@ -23,6 +23,11 @@ nonisolated struct Film: Identifiable, Codable, Hashable {
     /// 挂在影片上而不是全局偏好里：它是「这一次创作要什么样子」，
     /// 换一部影片（重制 / 新建）就该重新写，而不是把上一部片子的要求带到新片里。
     var stylePrompt: String
+    /// 这部影片的分镜模板：**一段纯文字**，镜头面板里「应用模板」时原样填进内容框。
+    ///
+    /// 空串表示没有自定义，用 `Film.defaultShotTemplate`。挂在影片上而不是全局偏好里：
+    /// 每部片子要写的标签不同（有的要转场、有的只要字幕），换一部影片就该各用各的。
+    var shotTemplate: String
     /// 这部影片的分镜，编号在影片内从 1 连续编排
     var shots: [Shot]
     var createdAt: Date
@@ -36,6 +41,7 @@ nonisolated struct Film: Identifiable, Codable, Hashable {
         id: UUID = UUID(),
         title: String = "",
         stylePrompt: String = "",
+        shotTemplate: String = "",
         shots: [Shot] = [],
         createdAt: Date = Date(),
         updatedAt: Date = Date()
@@ -43,6 +49,7 @@ nonisolated struct Film: Identifiable, Codable, Hashable {
         self.id = id
         self.title = title
         self.stylePrompt = stylePrompt
+        self.shotTemplate = shotTemplate
         self.shots = shots
         self.createdAt = createdAt
         self.updatedAt = updatedAt
@@ -52,6 +59,7 @@ nonisolated struct Film: Identifiable, Codable, Hashable {
         case id
         case title
         case stylePrompt
+        case shotTemplate
         case shots
         case createdAt
         case updatedAt
@@ -60,8 +68,8 @@ nonisolated struct Film: Identifiable, Codable, Hashable {
         case legacyStyle = "style"
     }
 
-    /// 手写解码而不是用合成的那个：`stylePrompt` 是后加的字段，库里已有的影片 JSON
-    /// 里没有它。合成解码器遇到缺键会整份抛错，那会把**所有**影片一起读不出来。
+    /// 手写解码而不是用合成的那个：`stylePrompt`、`shotTemplate` 是后加的字段，库里已有的
+    /// 影片 JSON 里没有它们。合成解码器遇到缺键会整份抛错，那会把**所有**影片一起读不出来。
     ///
     /// 老数据分两种，都要接住：
     /// - 只有标题和分镜 → 风格留空，用户自己写；
@@ -81,6 +89,9 @@ nonisolated struct Film: Identifiable, Codable, Hashable {
             stylePrompt = ""
         }
 
+        shotTemplate = (try container.decodeIfPresent(String.self, forKey: .shotTemplate) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
         shots = try container.decodeIfPresent([Shot].self, forKey: .shots) ?? []
         let now = Date()
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? now
@@ -93,6 +104,7 @@ nonisolated struct Film: Identifiable, Codable, Hashable {
         try container.encode(id, forKey: .id)
         try container.encode(title, forKey: .title)
         try container.encode(stylePrompt, forKey: .stylePrompt)
+        try container.encode(shotTemplate, forKey: .shotTemplate)
         try container.encode(shots, forKey: .shots)
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(updatedAt, forKey: .updatedAt)
@@ -145,14 +157,23 @@ nonisolated extension Film {
     /// 导出包里不会出现 `剪辑风格.md`。
     var hasStylePrompt: Bool { !stylePrompt.isEmpty }
 
-    /// 什么都没写：没有镜头、没有标题，也没写风格描述。
+    /// 没有自定义模板时用的默认模板：四行标签，标签后面留给用户写具体内容。
+    static let defaultShotTemplate = "描述：\n字幕：\n上方角标：\n转场："
+
+    /// 写过自己的模板没有。空串就是没写，用默认模板。
+    var hasShotTemplate: Bool { !shotTemplate.isEmpty }
+
+    /// 「应用模板」时真正填进去的文字：自定义的，没有就用默认的
+    var effectiveShotTemplate: String { hasShotTemplate ? shotTemplate : Self.defaultShotTemplate }
+
+    /// 什么都没写：没有镜头、没有标题，也没写风格描述与模板。
     ///
     /// 「切换影片」「重制」时按这个口径静默回收，否则影片库会堆一堆
     /// 用户早就忘了的空壳。
     ///
-    /// 写过风格的影片**不算空壳**：用户可能先把要求写好、再去拍，
+    /// 写过风格或模板的影片**不算空壳**：用户可能先把要求写好、再去拍，
     /// 按「无分镜 + 无标题」回收会把刚写好的那段一起丢掉。
-    var isBlank: Bool { shots.isEmpty && !hasTitle && !hasStylePrompt }
+    var isBlank: Bool { shots.isEmpty && !hasTitle && !hasStylePrompt && !hasShotTemplate }
 
     /// 这部影片的全部片段（跨镜头）
     var allClips: [ShotClip] { shots.flatMap(\.clips) }

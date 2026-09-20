@@ -5,7 +5,7 @@ import SwiftUI
 /// 导航栏大标题是当前影片的名字（不再写死「分镜」——标签栏已经标明这是哪一页），
 /// 点标题即可改名。加号点一下加一个镜头，长按展开成 2×2 图标：一次加 3 / 5 / 10 个，
 /// 或「快速拍摄」（新建镜头直接开拍，拍完落到描述页）；
-/// 三点打开影片菜单（切换、改标题、新建影片）。
+/// 三点打开影片菜单（切换、改标题、写模板、新建影片）。
 struct ShotListView: View {
     @EnvironmentObject private var store: ShotStore
 
@@ -18,6 +18,7 @@ struct ShotListView: View {
     @State private var isEditingTitle = false
     @State private var titleDraft = ""
     @State private var isConfirmingRemake = false
+    @State private var isEditingTemplate = false
 
     /// 刚新增的镜头，用来在列表里把它指出来（卡片 accent 描边 + 导轨上段变色）。
     @State private var flashID: Shot.ID?
@@ -41,6 +42,10 @@ struct ShotListView: View {
             // 会在标题行再画一份系统大标题，两份叠着——实测那一份既盖住按钮又吃掉点击。
             .toolbarTitleDisplayMode(.inlineLarge)
             .toolbar { toolbarContent }
+            // 挂在导航栈里面：外面那一层已经有 `shotFlow` 的镜头面板 sheet
+            .sheet(isPresented: $isEditingTemplate) {
+                ShotTemplateSheet()
+            }
             .filmActionDialogs(
                 isEditingTitle: $isEditingTitle,
                 titleDraft: $titleDraft,
@@ -215,7 +220,8 @@ struct ShotListView: View {
         if !urls.isEmpty {
             ShareLink(
                 items: urls,
-                subject: Text("镜头 \(shot.paddedNumber) \(shot.displayDetail)")
+                // 内容是多行的，邮件主题只取第一行
+                subject: Text("镜头 \(shot.paddedNumber) \(shot.displayDetail.components(separatedBy: .newlines)[0])")
             ) {
                 Label("分享", systemImage: "square.and.arrow.up")
             }
@@ -356,7 +362,8 @@ struct ShotListView: View {
             FilmSwitcherMenu(
                 isEditingTitle: $isEditingTitle,
                 titleDraft: $titleDraft,
-                isConfirmingRemake: $isConfirmingRemake
+                isConfirmingRemake: $isConfirmingRemake,
+                isEditingTemplate: $isEditingTemplate
             ) {
                 Label("影片", systemImage: "ellipsis.circle")
             }

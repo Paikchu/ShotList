@@ -89,6 +89,8 @@ final class ShotStore: ObservableObject {
     private var legacyMetadataURL: URL { metadataURL.deletingLastPathComponent().appendingPathComponent("shots.json") }
     /// 升级后保留的旧文件。它就是回滚保险：把名字改回去，旧版本应用即可正常读取。
     private var migratedMetadataURL: URL { metadataURL.deletingLastPathComponent().appendingPathComponent("shots.json.migrated") }
+    /// 字幕、角标并进描述之前的 `films.json` 原文。见 `backUpBeforeTextMerge`。
+    private var preMergeBackupURL: URL { metadataURL.deletingLastPathComponent().appendingPathComponent("films.json.before-merge") }
     private var deletionRecoveryURL: URL { metadataURL.deletingLastPathComponent().appendingPathComponent("pending-deletions.json") }
 
     /// 分镜片段统一存放目录
@@ -347,6 +349,27 @@ final class ShotStore: ObservableObject {
         return true
     }
 
+    /// 当前影片「应用模板」时填进去的文字（没自定义就是默认模板）
+    var shotTemplate: String { currentFilm?.effectiveShotTemplate ?? Film.defaultShotTemplate }
+
+    /// 改当前影片的分镜模板。
+    ///
+    /// 与 `updateStylePrompt` 同一条写入路：写模板也算一次用户编辑。
+    /// 裁掉首尾空白后与默认模板一样就存空串，等于没自定义——
+    /// 这样「打开模板页又什么都没改就关掉」不会平白多出一次编辑，也不会把默认值固化成自定义。
+    ///
+    /// 值没有变化时直接返回，不刷新 `updatedAt`：模板页每敲一个字都会发一次。
+    @discardableResult
+    func updateShotTemplate(_ template: String) -> Bool {
+        guard loadError == nil else { return false }
+        var trimmed = template.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed == Film.defaultShotTemplate { trimmed = "" }
+        guard let current = currentFilm, current.shotTemplate != trimmed else { return false }
+        mutateCurrentFilm { $0.shotTemplate = trimmed }
+        persist()
+        return true
+    }
+
     /// 删除整部影片（连同它的片段）。
     func deleteFilm(_ id: Film.ID) {
         guard loadError == nil else { return }
@@ -390,13 +413,10 @@ final class ShotStore: ObservableObject {
     // MARK: - 增
 
     /// 新建一个分镜，编号接在当前影片末尾
-    ///
-    /// 字幕与角标一并接收，是为了让「复制分镜」能把三样文字都带过去
-    /// ——只带描述的话，用户写好字幕再复制一下，字幕就悄悄没了。
     @discardableResult
-    func addShot(note: String = "", caption: String = "", badgeText: String = "") -> Shot? {
+    func addShot(note: String = "") -> Shot? {
         guard loadError == nil, currentFilmIndex != nil else { return nil }
-        let shot = Shot(number: nextNumber, note: note, caption: caption, badgeText: badgeText)
+        let shot = Shot(number: nextNumber, note: note)
         mutateCurrentFilm { $0.shots.append(shot) }
         normalize()
         return persist() ? shot : nil
@@ -422,15 +442,10 @@ final class ShotStore: ObservableObject {
     ///
     /// - Returns: 新建的镜头；传入的 id 已经不在当前影片里时返回 `nil`。
     @discardableResult
-    func insertShot(
-        below shotID: Shot.ID,
-        note: String = "",
-        caption: String = "",
-        badgeText: String = ""
-    ) -> Shot? {
+    func insertShot(below shotID: Shot.ID, note: String = "") -> Shot? {
         guard loadError == nil else { return nil }
         guard let index = index(of: shotID) else { return nil }
-        let shot = Shot(number: index + 2, note: note, caption: caption, badgeText: badgeText)
+        let shot = Shot(number: index + 2, note: note)
         mutateCurrentFilm { $0.shots.insert(shot, at: index + 1) }
         normalize()
         return persist() ? shot : nil
@@ -442,16 +457,10 @@ final class ShotStore: ObservableObject {
         guard loadError == nil else { return nil }
         // 「复制」＝「在它后面插入一个内容相同的镜头」，共用同一处实现，
         // 免得两条路上的重编号与改名行为悄悄走岔。
-        // 三样文字都要带过去：字幕和角标也是用户敲进去的内容，不该复制时被丢掉。
         if index(of: shot.id) != nil {
-            return insertShot(
-                below: shot.id,
-                note: shot.note,
-                caption: shot.caption,
-                badgeText: shot.badgeText
-            )
+            return insertShot(below: shot.id, note: shot.note)
         }
-        return addShot(note: shot.note, caption: shot.caption, badgeText: shot.badgeText)
+        return addShot(note: shot.note)
     }
 
     // MARK: - 改
@@ -793,8 +802,10 @@ final class ShotStore: ObservableObject {
     ///   让界面停下来；`false` 表示文件不存在，应该继续尝试从旧版数据升级。
     private func loadStoredLibrary() -> Bool {
         let library: FilmLibrary
+        let stored: Data
         do {
-            library = try JSONDecoder().decode(FilmLibrary.self, from: Data(contentsOf: metadataURL))
+            stored = try Data(contentsOf: metadataURL)
+            library = try JSONDecoder().decode(FilmLibrary.self, from: stored)
         } catch {
             let failure = error as NSError
             if failure.domain == NSCocoaErrorDomain, failure.code == NSFileReadNoSuchFileError {
@@ -811,6 +822,7 @@ final class ShotStore: ObservableObject {
             return true
         }
 
+        backUpBeforeTextMerge(stored)
         films = library.films
         // 指针可能指向一部已经不存在的影片（外部编辑过 JSON），回落到第一部
         currentFilmID = library.currentFilmID.flatMap { id in
@@ -829,6 +841,23 @@ final class ShotStore: ObservableObject {
         }
         if ensureFilmExists() { persist() }
         return true
+    }
+
+    /// 读到还带着独立字幕、角标字段的 `films.json` 时，先把原文留一份。
+    ///
+    /// 读取时字幕与角标会并进描述（见 `Shot.mergedNote`），下一次写盘后原来的两个键
+    /// 就没有了。那是用户一个字一个字敲进去的内容，合并万一出错，不该连原文都找不回来——
+    /// 与 `shots.json.migrated` 同一个思路：出问题时把这份改回 `films.json` 即可。
+    /// 备份只留第一份：之后写盘的记录里已经没有这两个键，不会再触发，
+    /// 也就不会拿合并之后的内容盖掉真正的原文。
+    ///
+    /// 这里按键名做字节匹配而不是逐镜头解码：只是决定要不要留一份，
+    /// 撞上同名文字最多多留一份备份，无害。
+    private func backUpBeforeTextMerge(_ stored: Data) {
+        let markers = ["\"caption\"", "\"badgeText\"", "\"badgeValue\""]
+        guard markers.contains(where: { stored.range(of: Data($0.utf8)) != nil }) else { return }
+        guard !fileManager.fileExists(atPath: preMergeBackupURL.path) else { return }
+        try? stored.write(to: preMergeBackupURL, options: .atomic)
     }
 
     /// 把旧版 `shots.json`（一份全局分镜清单）升级成影片库。

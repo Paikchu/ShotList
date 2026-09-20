@@ -31,6 +31,7 @@
 		4F4F6D91B75F0D68F0756098 /* CaptureFramingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 977223A4DE801D3BB5F5E9A3 /* CaptureFramingTests.swift */; };
 		5C4FE1217570B860446DA863 /* MovieImporterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DEF91792082840C9C11B500 /* MovieImporterTests.swift */; };
 		5E5B618FEC440413A298DFEC /* ClipPlayerScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5E3482625A9371AE0EDE25E /* ClipPlayerScreen.swift */; };
+		65042A1B65E812DE8CDD135E /* ShotTemplateSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E4CD4789C21CAA5AD276FA1 /* ShotTemplateSheet.swift */; };
 		672DB3A39BC93331A7F51C9F /* MediaImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 664AE32EEA99C983D3224F47 /* MediaImport.swift */; };
 		6A41F1B86754D866F2281412 /* MediaTranscode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0010E187571A3AB14ECCCC93 /* MediaTranscode.swift */; };
 		7C2F23CC95455B3E9A77CC88 /* CameraChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88320AFB37A1C5C3AECCA5D1 /* CameraChrome.swift */; };
@@ -73,6 +74,7 @@
 		40CA2B28173BD100C6752C4C /* ExportSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportSession.swift; sourceTree = "<group>"; };
 		47517FD3AE1E223D6734C6CB /* ShotCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShotCardView.swift; sourceTree = "<group>"; };
 		4DEF91792082840C9C11B500 /* MovieImporterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MovieImporterTests.swift; sourceTree = "<group>"; };
+		5E4CD4789C21CAA5AD276FA1 /* ShotTemplateSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShotTemplateSheet.swift; sourceTree = "<group>"; };
 		62EC7FF482193C60D2209FED /* ShotFlowModifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShotFlowModifier.swift; sourceTree = "<group>"; };
 		62FA92C3EF4E0912629DBB96 /* ExportPackageBuilderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportPackageBuilderTests.swift; sourceTree = "<group>"; };
 		664AE32EEA99C983D3224F47 /* MediaImport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaImport.swift; sourceTree = "<group>"; };
@@ -212,6 +214,7 @@
 				47517FD3AE1E223D6734C6CB /* ShotCardView.swift */,
 				62EC7FF482193C60D2209FED /* ShotFlowModifier.swift */,
 				F345BA5C98213C00B5D91F71 /* ShotListView.swift */,
+				5E4CD4789C21CAA5AD276FA1 /* ShotTemplateSheet.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -362,6 +365,7 @@
 				014B3B992E49C01DE18A0034 /* ShotListApp.swift in Sources */,
 				D2228A85CA00B0A27F2D4673 /* ShotListView.swift in Sources */,
 				3D34C6A774AF6336EEE3C49E /* ShotStore.swift in Sources */,
+				65042A1B65E812DE8CDD135E /* ShotTemplateSheet.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

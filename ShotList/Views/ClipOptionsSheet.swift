@@ -1,20 +1,17 @@
 import SwiftUI
 
-/// 点开一个镜头后弹出的面板：写分镜描述、写屏幕字幕与角标、改编号，继续拍、再导入，
+/// 点开一个镜头后弹出的面板：写这个镜头的文字内容、改编号，继续拍、再导入，
 /// 以及管理已经拍好的每一条片段。
 ///
-/// 描述**就在这一页写**，不再跳一个编辑器页面——点开镜头是为了拍，顺手能改描述才顺手；
+/// 文字内容**就在这一页写**，不再跳一个编辑器页面——点开镜头是为了拍，顺手能改内容才顺手；
 /// 单独开一页的结果是「只想改一句话也要跳两层、还得点保存」。
 /// 同一页上还留着导出文件名预览与编号：文件名由「影片标题 + 镜头编号 + 片段序号」
-/// 决定（不含描述），编号即位置（改动会移动镜头），所以预览跟在「顺序」一节里。
+/// 决定（不含内容），编号即位置（改动会移动镜头），所以预览跟在「顺序」一节里。
 ///
-/// 文字分成三样，各写各的：**描述**是拍什么（给剪辑侧挑素材用），
-/// **字幕**是成片上显示的那句话，**角标文字**是常驻角标上要显示的整段字
-/// （例如「热量缺口：1758千卡」）。
-/// 三样分开之前字幕和角标只能塞在描述里，剪辑侧分不清一句是画面的说明还是要显示的字，
-/// 只能靠改写来猜——那正是「不要自行改写语义」这条要求永远守不住的原因。
+/// 文字只有**一个输入框**：描述、字幕、角标、转场……想写什么、按什么格式写都由用户定，
+/// 成片交给 AI 粗剪，它读得懂自然语言，不需要在界面上把这几样拆开填。
 ///
-/// 三样文字与编号都按草稿攒 400 毫秒再落盘：每敲一个字写一次 JSON 没必要，
+/// 内容与编号都按草稿攒 400 毫秒再落盘：每敲一个字写一次 JSON 没必要，
 /// 而编号一变就会触发整段重编号 + 磁盘改名，更不能跟着 Stepper 的每次点击跑。
 /// 面板关掉时（点「完成」或去做别的）立即落一次，不漏。
 struct ClipOptionsSheet: View {
@@ -23,8 +20,8 @@ struct ClipOptionsSheet: View {
     var onCapture: () -> Void
     var onImport: () -> Void
     var onPlay: (ShotClip) -> Void
-    /// 一进来就把光标放进描述输入框。新增 / 插入镜头后走这条路——
-    /// 用户此刻要的就是写描述；从卡片点进来时不抢焦点，那是奔着拍摄来的。
+    /// 一进来就把光标放进内容输入框。新增 / 插入镜头后走这条路——
+    /// 用户此刻要的就是写内容；从卡片点进来时不抢焦点，那是奔着拍摄来的。
     var autoFocusNote: Bool = false
 
     @EnvironmentObject private var store: ShotStore
@@ -38,11 +35,9 @@ struct ClipOptionsSheet: View {
     @State private var showDeleteConfirm = false
 
     @State private var draftNote: String
-    @State private var draftCaption: String
-    @State private var draftBadgeText: String
     /// 用户在这一页拨过的编号；没拨过就是 `nil`，编号一律取仓库当前值。
     ///
-    /// 不能像三样文字那样在打开时抄一份：这一页开着期间，这个镜头的编号可能被别的路径改掉
+    /// 不能像文字内容那样在打开时抄一份：这一页开着期间，这个镜头的编号可能被别的路径改掉
     /// （删除补偿找回镜头时会整库重编号）。过期的副本一旦跟着别的字段一起落盘，
     /// 就会把镜头按旧编号挪回原位，用户明明只改了几个字。
     @State private var numberEdit: Int?
@@ -62,8 +57,6 @@ struct ClipOptionsSheet: View {
         self.onImport = onImport
         self.onPlay = onPlay
         _draftNote = State(initialValue: shot.note)
-        _draftCaption = State(initialValue: shot.caption)
-        _draftBadgeText = State(initialValue: shot.badgeText)
     }
 
     private var live: Shot { store.shot(withID: shot.id) ?? shot }
@@ -79,36 +72,15 @@ struct ClipOptionsSheet: View {
         1...max(1, store.shots.count)
     }
 
-    /// 「沿用上一镜」此刻能补进来的屏幕文字：只含「上一镜有、这一镜的草稿里还空着」的那几项。
-    ///
-    /// 上一镜是影片里编号排在前一位的镜头，不是「上一个拍过的」，也不受历史页筛选影响；
-    /// 每次现取仓库里的值，链式沿用（3 沿用 2、2 沿用 1）时拿到的是 2 改过之后的内容。
-    /// 「这一镜有没有写」看草稿而不是仓库：草稿落盘要等 400 毫秒，
-    /// 用户刚敲完或刚清空，按钮就该立刻跟着变。
-    ///
-    /// 刻意做成**一次性把值抄过来**、**只补空项**：连续几个镜头常常共用同一段字幕或读数，
-    /// 但「留空」必须只有一种含义——这一镜不出；隐式沿用会让「不想出」没法表达。
-    /// 已经写好的那一项不动，免得抄一下就丢掉用户敲的字。描述不带：它是「拍什么」，每镜不同。
-    ///
-    /// 第一个镜头、上一镜两项都空、或这一镜两项都已写时返回 `nil`，那个按钮就不出现。
-    private var inheritableText: (caption: String?, badgeText: String?)? {
-        guard let index = store.index(of: live.id), index > 0 else { return nil }
-        let previous = store.shots[index - 1]
-        let caption = previous.hasCaption && Self.isBlank(draftCaption) ? previous.trimmedCaption : nil
-        let badgeText = previous.hasBadgeText && Self.isBlank(draftBadgeText) ? previous.trimmedBadgeText : nil
-        guard caption != nil || badgeText != nil else { return nil }
-        return (caption, badgeText)
-    }
-
-    /// 与 `Shot.hasCaption` / `hasBadgeText` 同一口径：去首尾空白后为空就算没写。
-    private static func isBlank(_ text: String) -> Bool {
-        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    /// 内容框里是不是还什么都没写（去首尾空白后为空，与 `Shot.hasNote` 同一口径）
+    private var isContentBlank: Bool {
+        draftNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// 与导出结果同一套命名规则：改编号或换影片时，这里实时看到最终文件名。
     ///
-    /// 文件名是「影片标题-镜头编号[-片段序号]」，**不含描述**：描述是给剪辑侧读的
-    /// 整句话，进文件名会又长又容易重名，所以它在 CSV 与指南里，不在这里。
+    /// 文件名是「影片标题-镜头编号[-片段序号]」，**不含内容**：内容是给剪辑侧读的
+    /// 整段话，进文件名会又长又容易重名，所以它在 CSV 与指南里，不在这里。
     ///
     /// 扩展名取自该镜头主素材的真实格式（相册导入的 mp4 导出后仍是 mp4）；
     /// 导出页选了转码格式时换成转码后的容器——预览与打包读的是同一个函数，
@@ -151,35 +123,23 @@ struct ClipOptionsSheet: View {
                 }
 
                 Section {
-                    // 三个输入框都是自由文本，一填上内容占位符就没了。常驻的图标加短标签
-                    // 才分得清哪条是描述、字幕、角标，不会填错位置。
-                    fieldRow("描述", systemImage: "text.alignleft") {
-                        TextField("描述", text: $draftNote, axis: .vertical)
-                            .lineLimit(3...8)
+                    // 输入框一填上内容占位符就没了，常驻的图标加短标签才认得出这是哪一栏
+                    fieldRow("内容", systemImage: "text.alignleft") {
+                        TextField("内容", text: $draftNote, axis: .vertical)
+                            .lineLimit(4...12)
                             .focused($isNoteFocused)
-                            .accessibilityLabel("描述")
+                            .accessibilityLabel("内容")
                     }
 
-                    fieldRow("字幕", systemImage: "captions.bubble") {
-                        TextField("字幕", text: $draftCaption, axis: .vertical)
-                            .lineLimit(2...5)
-                            .accessibilityLabel("字幕")
-                    }
-
-                    fieldRow("角标", systemImage: "tag") {
-                        TextField("角标", text: $draftBadgeText, axis: .vertical)
-                            .lineLimit(1...3)
-                            .accessibilityLabel("角标")
-                    }
-
-                    if let inheritable = inheritableText {
+                    // 只在框还空着时出现：模板是整段填进去的，框里已经有字就不覆盖。
+                    // 看的是草稿而不是仓库——刚清空的那一刻按钮就该回来，不用等落盘。
+                    if isContentBlank {
                         Button {
-                            if let caption = inheritable.caption { draftCaption = caption }
-                            if let badgeText = inheritable.badgeText { draftBadgeText = badgeText }
+                            draftNote = store.shotTemplate
                         } label: {
-                            Label("沿用上一镜", systemImage: "arrow.turn.left.up")
+                            Label("应用模板", systemImage: "text.badge.plus")
                         }
-                        .accessibilityHint("复制上一镜的字幕和角标，只补没写的")
+                        .accessibilityHint("填入影片模板")
                     }
                 }
 
@@ -197,7 +157,7 @@ struct ClipOptionsSheet: View {
                     .accessibilityValue("\(displayedNumber)")
 
                     // 导出文件名跟在编号这一节：名字由「影片标题 + 编号 + 片段序号」组成，
-                    // 描述不再参与。放在描述输入框下面会让人以为改描述就能改名。
+                    // 内容不参与。放在内容输入框下面会让人以为改内容就能改名。
                     LabeledContent {
                         Text(previewFileName)
                             .font(.footnote.monospaced())
@@ -212,8 +172,8 @@ struct ClipOptionsSheet: View {
                     .accessibilityValue(previewFileName)
                 }
 
-                // 片段列表放最后：已拍镜头可能有十几条，摆太靠上会把描述挤到屏幕外，
-                // 而「拍摄 / 写描述」才是打开这一页的两个主要目的。
+                // 片段列表放最后：已拍镜头可能有十几条，摆太靠上会把内容挤到屏幕外，
+                // 而「拍摄 / 写内容」才是打开这一页的两个主要目的。
                 if live.hasClip {
                     Section {
                         ForEach(Array(live.clips.enumerated()), id: \.element.id) { index, clip in
@@ -250,14 +210,12 @@ struct ClipOptionsSheet: View {
                 }
             }
         }
-        // 这一页现在是镜头的正门：头部、拍摄、片段、描述、顺序、删除都在这里，
+        // 这一页现在是镜头的正门：头部、拍摄、片段、内容、顺序、删除都在这里，
         // medium 那份高度装不下，会在输入框中间截断。
         .presentationDetents([.large])
         .interactiveDismissDisabled(store.saveError != nil)
         .presentationDragIndicator(.visible)
         .onChange(of: draftNote) { _, _ in scheduleDraftSave() }
-        .onChange(of: draftCaption) { _, _ in scheduleDraftSave() }
-        .onChange(of: draftBadgeText) { _, _ in scheduleDraftSave() }
         .onChange(of: numberEdit) { _, edit in
             // 落盘成功后 `numberEdit` 会被清回 nil，那不是用户操作，不必再排一次写盘
             if edit != nil { scheduleDraftSave() }
@@ -334,8 +292,8 @@ struct ClipOptionsSheet: View {
         }
     }
 
-    /// 把草稿写回仓库。三样文字都裁掉首尾空白（否则行尾多一个回车就会被当成
-    /// 「写过字幕」），拨过的编号夹进有效区间；没拨过编号就沿用仓库当前值，
+    /// 把草稿写回仓库。文字裁掉首尾空白（否则行尾多一个回车就会被当成
+    /// 「写过内容」），拨过的编号夹进有效区间；没拨过编号就沿用仓库当前值，
     /// 不会把它当成一次移动。
     ///
     /// 与仓库当前值一致时直接返回，所以「同时打开又关掉」不会产生一次多余的写盘。
@@ -345,15 +303,9 @@ struct ClipOptionsSheet: View {
         draftSaveTask = nil
 
         let trimmedNote = draftNote.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedCaption = draftCaption.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedBadgeText = draftBadgeText.trimmingCharacters(in: .whitespacesAndNewlines)
         let number = numberEdit.map { min(max($0, numberRange.lowerBound), numberRange.upperBound) } ?? live.number
 
-        guard trimmedNote != live.trimmedNote
-            || trimmedCaption != live.trimmedCaption
-            || trimmedBadgeText != live.trimmedBadgeText
-            || number != live.number
-        else {
+        guard trimmedNote != live.trimmedNote || number != live.number else {
             // 拨过又拨回去：与仓库一致，不必再保留这份编辑，否则之后仓库编号变了仍会被它盖回
             numberEdit = nil
             return true
@@ -361,8 +313,6 @@ struct ClipOptionsSheet: View {
 
         var edited = live
         edited.note = trimmedNote
-        edited.caption = trimmedCaption
-        edited.badgeText = trimmedBadgeText
         edited.number = number
         guard store.update(edited) else { return false }
         numberEdit = nil
@@ -371,10 +321,10 @@ struct ClipOptionsSheet: View {
 
     // MARK: - 头部
 
-    /// 面板头部只放导航栏给不了的东西：缩略图、分镜描述、已拍状态。
+    /// 面板头部只放导航栏给不了的东西：缩略图、内容、已拍状态。
     ///
     /// 编号不再写第二遍——导航栏标题已经是「镜头 01」，头部再写一遍就是同一个信息
-    /// 在同一屏出现两次。描述为空时也不再用 `displayDetail` 回退成「镜头 N」：
+    /// 在同一屏出现两次。内容为空时也不再用 `displayDetail` 回退成「镜头 N」：
     /// 那个回退会让头部冒出一行「镜头 1」，跟上面那行编号长得几乎一样，像是另一条数据；
     /// 空着就画一道虚线（与分镜卡片同一套语言：虚线表示这里还没有内容）。
     /// 「还没拍」同样不写：缩略图位置本身就是虚线框加号，已经说明这里没有视频，
@@ -519,9 +469,7 @@ struct ClipOptionsSheet: View {
     ClipOptionsSheet(
         shot: Shot(
             number: 3,
-            note: "手冲壶出水特写，收环境音",
-            caption: "第 3 杯还是手冲\n水温 92°C",
-            badgeText: "热量缺口：1758千卡"
+            note: "描述：手冲壶出水特写，收环境音\n字幕：第 3 杯还是手冲\n水温 92°C\n上方角标：热量缺口：1758千卡"
         ),
         onCapture: {},
         onImport: {},

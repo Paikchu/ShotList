@@ -362,6 +362,7 @@ struct FilmSwitcherMenu<MenuLabel: View>: View {
     @Binding var isEditingTitle: Bool
     @Binding var titleDraft: String
     @Binding var isConfirmingRemake: Bool
+    @Binding var isEditingTemplate: Bool
 
     @ViewBuilder var label: () -> MenuLabel
 
@@ -384,6 +385,13 @@ struct FilmSwitcherMenu<MenuLabel: View>: View {
                 } label: {
                     Label("重命名", systemImage: "pencil")
                 }
+            }
+
+            Button {
+                Haptics.impact(.light)
+                isEditingTemplate = true
+            } label: {
+                Label("模板", systemImage: "doc.text")
             }
 
             Button {
