@@ -141,9 +141,9 @@
 
 ### R-1 · 用户在任何一屏看到的界面语言都应是标准的软件提示语，能用图标或版式表达的就不写说明文字
 
-**验证状态：** 待验证
+**验证状态：** 模拟器实测（除下列未验证项）；无障碍标签为代码级确认，回看页与失败提示待真机
 
-**代码位置：** 待实现。现状分布在 ShotList/Views/ 全部界面文件、ShotList/Support/DesignSystem.swift（进度环）、ShotList/Models/ShotStore.swift（存储错误）、ShotList/Models/Shot.swift 与 Film.swift（状态、无障碍与进度文本）、ShotList/Support/ExportPackageBuilder.swift（`ExportScope.title`、`ExportTranscodeOption.detail`、`ExportPackage.summary`、`ExportProgress.text`、`ExportError`、`导出说明.txt`）、ShotList/Camera/CameraRecorder.swift（相机错误）。典型落点见「需求详情」。
+**代码位置：** 现状分布在 ShotList/Views/ 全部界面文件、ShotList/Support/DesignSystem.swift（进度环）、ShotList/Models/ShotStore.swift（存储错误）、ShotList/Models/Shot.swift 与 Film.swift（状态、无障碍与进度文本）、ShotList/Support/ExportPackageBuilder.swift（`ExportScope.title`、`ExportTranscodeOption.detail`、`ExportPackage.summary`、`ExportProgress.text`、`ExportError`、`导出说明.txt`）、ShotList/Camera/CameraRecorder.swift（相机错误）。典型落点见「需求详情」。
 
 **预期结果：** 全应用的按钮、标题、空状态、确认弹层、错误提示统一成软件界面惯用的短语（动词 / 名词 / 图标 + 数字），不再是解释给用户听的自然语言句子。图标、数字、版式、虚线占位已经能表达的信息，不再另写文字。无障碍标签与提示同步跟着改，不留两套说法。
 
@@ -189,13 +189,23 @@
 5. 用隔离测试数据触发一次保存失败（例如把 Application Support 副本设为只读）与一次导出失败，确认提示里是「失败 + 可执行的一步」。
 6. 失败判据：任一屏仍出现解释实现取舍的句子（例如「别的影片不会被一起带走」「这是有意的」）；图标按钮没有无障碍名称；可见文案与无障碍朗读不一致；文字被替换成图标后无法判断该控件做什么。
 
-**实现状态：** 进行中
+**实现状态：** 已实现，待验证
 
-**实现说明：** 待实现；完成后记录写法约定放在哪个文件里，以及为了保持信息量而保留下来的长句及其理由。
+**实现说明：** 写法约定的对照表在本条「目标行为」，一览版放在 ShotList/Support/DesignSystem.swift 文件头注释。新增 `IconValue`（图标 + 数值），用于分镜卡片、镜头面板头部、导出概览、影片条、取景页与播放页；分镜、镜头面板、历史、导出、取景页、拍摄设置、剪辑风格、错误页的按钮、标题、空状态、确认弹层与错误文案按表重写，解释性脚注与无障碍 hint 全部删除，只留一两个字的操作结果。
 
-**验证结果：** 待验证；完成后记录环境、逐屏核对结果与截图位置。
+保留下来的较长文案及理由：剪辑风格页输入框里的整段示例（可编辑内容的样本，不是界面说明）；导出「格式」下的一行取舍（会改变选择）；相机权限前置页「用于录制分镜视频，视频仅存于本机。」（权限说明含隐私承诺）；确认弹层正文「N 段视频将被删除，无法恢复。」（波及数量与不可逆）；「新建影片」弹层「《X》将保留在影片库。」（说明不是覆盖）；存储错误保留系统给出的原因一行。
 
-**实现 commit：** 待提交；完成后填写实际实现提交的完整 SHA。
+顺带调整：导出页「分享」一节在没有已拍镜头时不再显示（原空状态文字与「无可导出视频」重复）；`ExportScope` 新增 `label`（界面短标签「已拍 / 全部」），`title` 保持原样，因为导出包内的文档仍在用它；删除无引用的 `Shot.displayCaption`、`Film.subtitleText`；`Film.progressText` 改为「3/5」；系统权限弹窗说明（Info.plist 与 project.yml）各改为一句用途。README 里引用的界面用词同步更新，README 里的截图仍是旧文案，未重拍。
+
+未改：`分镜文字内容指南.md`、`剪辑风格.md`、`分镜清单.csv`，以及剪辑风格页示例。既有测试有 3 处断言随文案更新（`ExportProgress.text`、`ExportError` 两条描述），未新增测试。
+
+**验证结果：** 环境：Xcode 27.0，iPhone 17 Pro / iOS 26.5 模拟器，`Tools/seed-simulator.py` 灌入的演示数据（两部影片、5 + 3 个镜头，均为隔离副本）。Debug 构建成功，无新增告警；既有 107 项测试全部通过。
+
+模拟器逐屏核对（截图，临时目录，未入库）：分镜页列表、卡片长按菜单、清空片段确认、影片菜单、重命名弹窗、新建影片确认、空状态；镜头面板顶部、三个输入框、编号与文件名、片段列表、清空与删除镜头确认；历史页列表、影片下拉、空状态；导出页素材概览、剪辑风格（已设置 / 未设置）、打包与结果、包内文件、分享、电脑、删除影片确认、无可导出视频；剪辑风格页；取景页 `-chromeDemo` 1 / 3 / 4 / 5（描述折叠、拍摄中加对焦锁定、拍摄设置、无描述）；相机权限前置页、权限被拒页、无摄像头页（`-cameraDemo` 配合 `simctl privacy`）；加载失败页（把隔离副本的 `films.json` 写坏后启动）；保存失败横幅（把元数据目录设为只读后点添加）。以上均未再出现解释设计取舍的句子，统计与状态为图标 + 数字。
+
+未验证：① VoiceOver 朗读与无障碍树——模拟器控制工具的 `inspect` 不可用，仅代码级确认每个图标按钮都有 `accessibilityLabel`、图标对读屏隐藏；② 取景页回看页（「重拍 / 使用 / 保存并再拍」）——只在录制完成后出现，模拟器没有摄像头；③ 录制失败、保存失败、导入失败与导出失败的弹层文案——没有安全的触发方式，仅代码级确认。以上待真机或 VoiceOver 走查后补记，通过后再移入已交付。
+
+**实现 commit：** d79a034257a44f972406dd1e5d1bebd958a63f61
 
 <a id="r-2"></a>
 
