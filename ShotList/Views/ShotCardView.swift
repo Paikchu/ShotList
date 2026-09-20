@@ -3,16 +3,17 @@ import SwiftUI
 /// 分镜卡片 —— 需求里的「可点击添加视频的模块」。
 ///
 /// 整张卡片是一个 `Button`，点击后弹出拍摄 / 导入 / 片段管理。
-/// 卡片上只保留编号与分镜描述，时长压在缩略图上、条数标在缩略图左上角，
-/// 状态徽标不在这里重复，避免一行字旁边挂三四个标签。
+/// 卡片上只保留编号与分镜内容，时长压在缩略图上、条数标在缩略图左上角，
+/// 拍摄时间、总时长、状态徽标都不在这里重复，避免一行字旁边挂三四个标签。
 /// 还没拍的镜头也不写「点击拍摄或导入视频」——虚线框加号与可点的整卡已经说明可以加视频，
 /// 一句提示在每个未拍镜头上重复一遍只是噪声（无障碍那条更完整的说法在 `accessibilityHint`）。
 /// 描述还没写时，描述位置画一道虚线占位（虚线在这套界面里一直是「这里还没有内容」的意思，
 /// 见缩略图的虚线框），不写「待填写」之类的文案。
 /// 在无障碍字号下改为上下布局，避免文字被挤压。
 ///
-/// **分镜页的卡片一样高**：文字块固定为「主文字三行 + 末行」的高度，
-/// 已拍还是未拍、内容写了几行都不改变它，一列卡片才不会忽高忽低。
+/// **分镜页的卡片一样高**：文字块固定为三行主文字的高度，
+/// 已拍还是未拍、内容写了几行都不改变它，一列卡片才不会忽高忽低；
+/// 缩略图在卡片里垂直居中。
 struct ShotCardView: View {
     let shot: Shot
     let clipURL: URL?
@@ -23,10 +24,10 @@ struct ShotCardView: View {
     var showsNumber: Bool = true
     /// 是不是刚插进来的。用 accent 描边把「就是这一张」指出来，约一秒后由调用方收回。
     var isNew: Bool = false
-    /// 卡片按哪条片段展示（缩略图时长、角标时间都跟它走）。
+    /// 卡片按哪条片段展示（缩略图与时长都跟它走）。
     ///
     /// 传 `nil` 时用最近一条——全应用的默认口径；历史页按天翻看时传
-    /// 「当天最新的一条」，缩略图与时间就落在选中的那一天。
+    /// 「当天最新的一条」，缩略图就落在选中的那一天。
     var displayClip: ShotClip? = nil
     /// 覆盖角标条数的口径（如「只数当天拍下的几条」）；传 `nil` 时数全部片段。
     var takeCountOverride: Int? = nil
@@ -41,7 +42,6 @@ struct ShotCardView: View {
         if shot.hasNote { parts.append(shot.displayDetail) }
         if let clip = effectiveClip {
             parts.append("\(effectiveTakeCount) 段")
-            parts.append(clip.shortRecordedAtText())
             if let duration = clip.durationText { parts.append("时长 \(duration)") }
         } else {
             parts.append("未拍")
@@ -84,7 +84,8 @@ struct ShotCardView: View {
                 details
             }
         } else {
-            HStack(alignment: .top, spacing: SLSpacing.medium) {
+            // 缩略图垂直居中；文字块顶部对齐（见 `details`），文字比缩略图高时缩略图仍在卡片正中
+            HStack(alignment: .center, spacing: SLSpacing.medium) {
                 thumbnail(size: SLSize.thumbnail)
                 details
                 Spacer(minLength: 0)
@@ -108,10 +109,8 @@ struct ShotCardView: View {
             if showsNumber, shot.hasNote {
                 noteText
             }
-
-            metaRow
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     /// 主行：编号（历史页）或分镜内容（分镜页），这一行整行都留给它
@@ -155,24 +154,6 @@ struct ShotCardView: View {
             .lineLimit(3)
             .multilineTextAlignment(.leading)
             .fixedSize(horizontal: false, vertical: true)
-    }
-
-    /// 卡片末行：靠右一个最近一次拍摄时间。
-    ///
-    /// 未拍的镜头这一行**留空但照样占高度**：这里原本是一句「点击拍摄或导入视频」，
-    /// 但左侧虚线框里的加号、以及「整张卡片可点」已经表达了同一件事，
-    /// VoiceOver 那边还有更完整的 `accessibilityActionHint`，所以不写字；
-    /// 只是这一行不能整个不画，否则未拍卡片会比已拍卡片矮一截。
-    /// 总时长不在卡片上出现：它只有拍过不止一条的镜头才有，同一列里时有时无。
-    private var metaRow: some View {
-        HStack(alignment: .firstTextBaseline, spacing: SLSpacing.small) {
-            Spacer(minLength: SLSpacing.small)
-
-            Text(effectiveClip?.shortRecordedAtText() ?? " ")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-        }
     }
 }
 
