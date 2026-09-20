@@ -111,12 +111,23 @@
 5. 预期正确结果：要么在剩余空间见底前主动收尾并说明原因，要么在 `.diskFull` 路径上同样给出提示。
 6. 验证完成后清理测试用的占位文件。
 
-**修复状态：** 未修复
+**修复状态：** 待验证
 
-**修复说明：** 待修复；两条一起做才完整：给 `movieOutput` 设一个 `minFreeDiskSpaceLimit`（在 `configureIfNeeded` 里与 `maxRecordedDuration` / `maxRecordedFileSize` 同处设置），并让 `stopReason(matching:)` 把 `.diskFull` 归为一种需要说明的停止原因（可复用 `.reachedLimit`，或另加一个 case 以便给出不同文案）。改动落在真机录制回调上，需真机验证后再合并。
+**修复说明：** 根因两处，均在 `ShotList/Camera/CameraRecorder.swift`：`movieOutput` 没有设 `minFreeDiskSpaceLimit`，而 P2-36 放宽 `maxRecordedFileSize` 之后它不再是磁盘的保险；`stopReason(matching:)` 把 `.diskFull` 落进 `default` 记成 `.userRequested`，走静默成功路径。
 
-**验证结果：** 待验证；本轮为代码级确认与全仓检索，未做磁盘写满的故障注入实测。
+修复：
 
-**修复 commit：** 待提交；完成后填写实际修复提交的完整 SHA。
+- 新增 `minimumFreeDiskSpace`（500 MB），在 `configureIfNeeded` 里与 `maxRecordedDuration` / `maxRecordedFileSize` 同处赋给 `movieOutput.minFreeDiskSpaceLimit`：剩余空间低于它时 AVFoundation 主动收尾，留出空间给 `films.json` 与系统。
+- `StopReason` 新增 `.diskFull`，`stopReason(matching:)` 把 `AVError.diskFull` 归到它；其余 code 仍归 `.userRequested`，不误报。
+- `CameraCaptureView` 把原来的「已达录制上限」提示与新增的「存储空间不足」（正文「已停止录制。请释放空间后再拍。」）合并成一个由 `RecordingNotice` 驱动的说明弹层，避免同一视图上叠第三个 `.alert`；照常进入回看，素材不受影响。
+
+**验证结果：**
+
+- 构建：Xcode 27.0，iPhone 17 Pro / iOS 26.5 模拟器，Debug 构建成功、无新增告警；既有 107 项测试全部通过。
+- 隔离的代码级验证：把 `stopReason(matching:)` 的判定原样搬到仓库外的独立 Swift 脚本，用真实 `AVError` 构造样本，`nil` → `userRequested`、`.maximumFileSizeReached` / `.maximumDurationReached` → `reachedLimit`、`.diskFull` → `diskFull`、其他 `AVError` 与非 `AVError` → `userRequested`，6 项全部通过；验证后已删除脚本，未纳入提交。
+- 界面：模拟器没有摄像头，用临时探针（启动参数直接触发，验证后已移除）分别弹出两种说明：「存储空间不足 / 已停止录制。请释放空间后再拍。」与只有标题的「已达录制上限」，版式与「好」按钮正常。
+- 待验证（需要真机摄像头，无法在模拟器执行）：`minFreeDiskSpaceLimit` 在真实设备上收尾时返回的确切 error（预期为 `AVError.diskFull` 且 `recordingSuccessfullyFinished` 为 true）；把可用空间压到 500 MB 以下后录制的实际停止时机；500 MB 这个预留量是否合适；停止后回看页说明弹层的真实弹出时机。
+
+**修复 commit：** `85382798cbe75097d734c8c950678d84124a2fab`
 
 **来源：** 审查 [P2-36](#p2-36) 的修复实现时发现，属于独立根因（磁盘保险缺失 + `.diskFull` 未被识别），按 AGENTS.md 单独编号，不并入 P2-36 条目。
