@@ -9,7 +9,6 @@ struct ExportView: View {
     /// 镜头面板的文件名预览与这里读同一个键，改一处两边一致。
     @AppStorage(ExportTranscodeOption.storageKey) private var transcodeOption: ExportTranscodeOption = .original
     @StateObject private var export = ExportSession()
-    @State private var showClearConfirm = false
     /// 打开「清理未使用文件」确认弹窗时把数量拍成文案。
     /// 不能等弹窗渲染时现读 `store`——那时文件已经删了，文案会变成「0 个」。
     @State private var orphanPrompt: String?
@@ -22,22 +21,10 @@ struct ExportView: View {
     @State private var isShowingStylePage =
         ProcessInfo.processInfo.arguments.contains("-preselectStylePage")
 
-    /// 「已拍」读 `store` 的磁盘口径，与素材概览里的「已拍 N / M」是同一个判据
-    private var recordedShots: [Shot] { store.recordedShots }
-
-    /// 当前影片的展示名（带书名号），用在确认弹层与说明文字里
+    /// 当前影片的展示名（带书名号），用在导出设置与素材概览的朗读文本里
     private var filmName: String {
         guard let film = store.currentFilm else { return "当前影片" }
         return "《\(film.displayTitle)》"
-    }
-
-    /// 删除确认的正文：只写波及的数量与不可恢复。
-    ///
-    /// 空白影片删完会立刻补一部新的，没有数量可写，此时不写正文，
-    /// 免得出现「0 个镜头、0 段视频」这种什么都没说的句子。
-    private var deleteMessage: String? {
-        guard !store.shots.isEmpty else { return nil }
-        return "\(store.shots.count) 个镜头、\(store.clipCount) 段视频将被删除，无法恢复。"
     }
 
     var body: some View {
@@ -55,15 +42,16 @@ struct ExportView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                contentsSection
-                if !recordedShots.isEmpty {
-                    clipsSection
+                // 只在磁盘上确有无归属文件时才出现
+                if store.orphanFileCount > 0 {
+                    maintenanceSection
                 }
-                computerSection
-                maintenanceSection
             }
             .listStyle(.insetGrouped)
             .contentMargins(.top, -SLSpacing.groupedListTopSlack, for: .scrollContent)
+            // 主操作固定在底部，不随列表滚动；列表末行自动让出它占的高度，
+            // 滚到它下面的内容由系统做柔化，不会和按钮糊在一起
+            .safeAreaBar(edge: .bottom) { exportButton }
             .navigationTitle("导出")
             // 标题与右侧内容同行（inlineLarge），不单独占一行；三页起始位置一致
             .toolbarTitleDisplayMode(.inlineLarge)
@@ -83,18 +71,6 @@ struct ExportView: View {
             Button("好", role: .cancel) {}
         } message: {
             Text(export.errorMessage ?? "")
-        }
-        .alert("删除影片？", isPresented: $showClearConfirm) {
-            Button("删除", role: .destructive) {
-                store.deleteCurrentFilm()
-                export.invalidate()
-                Haptics.warning()
-            }
-            Button("取消", role: .cancel) {}
-        } message: {
-            if let deleteMessage {
-                Text(deleteMessage)
-            }
         }
         .alert("清理未使用文件？", isPresented: orphanBinding) {
             Button("删除", role: .destructive) {
@@ -205,20 +181,6 @@ struct ExportView: View {
             .accessibilityLabel("格式")
             .accessibilityValue(transcodeOption.title)
 
-            Button {
-                build()
-            } label: {
-                HStack {
-                    Label("打包", systemImage: "shippingbox")
-                    Spacer()
-                    if export.isBuilding {
-                        ProgressView().controlSize(.small)
-                    }
-                }
-                .frame(minHeight: SLSize.minTouchTarget)
-            }
-            .disabled(export.isBuilding || store.recordedCount == 0)
-
             if let progress = export.progress {
                 buildProgress(progress)
             }
@@ -230,12 +192,33 @@ struct ExportView: View {
             }
         } header: {
             SectionHeader(title: "打包导出", systemImage: "shippingbox")
-        } footer: {
-            // 没有素材时不必先讲格式的取舍
-            if store.recordedCount > 0 {
-                Text(transcodeOption.detail)
-            }
         }
+    }
+
+    /// 固定在页面底部的独立主按钮：强调色实心，通栏。
+    ///
+    /// 没有已拍镜头或正在打包时置灰；打包中图标换成转圈。
+    private var exportButton: some View {
+        Button {
+            build()
+        } label: {
+            HStack(spacing: SLSpacing.small) {
+                if export.isBuilding {
+                    // 与图标同高，按钮不因为转圈变高
+                    ProgressView().controlSize(.small).tint(.white)
+                } else {
+                    Image(systemName: "shippingbox")
+                }
+                Text("打包导出")
+            }
+            .font(.headline)
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+        .disabled(export.isBuilding || store.recordedCount == 0)
+        .padding(.horizontal, SLSpacing.medium)
+        .padding(.vertical, SLSpacing.small)
     }
 
     /// 转码一段素材要几十秒，进度得说明「动到哪了」——
@@ -290,178 +273,24 @@ struct ExportView: View {
         }
     }
 
-    private var contentsSection: some View {
-        Section {
-            contentsRow("film", exampleMainFileName, tag: "主素材")
-            contentsRow("square.stack.3d.up", exampleAlternateFileName, tag: "备用")
-            contentsRow("tablecells", "分镜清单.csv")
-            contentsRow("doc.text", "分镜文字内容指南.md")
-            contentsRow("text.alignleft", "剪辑风格.md")
-            contentsRow("info.circle", "导出说明.txt")
-        } header: {
-            SectionHeader(title: "包内文件", systemImage: "doc.text.magnifyingglass")
-        }
-    }
-
-    // MARK: - 压缩包内容示例
-
-    /// 示例文件名取自真实的分镜，而不是写死的文案：
-    /// 有已拍镜头就用它的实际命名，随拍摄动态变化；一个分镜都没有时退回通用占位。
-    private var exampleShot: Shot? {
-        recordedShots.first ?? store.shots.first
-    }
-
-    /// 主素材示例，例如「夏日vlog-01-3.mov」。
-    /// 复用导出时的命名函数，页面展示与实际打包结果永远一致：
-    /// 拍了多条的镜头带片段序号（主素材条号按拍摄时间确定），只拍一条时不带。
-    ///
-    /// 一个镜头都没有时给的是纯编号（`01.mov`）——文件名里已经没有描述这一节，
-    /// 不必再编一段假描述当占位。
-    private var exampleMainFileName: String {
-        let takeIndex: Int? = {
-            guard let shot = exampleShot, shot.clipCount > 1 else { return nil }
-            return shot.latestTakeIndex
-        }()
-        return ExportPackageBuilder.exportedFileName(
-            filmTitle: filmTitleToken,
-            number: exampleShot?.number ?? 1,
-            takeIndex: takeIndex,
-            fileExtension: transcodeOption.exportedFileExtension(
-                sourceExtension: exampleShot?.mainFileExtension ?? "mov"
-            )
-        )
-    }
-
-    /// 备用片段示例，例如「备用片段/夏日vlog-01-1.mov」，编号与主素材示例保持一致。
-    private var exampleAlternateFileName: String {
-        let name = ExportPackageBuilder.exportedFileName(
-            filmTitle: filmTitleToken,
-            number: exampleShot?.number ?? 1,
-            takeIndex: 1,
-            fileExtension: (exampleMainFileName as NSString).pathExtension
-        )
-        return "备用片段/\(name)"
-    }
-
-    /// 当前影片标题在文件名里的那一节；没起片名时为空串，文件名里就不出现标题
-    private var filmTitleToken: String { store.currentFilm?.exportTitleToken ?? "" }
-
-    /// 一行一个包内文件：图标表示类型，文件名等宽，需要区分的两类视频再加一个 2 字标签
-    private func contentsRow(_ systemImage: String, _ name: String, tag: String? = nil) -> some View {
-        HStack(spacing: SLSpacing.small) {
-            Image(systemName: systemImage)
-                .foregroundStyle(.secondary)
-                .frame(width: 24)
-                .accessibilityHidden(true)
-            Text(name)
-                .font(.subheadline.monospaced())
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            Spacer(minLength: SLSpacing.small)
-            if let tag {
-                Text(tag)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .accessibilityElement(children: .combine)
-    }
-
-    // MARK: - 单条分享
-
-    /// 只在有已拍镜头时出现（见 `body`），所以这里不需要空状态文字。
-    private var clipsSection: some View {
-        Section {
-            ForEach(recordedShots) { shot in
-                HStack(spacing: SLSpacing.medium) {
-                    NumberBadge(number: shot.number, isRecorded: true, size: 26)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(shot.displayDetail)
-                            .font(.subheadline)
-                            .lineLimit(1)
-                        Text(clipSummary(for: shot))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Spacer(minLength: SLSpacing.small)
-
-                    let urls = store.clipURLs(for: shot)
-                    if !urls.isEmpty {
-                        ShareLink(
-                            items: urls,
-                            subject: Text("镜头 \(shot.paddedNumber) \(shot.displayDetail)")
-                        ) {
-                            Image(systemName: "square.and.arrow.up")
-                                .frame(width: SLSize.minTouchTarget, height: SLSize.minTouchTarget)
-                        }
-                        .accessibilityLabel("分享镜头 \(shot.number)")
-                    }
-                }
-            }
-        } header: {
-            SectionHeader(title: "分享", systemImage: "square.and.arrow.up.on.square")
-        }
-    }
-
-    /// 例如「2 段 · 18 秒 · 今天 22:14」
-    private func clipSummary(for shot: Shot) -> String {
-        var parts: [String] = []
-        if shot.clipCount > 1 { parts.append("\(shot.clipCount) 段") }
-        parts.append(shot.totalDuration.slDurationText)
-        if let recordedAt = shot.shortRecordedAtText { parts.append(recordedAt) }
-        return parts.joined(separator: " · ")
-    }
-
-    // MARK: - 电脑
-
-    private var computerSection: some View {
-        Section {
-            // 文件夹图标是「文件」App，显示器图标是 Mac；路径本身就是全部内容
-            Label("我的 iPhone › 分镜助手 › 分镜视频", systemImage: "folder")
-                .font(.subheadline)
-                .accessibilityLabel("文件：我的 iPhone › 分镜助手 › 分镜视频")
-
-            Label("访达 › 位置 › 分镜助手", systemImage: "desktopcomputer")
-                .font(.subheadline)
-                .accessibilityLabel("Mac：访达 › 位置 › 分镜助手")
-        } header: {
-            SectionHeader(title: "电脑", systemImage: "cable.connector")
-        }
-    }
-
     // MARK: - 维护
 
+    /// 只在真有无归属文件时才由 `body` 摆出来。它们占着磁盘却不属于任何分镜，
+    /// 不出现这个入口的话用户看不到、也没法回收。
     private var maintenanceSection: some View {
         Section {
-            // 只在真有这类文件时才出现。它们占着磁盘却不属于任何分镜，
-            // 不出现这个入口的话用户看不到、也没法回收。
-            if store.orphanFileCount > 0 {
-                Button(role: .destructive) {
-                    orphanPrompt = "\(store.orphanFileCount) 个文件 · \(store.orphanBytes.slByteText)，无法恢复。"
-                } label: {
-                    HStack {
-                        Label("清理未使用文件", systemImage: "trash.slash")
-                        Spacer(minLength: SLSpacing.small)
-                        Text("\(store.orphanFileCount) 个 · \(store.orphanBytes.slByteText)")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(minHeight: SLSize.minTouchTarget)
-                }
-            }
-
             Button(role: .destructive) {
-                showClearConfirm = true
+                orphanPrompt = "\(store.orphanFileCount) 个文件 · \(store.orphanBytes.slByteText)，无法恢复。"
             } label: {
-                Label("删除影片", systemImage: "trash")
+                HStack {
+                    Label("清理未使用文件", systemImage: "trash.slash")
+                    Spacer(minLength: SLSpacing.small)
+                    Text("\(store.orphanFileCount) 个 · \(store.orphanBytes.slByteText)")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(minHeight: SLSize.minTouchTarget)
             }
-            // 禁用条件按「空影片」的口径判（isBlank = 无分镜且无标题），不能只看分镜数：
-            // 只剩一部「起了名字但还没加镜头」的影片时，分镜数也是 0，但它有标题要清，
-            // 而全应用只有这一个删除入口，禁用了这部影片就再也删不掉。
-            .disabled(store.films.count <= 1 && (store.currentFilm?.isBlank ?? true))
         }
     }
 

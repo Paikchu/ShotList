@@ -57,18 +57,6 @@ nonisolated enum ExportTranscodeOption: String, CaseIterable, Identifiable {
         }
     }
 
-    /// 选项下面那一行取舍：只写会影响选择的那一点
-    var detail: String {
-        switch self {
-        case .original:
-            return "不转码，画质不变"
-        case .compatible:
-            return "兼容性最佳，需转码"
-        case .compact:
-            return "体积更小，需转码，旧设备可能无法播放"
-        }
-    }
-
     /// 写进 `导出说明.txt` 的格式说明
     var documentText: String {
         switch self {
