@@ -79,17 +79,30 @@ struct ClipOptionsSheet: View {
         1...max(1, store.shots.count)
     }
 
-    /// 前一个镜头填过的角标文字，用来给「沿用上一镜」这个动作。
+    /// 「沿用上一镜」此刻能补进来的屏幕文字：只含「上一镜有、这一镜的草稿里还空着」的那几项。
     ///
-    /// 刻意做成**一次性把值抄过来**，而不是「留空即沿用」那种隐式规则：
-    /// 连续几个镜头常常共用同一个读数，但「留空」必须只有一种含义——
-    /// 这一镜不出角标。隐式沿用会让「不想出角标」这件事没法表达。
+    /// 上一镜是影片里编号排在前一位的镜头，不是「上一个拍过的」，也不受历史页筛选影响；
+    /// 每次现取仓库里的值，链式沿用（3 沿用 2、2 沿用 1）时拿到的是 2 改过之后的内容。
+    /// 「这一镜有没有写」看草稿而不是仓库：草稿落盘要等 400 毫秒，
+    /// 用户刚敲完或刚清空，按钮就该立刻跟着变。
     ///
-    /// 前一个镜头也没填时返回 `nil`，那个按钮就不出现。
-    private var previousBadgeText: String? {
-        guard let index = store.shots.firstIndex(where: { $0.id == live.id }), index > 0 else { return nil }
-        let text = store.shots[index - 1].trimmedBadgeText
-        return text.isEmpty ? nil : text
+    /// 刻意做成**一次性把值抄过来**、**只补空项**：连续几个镜头常常共用同一段字幕或读数，
+    /// 但「留空」必须只有一种含义——这一镜不出；隐式沿用会让「不想出」没法表达。
+    /// 已经写好的那一项不动，免得抄一下就丢掉用户敲的字。描述不带：它是「拍什么」，每镜不同。
+    ///
+    /// 第一个镜头、上一镜两项都空、或这一镜两项都已写时返回 `nil`，那个按钮就不出现。
+    private var inheritableText: (caption: String?, badgeText: String?)? {
+        guard let index = store.index(of: live.id), index > 0 else { return nil }
+        let previous = store.shots[index - 1]
+        let caption = previous.hasCaption && Self.isBlank(draftCaption) ? previous.trimmedCaption : nil
+        let badgeText = previous.hasBadgeText && Self.isBlank(draftBadgeText) ? previous.trimmedBadgeText : nil
+        guard caption != nil || badgeText != nil else { return nil }
+        return (caption, badgeText)
+    }
+
+    /// 与 `Shot.hasCaption` / `hasBadgeText` 同一口径：去首尾空白后为空就算没写。
+    private static func isBlank(_ text: String) -> Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// 与导出结果同一套命名规则：改编号或换影片时，这里实时看到最终文件名。
@@ -159,13 +172,14 @@ struct ClipOptionsSheet: View {
                             .accessibilityLabel("角标")
                     }
 
-                    if let previousBadgeText, previousBadgeText != live.trimmedBadgeText {
+                    if let inheritable = inheritableText {
                         Button {
-                            draftBadgeText = previousBadgeText
+                            if let caption = inheritable.caption { draftCaption = caption }
+                            if let badgeText = inheritable.badgeText { draftBadgeText = badgeText }
                         } label: {
                             Label("沿用上一镜", systemImage: "arrow.turn.left.up")
                         }
-                        .accessibilityHint("复制上一镜的角标")
+                        .accessibilityHint("复制上一镜的字幕和角标，只补没写的")
                     }
                 }
 
