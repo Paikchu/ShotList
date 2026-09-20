@@ -36,8 +36,9 @@ struct CameraCaptureView: View {
     @State private var isSaving = false
     @State private var isVisible = false
     @State private var errorMessage: String?
-    /// 这一条是撞上体积/时长上限自动停止的，需要在回看页告诉用户
-    @State private var reachedRecordingLimit = false
+    /// 这一条是被上限（体积、时长、磁盘剩余空间）截停的，需要在回看页告诉用户
+    @State private var recordingNotice: RecordingNotice?
+    @State private var isShowingRecordingNotice = false
 
     // MARK: - 取景控制状态
 
@@ -105,8 +106,16 @@ struct CameraCaptureView: View {
         } message: {
             Text(errorMessage ?? "")
         }
-        .alert("已达录制上限", isPresented: $reachedRecordingLimit) {
+        .alert(
+            recordingNotice?.title ?? "",
+            isPresented: $isShowingRecordingNotice,
+            presenting: recordingNotice
+        ) { _ in
             Button("好", role: .cancel) {}
+        } message: { notice in
+            if let message = notice.message {
+                Text(message)
+            }
         }
         .sheet(isPresented: $isShowingSettings) { settingsSheet }
     }
@@ -499,8 +508,13 @@ struct CameraCaptureView: View {
                 switch result {
                 case .success(let output):
                     enterReview(output.url)
-                    if output.stopReason == .reachedLimit {
-                        reachedRecordingLimit = true
+                    switch output.stopReason {
+                    case .userRequested:
+                        break
+                    case .reachedLimit:
+                        showRecordingNotice(.reachedLimit)
+                    case .diskFull:
+                        showRecordingNotice(.diskFull)
                     }
                 case .failure(let error):
                     Haptics.error()
@@ -611,11 +625,36 @@ struct CameraCaptureView: View {
         }
     }
 
+    private func showRecordingNotice(_ notice: RecordingNotice) {
+        recordingNotice = notice
+        isShowingRecordingNotice = true
+    }
+
     private var errorBinding: Binding<Bool> {
         Binding(
             get: { errorMessage != nil },
             set: { presented in if !presented { errorMessage = nil } }
         )
+    }
+}
+
+/// 录制被上限截停时的一句说明。素材完好，照常进入回看，这只是告诉用户「为什么停了」。
+private enum RecordingNotice {
+    case reachedLimit
+    case diskFull
+
+    var title: String {
+        switch self {
+        case .reachedLimit: "已达录制上限"
+        case .diskFull: "存储空间不足"
+        }
+    }
+
+    var message: String? {
+        switch self {
+        case .reachedLimit: nil
+        case .diskFull: "已停止录制。请释放空间后再拍。"
+        }
     }
 }
 

@@ -69,6 +69,9 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
     enum StopReason: Equatable {
         case userRequested
         case reachedLimit
+        /// 剩余空间见底（`minimumFreeDiskSpace`）：素材完好，但用户需要知道为什么停了、
+        /// 以及接下来要先腾出空间。
+        case diskFull
     }
 
     /// 一次录制成功结束时的产出：文件地址，以及它是怎么停下来的。
@@ -147,6 +150,13 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
     /// `maximumDurationSeconds` 是单个镜头最长录制时长。
     private static let maximumFileSize: Int64 = 600 * 1024 * 1024
     private static let maximumDurationSeconds: Double = 600
+
+    /// 录制期间给系统与其他 App 留的最小剩余空间。
+    ///
+    /// `maxRecordedFileSize` 随画质放宽之后不再是磁盘的保险（4K / 60 fps 单条可达 GB 级），
+    /// 不设这一条就会一直录到磁盘写满，连 `films.json` 都写不进去。
+    /// 剩余空间见底时 AVFoundation 主动收尾并带 `.diskFull`（素材完好），见 `stopReason(matching:)`。
+    private static let minimumFreeDiskSpace: Int64 = 500 * 1024 * 1024
 
     /// 录制中的临时文件前缀。
     ///
@@ -692,6 +702,7 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
             preferredTimescale: 600
         )
         movieOutput.maxRecordedFileSize = Self.maximumFileSize
+        movieOutput.minFreeDiskSpaceLimit = Self.minimumFreeDiskSpace
 
         if let connection = movieOutput.connection(with: .video),
            connection.isVideoStabilizationSupported {
@@ -1023,18 +1034,20 @@ nonisolated extension CameraRecorder: AVCaptureFileOutputRecordingDelegate {
         }
     }
 
-    /// 区分「用户 / 系统主动停止」与「撞到本类自己设的体积、时长上限」。
+    /// 区分「用户 / 系统主动停止」与「撞到本类自己设的体积、时长上限」「磁盘见底」。
     ///
     /// 撞上限时 AVFoundation 会带着具体的 `AVError`（`.maximumFileSizeReached` /
-    /// `.maximumDurationReached`）：素材完好、判定为成功，但用户看到的只是
-    /// 「自己停了」，界面需要据此补一句说明。来电、切后台等中断都经
-    /// `stopRecording()` 主动收尾（`error` 为 nil 或不是这两种 code），因此仍归为
-    /// `userRequested`，不会被误报成撞上限。
+    /// `.maximumDurationReached`，剩余空间低于 `minimumFreeDiskSpace` 时是 `.diskFull`）：
+    /// 素材完好、判定为成功，但用户看到的只是「自己停了」，界面需要据此补一句说明。
+    /// 来电、切后台等中断都经 `stopRecording()` 主动收尾（`error` 为 nil 或不是这几种
+    /// code），因此仍归为 `userRequested`，不会被误报。
     private static func stopReason(matching error: Error?) -> StopReason {
         guard let avError = error as? AVError else { return .userRequested }
         switch avError.code {
         case .maximumFileSizeReached, .maximumDurationReached:
             return .reachedLimit
+        case .diskFull:
+            return .diskFull
         default:
             return .userRequested
         }
