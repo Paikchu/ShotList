@@ -250,7 +250,7 @@ enum ExportError: LocalizedError {
 /// 命名规则：`影片标题-分镜号[-片段序号]`。同一个分镜拍了好几条、需要二选一时，
 /// 靠片段序号区分（数字越大拍得越晚）：`夏日vlog-01-1.mov`、`夏日vlog-01-2.mov`、
 /// `夏日vlog-01-3.mov`（第 3 条是主素材）；只拍一条的镜头不带片段序号，写作
-/// `夏日vlog-02.mov`。**分镜描述不进文件名**（见 `exportedFileName`）。
+/// `夏日vlog-02.mov`。**分镜内容不进文件名**（见 `exportedFileName`）。
 ///
 /// 包内结构（影片「夏日vlog」，镜头 01 拍了 3 条、镜头 02 拍了 1 条）：
 /// ```
@@ -273,8 +273,8 @@ enum ExportError: LocalizedError {
 /// 不转码就逐条复制。
 ///
 /// 四个文本文件分工不同：`分镜清单.csv` 是给人看的表格（也便于脚本解析，
-/// 逐镜的屏幕字幕与角标文字都在这里）；`导出说明.txt` 讲怎么导入剪映、怎么传到电脑；
-/// `分镜文字内容指南.md` 面向 AI——把每个镜头的三样文字（描述、字幕、角标）
+/// 逐镜的文字内容都在这里）；`导出说明.txt` 讲怎么导入剪映、怎么传到电脑；
+/// `分镜文字内容指南.md` 面向 AI——把每个镜头的文字内容
 /// 与视频文件名严格绑定，并写明按分镜处理视频的规则；`剪辑风格.md` 也面向 AI，
 /// 但管的是**影片级**的那一层——怎么剪、要什么观感。
 ///
@@ -592,11 +592,12 @@ nonisolated enum ExportPackageBuilder {
 
     private struct ManifestRow {
         let number: Int
-        let detail: String
-        /// 屏幕字幕文案（用户自己写的，剪辑侧原样使用）
-        let caption: String
-        /// 常驻角标文字（用户写的完整文字，例如「热量缺口：1758千卡」）
-        let badgeText: String
+        /// 这个镜头的文字内容（用户自己写的，可以多行；没写时为空串）。
+        ///
+        /// 是**镜头级**信息，会在同一个镜头的每一条片段上重复：与拍摄时间等按片段的
+        /// 信息不同，重复是为了让每一行自洽——剪辑侧挑中「备用片段」那一行时，
+        /// 内容不用回头再找。
+        let content: String
         let statusText: String
         let takeText: String
         let recordedAtText: String
@@ -612,6 +613,14 @@ nonisolated enum ExportPackageBuilder {
         /// 是否是「备用片段」目录里的更早片段
         var isAlternate: Bool { !isMain }
 
+        /// 给「导出说明.txt」里一行一条的清单用的简称：内容的第一行，没写时回退为「镜头 N」。
+        var summaryLine: String {
+            content
+                .components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .first { !$0.isEmpty } ?? "镜头 \(number)"
+        }
+
         /// 已拍片段
         init(
             shot: Shot,
@@ -622,12 +631,7 @@ nonisolated enum ExportPackageBuilder {
             isMain: Bool
         ) {
             self.number = shot.number
-            self.detail = shot.displayDetail
-            // 字幕与角标是**镜头级**的，会在同一个镜头的每一条片段上重复。
-            // 与 `detail` 一样是按镜头而非按片段的信息，重复是为了让每一行自洽：
-            // 剪辑侧挑中「备用片段」那一行时，字幕与角标不用回头再找。
-            self.caption = shot.trimmedCaption
-            self.badgeText = shot.trimmedBadgeText
+            self.content = shot.trimmedNote
             self.statusText = shot.status().title
             self.takeText = takeTotal > 1 ? "第 \(takeIndex) 条 / 共 \(takeTotal) 条" : "第 1 条"
             self.recordedAtText = clip.recordedAtText ?? ""
@@ -639,9 +643,7 @@ nonisolated enum ExportPackageBuilder {
         /// 还没拍的镜头
         init(pendingShot shot: Shot) {
             self.number = shot.number
-            self.detail = shot.displayDetail
-            self.caption = shot.trimmedCaption
-            self.badgeText = shot.trimmedBadgeText
+            self.content = shot.trimmedNote
             self.statusText = shot.status().title
             self.takeText = ""
             self.recordedAtText = ""
@@ -659,9 +661,9 @@ nonisolated enum ExportPackageBuilder {
     /// 靠它区分先后（数字越大拍得越晚）；只拍一条时不带，名字短一截，也不会让人
     /// 误以为还有别的候选。
     ///
-    /// **分镜描述不进文件名**：描述是给人读的整句话，进了文件名会又长又容易重名
-    /// （同一部片子里好几个镜头写着差不多的描述），而且改一次描述就换一次文件名。
-    /// 编号才是稳定的身份，描述与编号的对应关系写在包内的「分镜清单.csv」与
+    /// **分镜内容不进文件名**：内容是给人读的整段话，进了文件名会又长又容易重名
+    /// （同一部片子里好几个镜头写着差不多的内容），而且改一次内容就换一次文件名。
+    /// 编号才是稳定的身份，内容与编号的对应关系写在包内的「分镜清单.csv」与
     /// 「分镜文字内容指南.md」里。
     ///
     /// 影片标题为空时省掉标题那一节（`01.mov`），不写「未命名影片」：
@@ -704,19 +706,18 @@ nonisolated enum ExportPackageBuilder {
 
     /// 生成「分镜清单.csv」。
     ///
-    /// 列顺序刻意把**内容**放在前面（描述、字幕、角标），拍摄相关的元数据靠后：
-    /// 剪辑侧与用户真正要读的是前三列，元数据是补充。
+    /// 列顺序刻意把**内容**放在前面，拍摄相关的元数据靠后：
+    /// 剪辑侧与用户真正要读的是前两列，元数据是补充。
     ///
-    /// 「屏幕字幕」与「角标文字」是镜头级字段，同一个镜头的每条片段都会重复一遍
-    /// ——这两列在任何一行上取都是对的，不必回头去别的行找。
+    /// 「分镜内容」是镜头级字段，同一个镜头的每条片段都会重复一遍
+    /// ——这一列在任何一行上取都是对的，不必回头去别的行找。
+    /// 内容原文写入（可能多行，由 `csvField` 整体加引号），没写时为空。
     private static func writeManifest(_ rows: [ManifestRow], to folder: URL) throws {
-        var csv = "编号,分镜描述,屏幕字幕,角标文字,状态,片段,拍摄时间,时长,导出文件名\n"
+        var csv = "编号,分镜内容,状态,片段,拍摄时间,时长,导出文件名\n"
         for row in rows {
             let fields = [
                 String(format: "%02d", row.number),
-                row.detail,
-                row.caption,
-                row.badgeText,
+                row.content,
                 row.statusText,
                 row.takeText,
                 row.recordedAtText,
@@ -765,7 +766,7 @@ nonisolated enum ExportPackageBuilder {
 
     /// 按 CSV 规则转义一个字段。
     ///
-    /// 逗号、引号、换行都必须整体加引号：分镜描述与屏幕字幕都支持多行输入，
+    /// 逗号、引号、换行都必须整体加引号：分镜内容支持多行输入，
     /// 漏掉换行会把一条记录拆成两行，后面所有列跟着错位。
     private static func csvField(_ value: String) -> String {
         let needsQuoting = value.contains(",")
@@ -810,7 +811,7 @@ nonisolated enum ExportPackageBuilder {
         ----------------------------
         * \(singleName)          主素材（每个镜头最新一条），数字为镜头编号；多条时带片段序号，如 \(multiName)
         * 备用片段/               更早的片段，如 \(alternateName)
-        * 分镜清单.csv            各镜头的描述、字幕、角标与片段信息
+        * 分镜清单.csv            各镜头的文字内容与片段信息
         * 分镜文字内容指南.md      文字内容与文件名对照，供 AI 使用
         * 剪辑风格.md             剪辑要求
         * 导出说明.txt            本文件
@@ -833,14 +834,14 @@ nonisolated enum ExportPackageBuilder {
         if alternateCount > 0 {
             text += "\n备用片段（\(alternateCount)）\n----------------------------\n"
             for row in exported where row.isAlternate {
-                text += String(format: "%@  %@\n", row.exportedPath ?? "", row.detail)
+                text += String(format: "%@  %@\n", row.exportedPath ?? "", row.summaryLine)
             }
         }
 
         if !pendingRows.isEmpty {
             text += "\n待拍\n----------------------------\n"
             for row in pendingRows {
-                text += String(format: "%02d  %@\n", row.number, row.detail)
+                text += String(format: "%02d  %@\n", row.number, row.summaryLine)
             }
         }
 
@@ -866,33 +867,24 @@ nonisolated enum ExportPackageBuilder {
         return groups
     }
 
-    /// 把描述压成单行：markdown 里一行一个字段，换行会打断对照关系。
-    private static func singleLine(_ raw: String) -> String {
-        raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            .components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-            .joined(separator: "；")
-    }
-
-    /// 把一条逐镜文字写成「要原样显示的字」或「这一镜没有」。
+    /// 把内容原文放进代码围栏：逐行、逐字保留用户的写法，不会被 markdown 当成标题或列表。
     ///
-    /// 有内容时用反引号包起来（换行写成 `\n`），空的时候写 `—`。
-    /// 反引号是这套文件里「这是字面内容」的约定：剪辑侧看到反引号就照抄，
-    /// 看到 `—` 就知道这一镜不该有这一项，不必再去猜一行空白是「没填」还是「故意留空」。
-    private static func quotedIfPresent(_ raw: String) -> String {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "—" }
-        // 换行写成 `\n` 而不是真的断行：这一行的字段是「字幕文案」，
-        // 真的断行会让它看起来像两条不同的字段。
-        let escaped = trimmed.replacingOccurrences(of: "\n", with: "\\n")
-        return "`\(escaped)`"
+    /// 围栏比内容里最长的一串反引号多一个（至少三个），内容里出现 ``` 也不会提前收尾。
+    private static func fenced(_ raw: String) -> String {
+        var longestRun = 0
+        var currentRun = 0
+        for character in raw {
+            currentRun = character == "`" ? currentRun + 1 : 0
+            longestRun = max(longestRun, currentRun)
+        }
+        let fence = String(repeating: "`", count: max(3, longestRun + 1))
+        return "\(fence)text\n\(raw)\n\(fence)\n"
     }
 
     /// 生成「分镜文字内容指南.md」。
     ///
-    /// 面向 AI：把每个镜头的文字描述与包内视频文件名严格绑定，并写明处理规则。
-    /// 字段固定、一行一项，换一个模型或换一次对话也能稳定解析。
+    /// 面向 AI：把每个镜头的文字内容与包内视频文件名严格绑定，并写明处理规则。
+    /// 每个镜头一个小节、字段固定，换一个模型或换一次对话也能稳定解析。
     ///
     /// 「怎么剪」不在这个文件里——那是影片级的一段描述，写在同目录的「剪辑风格.md」。
     /// 这里只负责逐镜的**内容**与素材对应关系。
@@ -932,9 +924,10 @@ nonisolated enum ExportPackageBuilder {
         视频文件名绑定在一起。AI 剪辑工具可以直接按本文件处理视频，无需再问用户
         「哪段视频对应哪个镜头」。
 
-        每个镜头有三样文字：**分镜描述**（拍什么，你的处理依据）、
-        **屏幕字幕**（成片上显示的那句话）、**角标**（常驻角标显示的内容）。
-        后两样由用户写定，在第「三」节逐镜给出，**原样使用**。
+        每个镜头有一段**内容**：用户自己写的文字，在第「三」节逐镜原样给出。
+        内容通常按行写成「标签：内容」，标签由用户定（常见的有描述、字幕、上方角标、
+        转场），按字面理解即可；它们不是固定字段。没有标签的一句话按「描述」理解，
+        只作处理依据。
 
         ## 剪辑风格看哪
 
@@ -949,7 +942,7 @@ nonisolated enum ExportPackageBuilder {
         - 编号后面还有数字时，那是片段序号：同一个分镜拍了好几条，文件名形如
           \(takeNames)，数字越大拍得越晚；只拍一条的分镜就是 \(singleName)，
           不带片段序号。
-        - 文件名里**没有分镜描述**，这是有意的：描述是整句话，进了文件名又长又容易
+        - 文件名里**没有分镜内容**，这是有意的：内容是整段话，进了文件名又长又容易
           重名，改一个字还会换一次名。这一镜拍的是什么，以本文件与同目录的
           「分镜清单.csv」为准，不要从文件名去猜。
         - 根目录里的视频是每个镜头的主素材（该镜头最新拍的一条，即片段序号最大的那条）。
@@ -959,33 +952,33 @@ nonisolated enum ExportPackageBuilder {
 
         ## 二、按分镜处理视频的规则
 
-        每个镜头带三样文字，各管一件事，**不要互相顶替**：
-        「分镜描述」是这一段拍的是什么；「屏幕字幕」是成片上要显示的那句话；
-        「角标」是常驻角标上显示的内容。前一样是你的处理依据，后两样是要照抄上去的字。
+        每个镜头带一段内容，是用户写给你的要求：
 
         1. 按编号从小到大排列片段，编号顺序就是成片顺序；不要按文件名、
            文件大小或修改时间重新排序。
         2. 每个镜头只取一条素材：默认取主素材，需要替换时才到「备用片段」里
            挑同编号的其它片段。
-        3. 分镜描述只用来决定**怎么处理这段素材**：挑哪一段画面、从哪起止、怎么调色。
-           它**不是**字幕文案，不要在它基础上写字幕、也不要因为它而改字幕。
-        4. 屏幕字幕与角标在两处给出的写法是：
-           - `反引号` 包起来的是**要原样显示的完整文字**，一个字都不要增删改：
-             不扩写、不精简、不总结、不换同义词、不调语序。
-           - `—` 表示这一镜没有这一项，**不要自己补一条**。
+        3. 内容里说明**拍的是什么、这一段怎么处理**的部分（例如「描述」「转场」）
+           只用来决定怎么处理这段素材：挑哪一段画面、从哪起止、怎么衔接。
+           它们**不是**要显示在屏幕上的字，不要拿去当字幕。
+        4. 内容里写明**要显示在屏幕上**的部分（例如「字幕」「上方角标」）是用户写定的
+           完整文字，**原样使用**，一个字都不要增删改：不扩写、不精简、不总结、
+           不换同义词、不调语序。内容里没写某一项，就是这一镜没有，**不要自己补一条**。
         5. 「时长」是该条素材的实际长度，用来估算成片节奏；不要臆造未提供的时长。
         6. 每个镜头的处理边界就是它自己的那段素材，不要把相邻镜头的内容并进一段。
         7. 标注「未拍摄」的镜头没有素材，直接跳过；若必须补齐，保留同样编号的空位。
         8. 画幅、节奏、时长与文字图层的位置样式一律按「剪辑风格.md」执行，
            不要自己另定一套——那是影片级的，整部片子只有一套。
 
-        ### 字幕与角标怎么用
+        ### 屏幕上的字怎么用
 
-        - 字幕直接当一句话使用，`\n` 表示在这一处换行（不是要显示的字面反斜杠加 n）。
-        - 角标那一行就是**最终要显示的字**（例如「热量缺口：1758千卡」），照它显示即可，
+        - 字幕类的内容直接当一句话使用，内容里的换行就是要在这一处换行。
+        - 角标类的内容就是**最终要显示的字**（例如「热量缺口：1758千卡」），照它显示即可，
           不要自己前后拼词、也不要推算或换算其中的数字。
+        - 标签后面才是要显示的字，标签本身（「字幕：」「上方角标：」）不显示。
         - 断行与字号上限按「剪辑风格.md」里写的来；超宽由你折行，
           但**不要为了塞进去而删字或改字**。
+        - 遇到看不懂的标签，按用户写的原文处理，不要擅自解释成别的要求。
 
         ## 三、镜头清单
 
@@ -993,12 +986,14 @@ nonisolated enum ExportPackageBuilder {
 
         for group in groups {
             let head = group.rows[0]
-            text += "### 镜头 \(String(format: "%02d", group.number)) · \(singleLine(head.detail))\n"
-            text += "- 分镜描述：\(singleLine(head.detail))\n"
-            // 两行都无条件列出：图层的开关现在只写在「剪辑风格.md」那段描述里，
-            // 指南这边没有依据判断「整片出不出这一层」，所以一律给出行、由 `—` 表示这一镜没有。
-            text += "- 屏幕字幕：\(quotedIfPresent(head.caption))\n"
-            text += "- 角标：\(quotedIfPresent(head.badgeText))\n"
+            text += "### 镜头 \(String(format: "%02d", group.number))\n"
+            // 内容原文放进代码围栏，逐行逐字保留；没写时给 `—`，剪辑侧就知道这一镜没有要求，
+            // 不必再去猜一段空白是「没填」还是「故意留空」。
+            if head.content.isEmpty {
+                text += "内容：—\n"
+            } else {
+                text += "内容：\n\(fenced(head.content))"
+            }
 
             let exported = group.rows.filter { $0.exportedPath != nil }
             let main = exported.first { $0.isMain }

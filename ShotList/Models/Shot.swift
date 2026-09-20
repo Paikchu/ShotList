@@ -65,32 +65,20 @@ nonisolated extension Array where Element == ShotClip {
 /// 编号 `number` 决定拍摄顺序，同时也是导出时视频文件名与清单里的分镜号，
 /// 因此在列表内始终按数组顺序连续编号（1、2、3…）。
 ///
-/// 文字分成三样，各管一件事，**互不冒充**：
+/// 一个镜头的文字只有一段：`note`。
 ///
-/// - `note`：**画面描述**——这个镜头要拍什么。是「挑哪一段素材、怎么运镜」的依据。
-/// - `caption`：**屏幕字幕**——成片上显示的那句话。用户自己写，剪辑侧照抄不改。
-/// - `badgeText`：**常驻角标要显示的整段字**——例如「热量缺口：1758千卡」。
+/// 描述（拍什么）、屏幕字幕、角标、转场……全部由用户写在这一段里，常见写法是
+/// 「标签：内容」逐行排开（如「描述：」「字幕：」「上方角标：」「转场：」）。成片交给 AI 粗剪，
+/// AI 读得懂自然语言，分成几个字段既让用户在几个输入框之间来回切，
+/// 也没有哪个消费方真的需要按字段取值——所以这里不拆，也不解析标签。
 ///
-/// 三样分开之前，字幕和角标都只能塞在 `note` 里，剪辑侧无法判断一句话是
-/// 「画面的说明」还是「要显示在屏幕上的字」，只能靠猜——猜的方式就是改写语义，
-/// 于是必然和「不要自行扩写或改写」这条要求打架。分开之后这条要求才成立。
+/// 早期版本把字幕与角标分成单独字段；读取旧数据时合并进 `note`，见 `mergedNote`。
 nonisolated struct Shot: Identifiable, Codable, Hashable {
     var id: UUID
     /// 镜头编号，从 1 开始连续编号
     var number: Int
-    /// 画面描述：这个镜头要拍什么（运镜方式、道具、动作…）
+    /// 这个镜头的文字内容：用户自由书写，可以多行。为空表示还没写。
     var note: String
-    /// 屏幕字幕文案：直接显示在成片上的那句话，含 `\n` 表示显式断行。
-    ///
-    /// 由用户自己写，剪辑侧原样使用。为空表示这个镜头不显示字幕。
-    var caption: String
-    /// 这一镜的常驻角标文字：**成片上要显示的整段字**，例如「热量缺口：1758千卡」。
-    ///
-    /// 存整段文字而不是「只管数值、由影片级模板拼词」：影片级的样式已经改成
-    /// 一段自然语言描述（见 `FilmStylePrompt`），没有能拿来拼词的模板了。
-    /// 整段写在这里也更好——要显示的字就是这里写的字，剪辑侧没有需要猜的地方。
-    /// 为空表示这个镜头不出角标。
-    var badgeText: String
     /// 这个镜头拍过的全部片段，按拍摄先后排列
     var clips: [ShotClip]
 
@@ -98,8 +86,6 @@ nonisolated struct Shot: Identifiable, Codable, Hashable {
         case id
         case number
         case note
-        case caption
-        case badgeText
         case clips
     }
 
@@ -107,15 +93,11 @@ nonisolated struct Shot: Identifiable, Codable, Hashable {
         id: UUID = UUID(),
         number: Int,
         note: String = "",
-        caption: String = "",
-        badgeText: String = "",
         clips: [ShotClip] = []
     ) {
         self.id = id
         self.number = number
         self.note = note
-        self.caption = caption
-        self.badgeText = badgeText
         self.clips = clips
     }
 }
@@ -128,10 +110,32 @@ nonisolated extension Shot {
         case clipFileName
         case recordedAt
         case clipDuration
-        /// 早期的角标字段：只存数值，显示时靠影片级的文案模板补前后缀。
+        /// 合并进 `note` 之前的独立字段：字幕与角标文字。
         /// **只读不写**——放在 `LegacyKeys` 而不是 `CodingKeys`，
-        /// 否则合成的编码器会把一个空的 `badgeValue` 一直写回去。
+        /// 合成的编码器就不会再把它们写回去。
+        case caption
+        case badgeText
+        /// 更早的角标字段：只存数值，显示时靠影片级的文案模板补前后缀。
         case badgeValue
+    }
+
+    /// 旧数据里的描述、字幕、角标合成一段文字。
+    ///
+    /// 字幕与角标都没有时原样返回描述——没有需要区分的东西，不给它凭空加「描述：」前缀。
+    /// 其余情况每项只写非空的，标签取自用户举的例子（描述 / 字幕 / 上方角标），
+    /// 这样升级后的内容与之后按同样格式写出来的内容是同一种。
+    /// 字幕本身有多行时，续行原样跟在「字幕：」那一行后面。
+    static func mergedNote(note: String, caption: String, badgeText: String) -> String {
+        let trimmedCaption = caption.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedBadge = badgeText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedCaption.isEmpty || !trimmedBadge.isEmpty else { return note }
+
+        let description = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        var lines: [String] = []
+        if !description.isEmpty { lines.append("描述：\(description)") }
+        if !trimmedCaption.isEmpty { lines.append("字幕：\(trimmedCaption)") }
+        if !trimmedBadge.isEmpty { lines.append("上方角标：\(trimmedBadge)") }
+        return lines.joined(separator: "\n")
     }
 
     /// 早期版本每个镜头只存一段视频（`clipFileName` / `clipDuration` / `recordedAt`），
@@ -140,20 +144,20 @@ nonisolated extension Shot {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         number = try container.decodeIfPresent(Int.self, forKey: .number) ?? 1
-        note = try container.decodeIfPresent(String.self, forKey: .note) ?? ""
-        // 字幕与角标是后加的字段。旧分镜里没有它们，取空值即可——
-        // 空值的含义就是「这个镜头不显示字幕 / 不出角标」，正是旧数据的真实状态。
-        caption = try container.decodeIfPresent(String.self, forKey: .caption) ?? ""
-
-        // 角标从「只存数值」改成了「存整段要显示的字」。老数据只有数值，
-        // 直接接过来当文字用：显示出来就是「1758」，与它升级前的样子一致
-        // （真正的整段话由用户自己在镜头面板里补）。
         let legacy = try decoder.container(keyedBy: LegacyKeys.self)
-        if let stored = try container.decodeIfPresent(String.self, forKey: .badgeText), !stored.isEmpty {
-            badgeText = stored
-        } else {
-            badgeText = try legacy.decodeIfPresent(String.self, forKey: .badgeValue) ?? ""
-        }
+
+        // 字幕与角标曾是独立字段，现在并进 `note`。合并只发生在读取时：
+        // 写回去的记录里已经没有这两个键，之后的读取不会再重复合并。
+        // 角标更早只存数值，老数据直接接过来当文字用：显示出来就是「1758」，
+        // 与它升级前的样子一致（整段话由用户自己在镜头面板里补）。
+        let storedBadge = try legacy.decodeIfPresent(String.self, forKey: .badgeText) ?? ""
+        note = Self.mergedNote(
+            note: try container.decodeIfPresent(String.self, forKey: .note) ?? "",
+            caption: try legacy.decodeIfPresent(String.self, forKey: .caption) ?? "",
+            badgeText: storedBadge.isEmpty
+                ? try legacy.decodeIfPresent(String.self, forKey: .badgeValue) ?? ""
+                : storedBadge
+        )
 
         if let stored = try container.decodeIfPresent([ShotClip].self, forKey: .clips), !stored.isEmpty {
             clips = stored.sorted { $0.recordedAt < $1.recordedAt }
@@ -198,23 +202,11 @@ nonisolated extension Shot {
     /// 两位编号，例如 01、02
     var paddedNumber: String { String(format: "%02d", number) }
 
-    /// 备注是否为空
+    /// 文字内容是否为空
     var hasNote: Bool { !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
-    /// 去掉首尾空白后的画面描述
+    /// 去掉首尾空白后的文字内容（行尾多一个回车不算「写过」）
     var trimmedNote: String { note.trimmingCharacters(in: .whitespacesAndNewlines) }
-
-    /// 去掉首尾空白后的字幕文案（导出与界面都用它，避免行尾多一个回车就当成「有字幕」）
-    var trimmedCaption: String { caption.trimmingCharacters(in: .whitespacesAndNewlines) }
-
-    /// 去掉首尾空白后的角标文字
-    var trimmedBadgeText: String { badgeText.trimmingCharacters(in: .whitespacesAndNewlines) }
-
-    /// 这个镜头要不要出屏幕字幕
-    var hasCaption: Bool { !trimmedCaption.isEmpty }
-
-    /// 这个镜头要不要出常驻角标
-    var hasBadgeText: Bool { !trimmedBadgeText.isEmpty }
 
     /// 界面上展示的描述文本，为空时回退为「镜头 N」
     var displayDetail: String {

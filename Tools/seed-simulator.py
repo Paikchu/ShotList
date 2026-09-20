@@ -6,10 +6,10 @@
 * 「夏日vlog」——5 个镜头、3 个已拍（镜头 1 拍满 3 条），最后更新为今天；
 * 「咖啡店探店」——3 个镜头全部已拍，最后更新为昨天。
 
-每个镜头都带屏幕字幕与角标文字（留几个空着，用来对照「这一镜不出」的样子）；
+每个镜头的文字内容只有一段（见 `merged_note`：描述、字幕、角标按「标签：内容」逐行写在一起，留几个只有描述）；
 「夏日vlog」另外带一段剪辑风格描述，用来验收导出包里的「剪辑风格.md」——
 「咖啡店探店」刻意不写，用来对照「没有要求时不出那个文件」。
-`--legacy` 写的是**真的**旧数据，会把这两个字段删掉。
+`--legacy` 写的是**真的**旧数据：一份全局 `shots.json`，没有影片层级。
 
 两部影片的镜头 1 都命名为「镜头01_…」，这是刻意安排的：用来验证「未使用文件」
 的判据覆盖全部影片。如果那个判据只看当前影片，切到第二部时第一部的素材会被
@@ -86,10 +86,9 @@ ref_yesterday = ref_now - 86400
 
 # (标题, 最后更新时间, 是否当前影片, [(编号, 分镜描述, 屏幕字幕, 角标文字, [(源视频序号, 时长秒, 拍摄时间)])])
 #
-# 屏幕字幕与角标文字是镜头级的**内容**，与风格无关，所以直接写进演示数据：
-# 没有它们，导出包里的「屏幕字幕 / 角标」两列全是空的，验收时看不出这一步有没有生效。
-# 角标刻意让连续几个镜头用同一段文字（镜头 2、3 都是「热量缺口：2318千卡」），
-# 用来对照 App 里那个「沿用上一镜」按钮的实际效果。
+# 镜头的文字内容在 App 里只有一段。这里仍分开写描述、字幕、角标三样，
+# 落盘时由 `merged_note` 合成一段：这样演示数据里既有只写了描述的镜头，
+# 也有带字幕、角标的，导出包里的「分镜内容」一列验收时看得出这一步有没有生效。
 FILMS = [
     (
         "夏日vlog",
@@ -135,6 +134,21 @@ STYLE_PROMPTS = {
 }
 
 
+def merged_note(note, caption, badge_text):
+    """描述、字幕、角标合成一段文字，规则与 App 读取旧数据时一致（`Shot.mergedNote`）。"""
+    note, caption, badge_text = note.strip(), caption.strip(), badge_text.strip()
+    if not caption and not badge_text:
+        return note
+    lines = []
+    if note:
+        lines.append(f"描述：{note}")
+    if caption:
+        lines.append(f"字幕：{caption}")
+    if badge_text:
+        lines.append(f"上方角标：{badge_text}")
+    return "\n".join(lines)
+
+
 def timestamp_token(recorded_at):
     """文件名里的时间戳，与 ShotStore.timestampToken() 同一格式。"""
     return time.strftime("%Y%m%d_%H%M%S", time.localtime(recorded_at + REFERENCE_EPOCH_OFFSET))
@@ -162,9 +176,7 @@ def build_film(title, updated_at, shots_spec):
             {
                 "id": str(uuid.uuid4()).upper(),
                 "number": number,
-                "note": note,
-                "caption": caption,
-                "badgeText": badge_text,
+                "note": merged_note(note, caption, badge_text),
                 "clips": clips,
             }
         )
@@ -184,11 +196,6 @@ if legacy:
     # 多写一部只会平白多出几个无人引用的孤儿文件。
     title, updated_at, _, shots_spec = FILMS[0]
     records = build_film(title, updated_at, shots_spec)["shots"]
-    # 旧数据里没有屏幕字幕与角标这两个字段，去掉才是真的旧数据。
-    # 留着它们只能验证「新版读新版」，验不到缺字段时会不会整份读不出来。
-    for record in records:
-        record.pop("caption", None)
-        record.pop("badgeText", None)
     with open(os.path.join(meta_dir, "shots.json"), "w", encoding="utf-8") as handle:
         json.dump(records, handle, ensure_ascii=False, indent=2)
     expected = sum(len(takes) for _, _, _, _, takes in shots_spec)

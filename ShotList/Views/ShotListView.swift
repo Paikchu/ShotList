@@ -210,7 +210,8 @@ struct ShotListView: View {
         if !urls.isEmpty {
             ShareLink(
                 items: urls,
-                subject: Text("镜头 \(shot.paddedNumber) \(shot.displayDetail)")
+                // 内容是多行的，邮件主题只取第一行
+                subject: Text("镜头 \(shot.paddedNumber) \(shot.displayDetail.components(separatedBy: .newlines)[0])")
             ) {
                 Label("分享", systemImage: "square.and.arrow.up")
             }
