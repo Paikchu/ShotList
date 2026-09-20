@@ -1022,6 +1022,12 @@ nonisolated extension CameraRecorder: AVCaptureFileOutputRecordingDelegate {
             self.recordingStart = nil
             self.elapsed = 0
 
+            // 录制失败时写出来的文件是残缺的，没有任何路径会再用它；
+            // 不删的话它一直占着磁盘，要等到下次启动的统一回收（磁盘写满导致的失败尤其如此）。
+            if case .failure = boxed.value {
+                try? FileManager.default.removeItem(at: outputFileURL)
+            }
+
             // 没人等这条视频时（相机已经关掉，这次录制被作废）就地删掉，
             // 不留一个谁都收不回的临时文件。文件是 AVFoundation 刚写完的，
             // 删早了它还会再写一遍，所以只在回调里删、不在 stop() 里删。
