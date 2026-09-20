@@ -43,21 +43,19 @@ struct ShotListView: View {
                 titleDraft: $titleDraft,
                 isConfirmingRemake: $isConfirmingRemake
             )
-            .alert("删除这个分镜？", isPresented: deletionBinding, presenting: pendingDeletion) { shot in
+            .alert("删除镜头？", isPresented: deletionBinding, presenting: pendingDeletion) { shot in
                 Button("删除", role: .destructive) { store.delete(shot) }
                 Button("取消", role: .cancel) {}
             } message: { shot in
-                Text(
-                    shot.hasClip
-                    ? "镜头 \(shot.paddedNumber) 已经拍好了 \(shot.clipCount) 段视频，删除后它们也会一起消失，无法恢复。"
-                    : "镜头 \(shot.paddedNumber) 会被删除。"
-                )
+                if shot.hasClip {
+                    Text("\(shot.clipCount) 段视频将被删除，无法恢复。")
+                }
             }
         }
         .shotFlow(sheet: $sheet)
         .task { await openPreselectedShot() }
         .confirmationDialog(
-            "清空这个镜头的片段？",
+            "清空片段？",
             isPresented: Binding(
                 get: { pendingClear != nil },
                 set: { if !$0 { pendingClear = nil } }
@@ -65,14 +63,14 @@ struct ShotListView: View {
             titleVisibility: .visible,
             presenting: pendingClear
         ) { shot in
-            Button("全部清空", role: .destructive) {
+            Button("清空", role: .destructive) {
                 store.removeAllClips(for: shot.id)
                 pendingClear = nil
                 Haptics.warning()
             }
             Button("取消", role: .cancel) { pendingClear = nil }
         } message: { shot in
-            Text("镜头 \(shot.paddedNumber) 的 \(shot.clipCount) 段片段都会被删除，无法恢复。分镜描述和顺序会保留。")
+            Text("\(shot.clipCount) 段视频将被删除，无法恢复。")
         }
         .onChange(of: sheet?.id) { _, newValue in
             // 编辑器关掉了，这时候用户才真正在看列表
@@ -173,23 +171,20 @@ struct ShotListView: View {
         Button {
             sheet = .options(shot)
         } label: {
-            Label(
-                shot.hasClip ? "查看或继续拍" : "添加视频",
-                systemImage: "video.badge.plus"
-            )
+            Label("编辑", systemImage: "square.and.pencil")
         }
 
         Button {
             insert(below: shot)
         } label: {
-            Label("在下方插入新镜头", systemImage: "text.insert")
+            Label("在下方插入", systemImage: "text.insert")
         }
 
         Button {
             store.duplicate(shot)
             Haptics.impact(.light)
         } label: {
-            Label("在下方复制一个", systemImage: "plus.square.on.square")
+            Label("在下方复制", systemImage: "plus.square.on.square")
         }
 
         let index = store.index(of: shot.id)
@@ -198,14 +193,14 @@ struct ShotListView: View {
                 Button {
                     move(from: index, to: index - 1)
                 } label: {
-                    Label("上移一位", systemImage: "arrow.up")
+                    Label("上移", systemImage: "arrow.up")
                 }
                 .disabled(index == 0)
 
                 Button {
                     move(from: index, to: index + 1)
                 } label: {
-                    Label("下移一位", systemImage: "arrow.down")
+                    Label("下移", systemImage: "arrow.down")
                 }
                 .disabled(index == store.shots.count - 1)
             }
@@ -217,16 +212,13 @@ struct ShotListView: View {
                 items: urls,
                 subject: Text("镜头 \(shot.paddedNumber) \(shot.displayDetail)")
             ) {
-                Label(
-                    shot.clipCount > 1 ? "分享这 \(shot.clipCount) 段视频" : "分享视频",
-                    systemImage: "square.and.arrow.up"
-                )
+                Label("分享", systemImage: "square.and.arrow.up")
             }
 
             Button(role: .destructive) {
                 pendingClear = shot
             } label: {
-                Label("清空片段（保留分镜）", systemImage: "trash.slash")
+                Label("清空片段", systemImage: "trash.slash")
             }
         }
 
@@ -235,7 +227,7 @@ struct ShotListView: View {
         Button(role: .destructive) {
             pendingDeletion = shot
         } label: {
-            Label("删除分镜", systemImage: "trash")
+            Label("删除", systemImage: "trash")
         }
     }
 
@@ -257,12 +249,12 @@ struct ShotListView: View {
     private var emptyState: some View {
         ScrollView {
             ContentUnavailableView {
-                Label("这部影片还没有分镜", systemImage: "film.stack")
-            } description: {
-                Text("添加第 1 个镜头，开始搭建这部影片的分镜清单。")
+                Label("无镜头", systemImage: "film.stack")
             } actions: {
-                Button("添加分镜") { addShot() }
-                    .buttonStyle(.borderedProminent)
+                Button { addShot() } label: {
+                    Label("添加", systemImage: "plus")
+                }
+                .buttonStyle(.borderedProminent)
             }
             .containerRelativeFrame(.vertical)
         }
@@ -315,7 +307,7 @@ struct ShotListView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityHint("点按修改影片标题")
+        .accessibilityHint("重命名")
     }
 
     // MARK: - 工具栏
@@ -329,24 +321,22 @@ struct ShotListView: View {
 
         ToolbarItem(placement: .topBarTrailing) {
             Menu {
-                Section("批量录入") {
-                    Button { addShots(count: 3) } label: {
-                        Label("一次添加 3 个镜头", systemImage: "square.grid.3x3")
-                    }
-                    Button { addShots(count: 5) } label: {
-                        Label("一次添加 5 个镜头", systemImage: "square.grid.3x3.fill")
-                    }
-                    Button { addShots(count: 10) } label: {
-                        Label("一次添加 10 个镜头", systemImage: "rectangle.grid.2x2")
-                    }
+                Button { addShots(count: 3) } label: {
+                    Label("添加 3 个", systemImage: "square.grid.3x3")
+                }
+                Button { addShots(count: 5) } label: {
+                    Label("添加 5 个", systemImage: "square.grid.3x3.fill")
+                }
+                Button { addShots(count: 10) } label: {
+                    Label("添加 10 个", systemImage: "rectangle.grid.2x2")
                 }
             } label: {
-                Label("添加分镜", systemImage: "plus")
+                Label("添加", systemImage: "plus")
             } primaryAction: {
                 addShot()
             }
             .menuIndicator(.hidden)
-            .accessibilityHint("点按添加一个镜头，长按一次添加多个")
+            .accessibilityHint("长按批量添加")
         }
 
         ToolbarItem(placement: .topBarTrailing) {
@@ -355,7 +345,7 @@ struct ShotListView: View {
                 titleDraft: $titleDraft,
                 isConfirmingRemake: $isConfirmingRemake
             ) {
-                Label("影片菜单", systemImage: "ellipsis.circle")
+                Label("影片", systemImage: "ellipsis.circle")
             }
         }
     }

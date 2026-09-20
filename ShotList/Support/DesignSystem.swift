@@ -1,5 +1,11 @@
 import SwiftUI
 
+// 界面语言约定（需求 R-1，完整对照表见 Docs/requirements）：
+// - 按钮与菜单项只写动词或动宾短语；有通用图标的操作以图标为主，名称放进无障碍标签。
+// - 状态与统计用「图标 + 数字」（`IconValue`），不写「已拍 3 / 5 个镜头」这类句子。
+// - 空状态只有图标、一个名词短语和至多一个按钮；确认弹层正文只写波及数量与不可恢复。
+// - 错误提示写「失败 + 用户能执行的一步」；设计理由与实现取舍不进界面，留在代码注释里。
+
 /// 设计常量。间距统一为 8pt 网格（4pt 仅用于细调）。
 enum SLSpacing {
     /// 4pt
@@ -192,18 +198,29 @@ struct ProgressRing: View {
         }
         .frame(width: size, height: size)
         .overlay {
-            VStack(spacing: 0) {
-                Text("\(Int((clamped * 100).rounded()))%")
-                    .font(.title3.weight(.bold).monospacedDigit())
-                    .foregroundStyle(.primary)
-                Text("已完成")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
+            Text("\(Int((clamped * 100).rounded()))%")
+                .font(.title3.weight(.bold).monospacedDigit())
+                .foregroundStyle(.primary)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("拍摄进度")
-        .accessibilityValue("已完成 \(Int((clamped * 100).rounded()))%")
+        .accessibilityValue("\(Int((clamped * 100).rounded()))%")
+    }
+}
+
+/// 「图标 + 数值」：统计与状态的统一写法，图标代替「已拍」「总时长」这类字眼。
+///
+/// 字号与颜色从外层继承；图标对读屏隐藏，调用方在外层给出完整的朗读文本。
+struct IconValue: View {
+    let systemImage: String
+    let text: String
+
+    var body: some View {
+        HStack(spacing: SLSpacing.tiny) {
+            Image(systemName: systemImage)
+                .accessibilityHidden(true)
+            Text(text)
+        }
     }
 }
 

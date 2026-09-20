@@ -70,16 +70,14 @@ private extension LoadFailure.Kind {
     var title: String {
         switch self {
         case .unreadable: "无法读取分镜记录"
-        case .upgradeFailed: "无法升级旧版分镜记录"
-        case .deletionPending: "删除尚未完成"
+        case .upgradeFailed: "无法升级分镜记录"
+        case .deletionPending: "删除未完成"
         }
     }
 
     var retryTitle: String {
         switch self {
-        case .unreadable: "重新读取"
-        case .upgradeFailed: "重试升级"
-        case .deletionPending: "重试清理"
+        case .unreadable, .upgradeFailed, .deletionPending: "重试"
         }
     }
 }
@@ -99,7 +97,7 @@ struct StorageSaveErrorBanner: View {
                 Label("操作未完成", systemImage: "exclamationmark.triangle")
                     .font(.headline)
                 Text(message).font(.footnote)
-                Button("关闭提示") { store.saveError = nil }
+                Button("关闭") { store.saveError = nil }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding()

@@ -37,7 +37,7 @@ struct ClipPlayerScreen: View {
                             .frame(width: SLSize.minTouchTarget, height: SLSize.minTouchTarget)
                             .background(.ultraThinMaterial, in: Circle())
                     }
-                    .accessibilityLabel("关闭播放")
+                    .accessibilityLabel("关闭")
                 }
                 .padding(.horizontal, SLSpacing.medium)
                 .padding(.top, SLSpacing.small)
@@ -57,8 +57,9 @@ struct ClipPlayerScreen: View {
                     }
 
                     if let duration = clip.durationText {
-                        Text("时长 \(duration)")
+                        IconValue(systemImage: "clock", text: duration)
                             .font(.caption)
+                            .accessibilityLabel("时长 \(duration)")
                     }
                 }
                 .foregroundStyle(.white)

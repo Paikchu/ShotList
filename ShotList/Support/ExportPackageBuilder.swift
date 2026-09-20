@@ -10,10 +10,19 @@ nonisolated enum ExportScope: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    /// 写进导出包文档里的完整说法（给人和 AI 读，不改短）
     var title: String {
         switch self {
         case .recordedOnly: return "仅已拍镜头"
         case .everything: return "全部分镜"
+        }
+    }
+
+    /// 界面上分段选择器里的短标签，与历史页的「已拍 / 全部」同一套说法
+    var label: String {
+        switch self {
+        case .recordedOnly: return "已拍"
+        case .everything: return "全部"
         }
     }
 }
@@ -48,15 +57,15 @@ nonisolated enum ExportTranscodeOption: String, CaseIterable, Identifiable {
         }
     }
 
-    /// 选项下面那句取舍说明：写时间、体积、兼容性三者的代价
+    /// 选项下面那一行取舍：只写会影响选择的那一点
     var detail: String {
         switch self {
         case .original:
-            return "直接导出原始文件，画质与体积保持原样，导出最快。"
+            return "不转码，画质不变"
         case .compatible:
-            return "转成兼容性最好的格式，剪辑软件、微信、网页都能开；导出包会变小，代价是转码要花时间。"
+            return "兼容性最佳，需转码"
         case .compact:
-            return "转成更省空间的编码，同样画质体积更小；个别老设备或旧软件可能不支持。"
+            return "体积更小，需转码，旧设备可能无法播放"
         }
     }
 
@@ -146,8 +155,8 @@ nonisolated struct ExportProgress: Sendable, Equatable {
 
     var text: String {
         switch phase {
-        case .transcoding: return "正在转码 \(completed + 1) / \(total) 段"
-        case .packaging: return "正在压缩打包…"
+        case .transcoding: return "转码 \(completed + 1) / \(total)"
+        case .packaging: return "打包中"
         }
     }
 }
@@ -205,8 +214,8 @@ nonisolated struct ExportPackage: Identifiable, Equatable {
     var fileName: String { zipURL.lastPathComponent }
 
     var summary: String {
-        var parts = ["\(clipCount) 段视频"]
-        if pendingCount > 0 { parts.append("\(pendingCount) 个待拍") }
+        var parts = ["\(clipCount) 段"]
+        if pendingCount > 0 { parts.append("待拍 \(pendingCount)") }
         parts.append(totalDuration.slDurationText)
         return parts.joined(separator: " · ")
     }
@@ -230,14 +239,14 @@ enum ExportError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .noClips:
-            return "没有可导出的视频文件：分镜里还没有片段，或者视频已经从设备上被删掉了。"
+            return "无可导出的视频"
         case .transcodeFailed(let fileName, let reason):
-            return "转码失败：\(fileName)（\(reason)）。可以把「视频格式」改回「原片」重新导出。"
+            return "转码失败：\(fileName)（\(reason)）。请将格式改为「原片」后重试。"
         case .insufficientSpace(let required, let available):
             if let required, let available {
-                return "设备空间不足：本次导出预计需预留 \(required.slByteText)，当前可用 \(available.slByteText)。请释放设备空间或减少要导出的素材后重试。"
+                return "存储空间不足：需要 \(required.slByteText)，可用 \(available.slByteText)。请释放空间后重试。"
             }
-            return "导出时设备空间不足。请释放设备空间或减少要导出的素材后重试。"
+            return "存储空间不足。请释放空间后重试。"
         case .packagingFailed(let reason):
             return "打包失败：\(reason)"
         }
@@ -809,43 +818,39 @@ nonisolated enum ExportPackageBuilder {
         镜头数量：\(shotCount)
         视频片段：\(exported.count)
 
-        目录内容
+        目录
         ----------------------------
-        * \(singleName)          每个镜头最新拍的一条（主素材），片名后面的数字即镜头编号；
-                                 镜头拍了多条时主素材也带片段序号，形如 \(multiName)（第 3 条）
-        * 备用片段/               同一个镜头更早拍的片段，命名形如 \(alternateName)（第 1 条）
-        * 分镜清单.csv            每个镜头的描述、屏幕字幕、角标文字与每条片段的时长、文件名
-        * 分镜文字内容指南.md      每个镜头的文字内容与视频文件名对照表，供 AI 按分镜处理视频
-        * 剪辑风格.md             这部影片的剪辑要求，用户自己写的一段话，照它剪
+        * \(singleName)          主素材（每个镜头最新一条），数字为镜头编号；多条时带片段序号，如 \(multiName)
+        * 备用片段/               更早的片段，如 \(alternateName)
+        * 分镜清单.csv            各镜头的描述、字幕、角标与片段信息
+        * 分镜文字内容指南.md      文字内容与文件名对照，供 AI 使用
+        * 剪辑风格.md             剪辑要求
         * 导出说明.txt            本文件
 
         导入剪映
         ----------------------------
-        1. 解压本压缩包；
-        2. 打开剪映，新建项目后点「导入」，选择根目录下的视频文件；
-        3. 全部文件按名字里的镜头编号排序，导入顺序与分镜顺序一致；
-        4. 文件名里不含分镜描述，这一镜拍的是什么，看同目录的「分镜清单.csv」；
-        5. 想换某个镜头的素材，就到「备用片段」目录里挑，不导入时它们不占时间线。
+        1. 解压。
+        2. 剪映：新建项目 › 导入，选择根目录下的视频。
+        3. 按文件名排序即分镜顺序。
+        4. 换素材：从「备用片段」中选取。
 
-        导入电脑
+        传到电脑
         ----------------------------
-        * 隔空投送：在本 App 的「导出」页直接把压缩包 AirDrop 到 Mac；
-        * 数据线：连接 iPhone 后，在「文件」App 的「我的 iPhone / 分镜助手」
-          里可以找到全部分镜片段，直接拖到电脑即可；
-        * 也可以在本 App「导出」页，选择「存储到文件」保存到 iCloud 云盘。
+        * 隔空投送：在「导出」页分享压缩包。
+        * 数据线：「文件」› 我的 iPhone › 分镜助手。
+        * iCloud：分享 › 存储到「文件」。
 
         """
 
         if alternateCount > 0 {
-            text += "\n备用片段（\(alternateCount) 条）\n----------------------------\n"
-            text += "主素材取每个镜头最新的一条，以下是同一个镜头更早拍的片段：\n"
+            text += "\n备用片段（\(alternateCount)）\n----------------------------\n"
             for row in exported where row.isAlternate {
                 text += String(format: "%@  %@\n", row.exportedPath ?? "", row.detail)
             }
         }
 
         if !pendingRows.isEmpty {
-            text += "\n仍待补拍的镜头\n----------------------------\n"
+            text += "\n待拍\n----------------------------\n"
             for row in pendingRows {
                 text += String(format: "%02d  %@\n", row.number, row.detail)
             }
@@ -1087,7 +1092,7 @@ nonisolated enum ExportPackageBuilder {
             throw Self.exportFailure(copyError)
         }
         guard didCopy else {
-            throw ExportError.packagingFailed("系统未能生成压缩包")
+            throw ExportError.packagingFailed("无法生成压缩包")
         }
         completed = true
         return destination

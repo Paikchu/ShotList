@@ -77,11 +77,12 @@ struct HistoryView: View {
         }
     }
 
-    private var emptyFilterHint: String {
+    /// 筛选结果为空时的一行提示：图标 + 短语
+    private var emptyFilterLabel: (title: String, systemImage: String) {
         switch filter {
-        case .all: return "这部影片还没有分镜。"
-        case .recorded: return "这部影片还没有拍过的镜头。"
-        case .pending: return "这部影片的镜头都拍过了。"
+        case .all: return ("无镜头", "film.stack")
+        case .recorded: return ("无已拍", "checkmark.circle")
+        case .pending: return ("全部已拍", "checkmark.circle.fill")
         }
     }
 
@@ -159,8 +160,7 @@ struct HistoryView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(ShotCardButtonStyle())
-        .accessibilityLabel("\(caption) \(value) 个镜头")
-        .accessibilityHint("点按筛选出这些镜头")
+        .accessibilityLabel("\(caption) \(value)")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
@@ -171,7 +171,7 @@ struct HistoryView: View {
             }
         }
         .pickerStyle(.segmented)
-        .accessibilityLabel("按拍摄状态筛选镜头")
+        .accessibilityLabel("筛选")
     }
 
     // MARK: - 列表
@@ -183,7 +183,7 @@ struct HistoryView: View {
             }
 
             if filteredShots.isEmpty {
-                Text(emptyFilterHint)
+                Label(emptyFilterLabel.title, systemImage: emptyFilterLabel.systemImage)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity)
@@ -208,9 +208,7 @@ struct HistoryView: View {
 
     private var emptyState: some View {
         ContentUnavailableView {
-            Label("还没有历史记录", systemImage: "clock.arrow.circlepath")
-        } description: {
-            Text("先创建影片并拍下镜头，之后就能在这里回看。")
+            Label("无记录", systemImage: "clock.arrow.circlepath")
         } actions: {
             Button("创建影片") {
                 Haptics.impact(.light)

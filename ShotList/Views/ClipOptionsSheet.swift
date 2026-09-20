@@ -127,58 +127,36 @@ struct ClipOptionsSheet: View {
                         .listRowBackground(Color.clear)
                 }
 
-                Section("拍摄") {
+                Section {
                     Button(action: { if flushDraft() { onCapture() } }) {
-                        Label(live.hasClip ? "再拍一条" : "用相机拍摄", systemImage: "camera.fill")
+                        Label("拍摄", systemImage: "camera.fill")
                     }
-                    .accessibilityHint("打开相机，给这个镜头再录一条，之前拍的会保留")
 
                     Button(action: { if flushDraft() { onImport() } }) {
-                        Label(live.hasClip ? "从相册再添加" : "从相册导入", systemImage: "photo.on.rectangle.angled")
+                        Label("导入", systemImage: "photo.on.rectangle.angled")
                     }
-                    .accessibilityHint("从照片图库里选一段或多段已经拍好的视频加进来，可以一次选多段")
-                }
-
-                Section("分镜描述") {
-                    TextField(
-                        "例如：无人机缓慢上升，配一句开场旁白",
-                        text: $draftNote,
-                        axis: .vertical
-                    )
-                    .lineLimit(3...8)
-                    .focused($isNoteFocused)
-                    .accessibilityLabel("分镜描述")
                 }
 
                 Section {
-                    // 两行都是自由文本，一填上内容占位符就没了。没有常驻标签的话，
-                    // 两条一模一样的圆角框分不清哪条是字幕、哪条是角标，容易填错位置。
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("屏幕字幕")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                        TextField(
-                            "屏幕字幕",
-                            text: $draftCaption,
-                            prompt: Text("例如：辅助引体 ⌄ 62.5KG * 4 * 10"),
-                            axis: .vertical
-                        )
-                        .lineLimit(2...5)
-                        .accessibilityLabel("屏幕字幕")
+                    // 三个输入框都是自由文本，一填上内容占位符就没了。常驻的图标加短标签
+                    // 才分得清哪条是描述、字幕、角标，不会填错位置。
+                    fieldRow("描述", systemImage: "text.alignleft") {
+                        TextField("描述", text: $draftNote, axis: .vertical)
+                            .lineLimit(3...8)
+                            .focused($isNoteFocused)
+                            .accessibilityLabel("描述")
                     }
 
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("角标文字")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                        TextField(
-                            "角标文字",
-                            text: $draftBadgeText,
-                            prompt: Text("例如：热量缺口：1758千卡"),
-                            axis: .vertical
-                        )
-                        .lineLimit(1...3)
-                        .accessibilityLabel("角标文字")
+                    fieldRow("字幕", systemImage: "captions.bubble") {
+                        TextField("字幕", text: $draftCaption, axis: .vertical)
+                            .lineLimit(2...5)
+                            .accessibilityLabel("字幕")
+                    }
+
+                    fieldRow("角标", systemImage: "tag") {
+                        TextField("角标", text: $draftBadgeText, axis: .vertical)
+                            .lineLimit(1...3)
+                            .accessibilityLabel("角标")
                     }
 
                     if let previousBadgeText, previousBadgeText != live.trimmedBadgeText {
@@ -187,32 +165,25 @@ struct ClipOptionsSheet: View {
                         } label: {
                             Label("沿用上一镜", systemImage: "arrow.turn.left.up")
                         }
-                        .accessibilityHint("把上一镜的角标文字抄过来，抄完可以再改")
+                        .accessibilityHint("复制上一镜的角标")
                     }
-                } header: {
-                    Text("屏幕文字")
-                } footer: {
-                    Text(
-                        "描述写「拍什么」，字幕与角标写「画面上显示什么」。"
-                        + "这两样会被剪辑侧原样使用，不会替你改写；留空就是这一镜不出。"
-                    )
                 }
 
-                Section("顺序") {
+                Section {
                     Stepper(value: numberBinding, in: numberRange) {
                         HStack {
-                            Text("镜头编号")
+                            Label("编号", systemImage: "number")
                             Spacer()
                             Text("\(displayedNumber)")
                                 .font(.body.monospacedDigit())
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    .accessibilityLabel("镜头编号")
+                    .accessibilityLabel("编号")
                     .accessibilityValue("\(displayedNumber)")
 
                     // 导出文件名跟在编号这一节：名字由「影片标题 + 编号 + 片段序号」组成，
-                    // 描述不再参与。放在「分镜描述」下面会让人以为改描述就能改名。
+                    // 描述不再参与。放在描述输入框下面会让人以为改描述就能改名。
                     LabeledContent {
                         Text(previewFileName)
                             .font(.footnote.monospaced())
@@ -220,10 +191,10 @@ struct ClipOptionsSheet: View {
                             .lineLimit(1)
                             .truncationMode(.middle)
                     } label: {
-                        Label("导出文件名", systemImage: "doc.text")
+                        Label("文件名", systemImage: "doc.text")
                     }
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("导出文件名")
+                    .accessibilityLabel("文件名")
                     .accessibilityValue(previewFileName)
                 }
 
@@ -235,7 +206,7 @@ struct ClipOptionsSheet: View {
                             clipRow(clip, index: index, isLatest: clip.id == live.latestClip?.id)
                         }
                     } header: {
-                        Text("已拍片段（\(live.clipCount)）")
+                        Text("片段（\(live.clipCount)）")
                     }
                 }
 
@@ -244,14 +215,14 @@ struct ClipOptionsSheet: View {
                         Button(role: .destructive) {
                             showClearConfirm = true
                         } label: {
-                            Label("清空这个镜头的 \(live.clipCount) 段片段", systemImage: "trash.slash")
+                            Label("清空片段", systemImage: "trash.slash")
                         }
                     }
 
                     Button(role: .destructive) {
                         showDeleteConfirm = true
                     } label: {
-                        Label("删除整个分镜", systemImage: "trash")
+                        Label("删除镜头", systemImage: "trash")
                     }
                 }
             }
@@ -298,30 +269,42 @@ struct ClipOptionsSheet: View {
             }
             Button("取消", role: .cancel) { clipToDelete = nil }
         } message: {
-            Text("只删除这一条，镜头和其它片段都会保留。")
+            Text("无法恢复。")
         }
         .confirmationDialog(
-            "清空这个镜头的片段？",
+            "清空片段？",
             isPresented: $showClearConfirm,
             titleVisibility: .visible
         ) {
-            Button("全部清空", role: .destructive) { store.removeAllClips(for: live.id) }
+            Button("清空", role: .destructive) { store.removeAllClips(for: live.id) }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("\(live.clipCount) 段片段都会被删除，无法恢复。")
+            Text("\(live.clipCount) 段视频将被删除，无法恢复。")
         }
-        .alert("删除整个分镜？", isPresented: $showDeleteConfirm) {
+        .alert("删除镜头？", isPresented: $showDeleteConfirm) {
             Button("删除", role: .destructive) {
                 store.delete(live)
                 dismiss()
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text(
-                live.hasClip
-                ? "镜头 \(live.paddedNumber) 以及它的 \(live.clipCount) 段片段都会被删除，无法恢复。"
-                : "镜头 \(live.paddedNumber) 会被删除。"
-            )
+            if live.hasClip {
+                Text("\(live.clipCount) 段视频将被删除，无法恢复。")
+            }
+        }
+    }
+
+    /// 图标 + 短标签 + 输入框。图标与标签常驻，占位只留字段名。
+    private func fieldRow<Field: View>(
+        _ title: String,
+        systemImage: String,
+        @ViewBuilder field: () -> Field
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(title, systemImage: systemImage)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            field()
         }
     }
 
@@ -404,9 +387,14 @@ struct ClipOptionsSheet: View {
                 }
 
                 if live.hasClip {
-                    Text("已拍 \(live.clipCount) 段 · 共 \(live.totalDuration.slDurationText)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: SLSpacing.small) {
+                        IconValue(systemImage: "square.stack.3d.up", text: "\(live.clipCount)")
+                        IconValue(systemImage: "clock", text: live.totalDuration.slDurationText)
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("\(live.clipCount) 段，\(live.totalDuration.slDurationText)")
                 }
             }
 
@@ -464,18 +452,18 @@ struct ClipOptionsSheet: View {
                     .compactMap { $0 }
                     .joined(separator: "，")
             )
-            .accessibilityHint("播放这一条")
+            .accessibilityHint("播放")
 
             Menu {
                 Button {
                     if flushDraft() { onPlay(clip) }
                 } label: {
-                    Label("播放这一条", systemImage: "play.circle")
+                    Label("播放", systemImage: "play.circle")
                 }
 
                 if let url {
                     ShareLink(item: url, subject: Text("镜头 \(live.paddedNumber) 第 \(index + 1) 条")) {
-                        Label("分享这一条", systemImage: "square.and.arrow.up")
+                        Label("分享", systemImage: "square.and.arrow.up")
                     }
                 }
 
@@ -484,7 +472,7 @@ struct ClipOptionsSheet: View {
                 Button(role: .destructive) {
                     clipToDelete = clip
                 } label: {
-                    Label("删除这一条", systemImage: "trash")
+                    Label("删除", systemImage: "trash")
                 }
             } label: {
                 Image(systemName: "ellipsis.circle")
@@ -492,7 +480,7 @@ struct ClipOptionsSheet: View {
                     .frame(width: SLSize.minTouchTarget, height: SLSize.minTouchTarget)
                     .contentShape(Rectangle())
             }
-            .accessibilityLabel("第 \(index + 1) 条片段的更多操作")
+            .accessibilityLabel("第 \(index + 1) 条，更多")
         }
     }
 
@@ -507,7 +495,7 @@ struct ClipOptionsSheet: View {
 
     private var deleteClipTitle: String {
         guard let clipToDelete, let index = live.clips.firstIndex(where: { $0.id == clipToDelete.id }) else {
-            return "删除这一条？"
+            return "删除片段？"
         }
         return "删除第 \(index + 1) 条？"
     }
