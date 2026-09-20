@@ -178,6 +178,76 @@ nonisolated extension Shot {
     }
 }
 
+// MARK: - 套用模板
+
+nonisolated extension Shot {
+    /// 把影片模板套到已有的内容上：**已经写的字一个不丢**，只补上缺的标签行。
+    ///
+    /// - 内容为空：就是模板本身。
+    /// - 模板里每一行「标签：…」按标签名去认领内容里对应的行（连同后面没有标签的续行），
+    ///   按模板的顺序排好；内容里没有的标签补上模板里那一行。
+    /// - 内容开头没有标签的文字（还没用模板时写的那句话）并进模板第一个标签，当作它的值；
+    ///   第一个标签本来就写了的话，这段文字原样留在最前面。
+    /// - 认不出的行（不是模板里的标签开头）一律当作上一个标签的续行，不丢。
+    /// - 模板里没有一行带冒号、认领不了任何东西时，内容原样保留，模板接在后面。
+    ///
+    /// 已经是模板的样子时结果与内容相同，调用方据此不再显示「应用模板」。
+    static func applyingTemplate(_ template: String, to note: String) -> String {
+        let content = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !content.isEmpty else { return template }
+
+        let templateLines = template
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        let names = templateLines.map(templateLabelName(of:))
+        guard names.contains(where: { $0 != nil }) else {
+            return content.contains(template) ? content : "\(content)\n\(template)"
+        }
+
+        let templateNames = Set(names.compactMap { $0 })
+        var blocks: [String: [String]] = [:]
+        var leading: [String] = []
+        var current: String?
+        for line in content.components(separatedBy: .newlines) {
+            if let name = templateLabelName(of: line), templateNames.contains(name) {
+                current = name
+                blocks[name, default: []].append(line)
+            } else if let current {
+                blocks[current, default: []].append(line)
+            } else {
+                leading.append(line)
+            }
+        }
+
+        var result: [String] = []
+        var leadingPending = !leading.isEmpty
+        // 第一个标签内容里已经有、或者模板第一行不是标签：没有地方并，无标签的开头文字留在最前面
+        if leadingPending, names[0].flatMap({ blocks[$0] }) != nil || names[0] == nil {
+            result.append(contentsOf: leading)
+            leadingPending = false
+        }
+        for (index, line) in templateLines.enumerated() {
+            if let name = names[index], let block = blocks.removeValue(forKey: name) {
+                result.append(contentsOf: block)
+            } else if index == 0, leadingPending {
+                result.append(line + leading.joined(separator: "\n"))
+                leadingPending = false
+            } else {
+                result.append(line)
+            }
+        }
+        return result.joined(separator: "\n")
+    }
+
+    /// 一行的标签名：第一个冒号（全角或半角）前面的字，没有冒号或冒号在最前面时为 `nil`
+    private static func templateLabelName(of line: String) -> String? {
+        guard let colon = line.firstIndex(where: { $0 == "：" || $0 == ":" }) else { return nil }
+        let name = line[..<colon].trimmingCharacters(in: .whitespaces)
+        return name.isEmpty ? nil : name
+    }
+}
+
 // MARK: - 派生属性
 
 nonisolated extension Shot {
