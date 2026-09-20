@@ -10,6 +10,9 @@ import SwiftUI
 /// 描述还没写时，描述位置画一道虚线占位（虚线在这套界面里一直是「这里还没有内容」的意思，
 /// 见缩略图的虚线框），不写「待填写」之类的文案。
 /// 在无障碍字号下改为上下布局，避免文字被挤压。
+///
+/// **分镜页的卡片一样高**：文字块固定为「主文字三行 + 末行」的高度，
+/// 已拍还是未拍、内容写了几行都不改变它，一列卡片才不会忽高忽低。
 struct ShotCardView: View {
     let shot: Shot
     let clipURL: URL?
@@ -27,14 +30,11 @@ struct ShotCardView: View {
     var displayClip: ShotClip? = nil
     /// 覆盖角标条数的口径（如「只数当天拍下的几条」）；传 `nil` 时数全部片段。
     var takeCountOverride: Int? = nil
-    /// 覆盖「总时长」的统计口径（如「只算当天的几条」）；传 `nil` 时算全部片段。
-    var totalDurationOverride: TimeInterval? = nil
     var onTap: () -> Void
 
     /// 实际展示的片段：外部指定优先，否则回落到最近一条
     private var effectiveClip: ShotClip? { displayClip ?? shot.latestClip }
     private var effectiveTakeCount: Int { takeCountOverride ?? shot.clipCount }
-    private var effectiveTotalDuration: TimeInterval { totalDurationOverride ?? shot.totalDuration }
 
     var accessibilityDescription: String {
         var parts = ["镜头 \(shot.number)"]
@@ -43,7 +43,6 @@ struct ShotCardView: View {
             parts.append("\(effectiveTakeCount) 段")
             parts.append(clip.shortRecordedAtText())
             if let duration = clip.durationText { parts.append("时长 \(duration)") }
-            if effectiveTakeCount > 1 { parts.append("总时长 \(effectiveTotalDuration.slDurationText)") }
         } else {
             parts.append("未拍")
         }
@@ -85,19 +84,13 @@ struct ShotCardView: View {
                 details
             }
         } else {
-            HStack(alignment: hasTextContent ? .top : .center, spacing: SLSpacing.medium) {
+            HStack(alignment: .top, spacing: SLSpacing.medium) {
                 thumbnail(size: SLSize.thumbnail)
                 details
                 Spacer(minLength: 0)
             }
         }
     }
-
-    /// 卡片有没有真正的文字内容。
-    ///
-    /// 只用来决定缩略图与文字块的垂直对齐：分镜页还没写描述时只剩一行占位，
-    /// 这一行跟缩略图居中对齐才不会吊在顶上；写了描述（最多三行）就顶部对齐。
-    private var hasTextContent: Bool { showsNumber || shot.hasNote }
 
     private func thumbnail(size: CGSize) -> some View {
         ClipThumbnailView(
@@ -121,27 +114,37 @@ struct ShotCardView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// 主行：编号（历史页）或分镜描述（分镜页），这一行整行都留给它
+    /// 主行：编号（历史页）或分镜内容（分镜页），这一行整行都留给它
     @ViewBuilder
     private var titleRow: some View {
-        HStack(alignment: .firstTextBaseline, spacing: SLSpacing.small) {
-            if showsNumber {
-                Text("镜头 \(shot.paddedNumber)")
+        if showsNumber {
+            Text("镜头 \(shot.paddedNumber)")
+                .font(.headline)
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            // 一块固定三行高的区域：底下垫一个看不见的三行文字撑住高度，
+            // 内容不足三行、还没写内容（占位虚线在这块里垂直居中）都不改变卡片高度。
+            ZStack(alignment: .topLeading) {
+                Text(" ")
                     .font(.headline)
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-            } else if shot.hasNote {
-                Text(shot.note)
-                    .font(.headline)
-                    .foregroundStyle(.primary)
-                    .lineLimit(3)
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else {
-                NotePlaceholder()
-            }
+                    .lineLimit(3, reservesSpace: true)
+                    .hidden()
 
-            Spacer(minLength: 0)
+                if shot.hasNote {
+                    Text(shot.note)
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                        .lineLimit(3)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    NotePlaceholder()
+                        .frame(maxHeight: .infinity)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -154,33 +157,21 @@ struct ShotCardView: View {
             .fixedSize(horizontal: false, vertical: true)
     }
 
-    /// 卡片末行：左侧总时长（拍过不止一条时才有）、右侧最近一次拍摄时间。
+    /// 卡片末行：靠右一个最近一次拍摄时间。
     ///
-    /// 未拍的镜头**整行不画**。这里原本是一句「点击拍摄或导入视频」，但左侧虚线框里的
-    /// 加号、以及「整张卡片可点」已经表达了同一件事，VoiceOver 那边还有更完整的
-    /// `accessibilityActionHint`；真正的问题是一行挂一句提示语，列表里每个还没拍的
-    /// 镜头都会重复一遍。
-    @ViewBuilder
+    /// 未拍的镜头这一行**留空但照样占高度**：这里原本是一句「点击拍摄或导入视频」，
+    /// 但左侧虚线框里的加号、以及「整张卡片可点」已经表达了同一件事，
+    /// VoiceOver 那边还有更完整的 `accessibilityActionHint`，所以不写字；
+    /// 只是这一行不能整个不画，否则未拍卡片会比已拍卡片矮一截。
+    /// 总时长不在卡片上出现：它只有拍过不止一条的镜头才有，同一列里时有时无。
     private var metaRow: some View {
-        if effectiveClip != nil {
-            HStack(alignment: .firstTextBaseline, spacing: SLSpacing.small) {
-                if effectiveTakeCount > 1 {
-                    // 条数已经标在缩略图角标上，这里只补一个总数；时钟图标代替「总时长」三个字
-                    IconValue(systemImage: "clock", text: effectiveTotalDuration.slDurationText)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
+        HStack(alignment: .firstTextBaseline, spacing: SLSpacing.small) {
+            Spacer(minLength: SLSpacing.small)
 
-                Spacer(minLength: SLSpacing.small)
-
-                if let recordedAt = effectiveClip?.shortRecordedAtText() {
-                    Text(recordedAt)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
+            Text(effectiveClip?.shortRecordedAtText() ?? " ")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
     }
 }
