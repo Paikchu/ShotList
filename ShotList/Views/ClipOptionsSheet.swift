@@ -72,9 +72,15 @@ struct ClipOptionsSheet: View {
         1...max(1, store.shots.count)
     }
 
-    /// 内容框里是不是还什么都没写（去首尾空白后为空，与 `Shot.hasNote` 同一口径）
-    private var isContentBlank: Bool {
-        draftNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    /// 套用模板之后内容会变成什么样：已经写的字都保留，只补缺的标签行（见 `Shot.applyingTemplate`）。
+    private var templatedContent: String {
+        Shot.applyingTemplate(store.shotTemplate, to: draftNote)
+    }
+
+    /// 已经是模板的样子时套用不会有任何变化，那个按钮就不必出现，免得点了没反应。
+    /// 看的是草稿而不是仓库——刚清空或刚改完的那一刻按钮就该跟着变，不用等落盘。
+    private var canApplyTemplate: Bool {
+        templatedContent != draftNote.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// 与导出结果同一套命名规则：改编号或换影片时，这里实时看到最终文件名。
@@ -131,15 +137,14 @@ struct ClipOptionsSheet: View {
                             .accessibilityLabel("内容")
                     }
 
-                    // 只在框还空着时出现：模板是整段填进去的，框里已经有字就不覆盖。
-                    // 看的是草稿而不是仓库——刚清空的那一刻按钮就该回来，不用等落盘。
-                    if isContentBlank {
+                    // 框里有字也能套：已写的内容保留，只补上缺的标签行；框还空着就是整段模板。
+                    if canApplyTemplate {
                         Button {
-                            draftNote = store.shotTemplate
+                            draftNote = templatedContent
                         } label: {
                             Label("应用模板", systemImage: "text.badge.plus")
                         }
-                        .accessibilityHint("填入影片模板")
+                        .accessibilityHint("已写的内容保留")
                     }
                 }
 

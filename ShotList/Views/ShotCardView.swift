@@ -125,15 +125,17 @@ struct ShotCardView: View {
         } else {
             // 一块固定三行高的区域：底下垫一个看不见的三行文字撑住高度，
             // 内容不足三行、还没写内容（占位虚线在这块里垂直居中）都不改变卡片高度。
+            // 内容常常是逐行的「标签：内容」，字号取小一号，一行才装得下更多字；
+            // 看不见的那行必须与真正的文字同一个字体，否则撑出来的高度对不上。
             ZStack(alignment: .topLeading) {
                 Text(" ")
-                    .font(.headline)
+                    .font(.subheadline)
                     .lineLimit(3, reservesSpace: true)
                     .hidden()
 
                 if shot.hasNote {
                     Text(shot.note)
-                        .font(.headline)
+                        .font(.subheadline)
                         .foregroundStyle(.primary)
                         .lineLimit(3)
                         .multilineTextAlignment(.leading)
