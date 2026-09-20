@@ -100,15 +100,13 @@ struct CameraCaptureView: View {
                 reviewURL = nil
             }
         }
-        .alert("拍摄出现问题", isPresented: errorBinding) {
+        .alert("操作未完成", isPresented: errorBinding) {
             Button("好", role: .cancel) {}
         } message: {
             Text(errorMessage ?? "")
         }
         .alert("已达录制上限", isPresented: $reachedRecordingLimit) {
             Button("好", role: .cancel) {}
-        } message: {
-            Text("这段已保存，可以回看或重拍。")
         }
         .sheet(isPresented: $isShowingSettings) { settingsSheet }
     }
@@ -285,10 +283,10 @@ struct CameraCaptureView: View {
                     .disabled(isSaving)
                     .frame(minHeight: SLSize.minTouchTarget)
                 Spacer()
-                Text("回看第 \(reviewTakeIndex) 条")
+                Text("第 \(reviewTakeIndex) 条")
                     .font(.headline)
                 Spacer()
-                Button("使用这条") { save(url, continuing: false) }
+                Button("使用") { save(url, continuing: false) }
                     .fontWeight(.semibold)
                     .frame(minHeight: SLSize.minTouchTarget)
                     .disabled(isSaving)
@@ -311,15 +309,11 @@ struct CameraCaptureView: View {
                     ZStack {
                         RoundedRectangle(cornerRadius: 24, style: .continuous)
                             .fill(.black.opacity(0.45))
-                        VStack(spacing: SLSpacing.small) {
-                            ProgressView().tint(.white)
-                            Text("正在保存到分镜…")
-                                .font(.subheadline)
-                                .foregroundStyle(.white)
-                        }
+                        ProgressView().tint(.white)
                     }
                     .padding(.horizontal, SLSpacing.medium)
-                    .accessibilityElement(children: .combine)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("正在保存")
                 }
             }
 
@@ -327,12 +321,11 @@ struct CameraCaptureView: View {
                 Button {
                     save(url, continuing: true)
                 } label: {
-                    Label("保存并继续拍下一条", systemImage: "arrow.triangle.2.circlepath.camera")
+                    Label("保存并再拍", systemImage: "arrow.triangle.2.circlepath.camera")
                         .frame(maxWidth: .infinity, minHeight: SLSize.minTouchTarget)
                 }
                 .buttonStyle(.bordered)
                 .disabled(isSaving)
-                .accessibilityHint("这段会存成第 \(reviewTakeIndex) 条，然后回到取景继续拍同一个镜头")
             }
             .padding(.horizontal, SLSpacing.medium)
             .padding(.bottom, SLSpacing.large)
@@ -346,9 +339,9 @@ struct CameraCaptureView: View {
         messageScreen(
             symbol: "camera.fill",
             symbolTint: Color.accentColor,
-            title: "需要摄像头权限",
-            message: "分镜助手只会用摄像头录制你的分镜视频。视频保存在这台 iPhone 上，不会上传到任何地方。",
-            primaryTitle: "允许使用摄像头",
+            title: "需要访问摄像头",
+            message: "用于录制分镜视频，视频仅存于本机。",
+            primaryTitle: "允许",
             primaryAction: { requestAccess() },
             showsImport: true
         )
@@ -358,9 +351,9 @@ struct CameraCaptureView: View {
         messageScreen(
             symbol: "camera.badge.ellipsis",
             symbolTint: .orange,
-            title: "摄像头权限已关闭",
-            message: "要使用相机拍摄，请到「设置」里允许分镜助手访问摄像头。你也可以先用相册里的视频完成这个分镜。",
-            primaryTitle: "前往设置",
+            title: "无法访问摄像头",
+            message: "请在「设置」中允许访问摄像头。",
+            primaryTitle: "打开设置",
             primaryAction: {
                 if let url = URL(string: UIApplication.openSettingsURLString) {
                     openURL(url)
@@ -374,9 +367,9 @@ struct CameraCaptureView: View {
         messageScreen(
             symbol: "video.slash",
             symbolTint: .secondary,
-            title: "无法使用相机",
+            title: "相机不可用",
             message: message,
-            primaryTitle: "从相册导入",
+            primaryTitle: "导入",
             primaryAction: { requestImport() },
             showsImport: false
         )
@@ -388,7 +381,7 @@ struct CameraCaptureView: View {
                 Button { dismiss() } label: {
                     CameraCircleGlyph(name: "xmark")
                 }
-                .accessibilityLabel("关闭相机")
+                .accessibilityLabel("关闭")
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, SLSpacing.medium)
@@ -396,12 +389,9 @@ struct CameraCaptureView: View {
 
             Spacer()
 
-            VStack(spacing: SLSpacing.medium) {
-                ProgressView().tint(.white)
-                Text("正在启动相机…")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
+            ProgressView()
+                .tint(.white)
+                .accessibilityLabel("正在启动")
 
             Spacer()
         }
@@ -438,12 +428,14 @@ struct CameraCaptureView: View {
                     .frame(maxWidth: .infinity, minHeight: SLSize.minTouchTarget)
 
                 if showsImport {
-                    Button("从相册导入") { requestImport() }
-                        .buttonStyle(.bordered)
-                        .frame(maxWidth: .infinity, minHeight: SLSize.minTouchTarget)
+                    Button { requestImport() } label: {
+                        Label("导入", systemImage: "photo.on.rectangle.angled")
+                    }
+                    .buttonStyle(.bordered)
+                    .frame(maxWidth: .infinity, minHeight: SLSize.minTouchTarget)
                 }
 
-                Button("暂不拍摄") { dismiss() }
+                Button("取消") { dismiss() }
                     .foregroundStyle(.secondary)
                     .frame(minHeight: SLSize.minTouchTarget)
             }
@@ -512,7 +504,7 @@ struct CameraCaptureView: View {
                     }
                 case .failure(let error):
                     Haptics.error()
-                    errorMessage = "录制没有完成：\(error.localizedDescription)"
+                    errorMessage = "录制失败：\(error.localizedDescription)"
                 }
             }
         }
@@ -614,7 +606,7 @@ struct CameraCaptureView: View {
             } catch {
                 guard isVisible else { return }
                 Haptics.error()
-                errorMessage = "没能保存这段视频：\(error.localizedDescription)"
+                errorMessage = "保存失败：\(error.localizedDescription)"
             }
         }
     }

@@ -40,9 +40,9 @@ struct ShotCardView: View {
         var parts = ["镜头 \(shot.number)"]
         if shot.hasNote { parts.append(shot.displayDetail) }
         if let clip = effectiveClip {
-            parts.append("共 \(effectiveTakeCount) 段")
+            parts.append("\(effectiveTakeCount) 段")
             parts.append(clip.shortRecordedAtText())
-            if let duration = clip.durationText { parts.append("所示片段时长 \(duration)") }
+            if let duration = clip.durationText { parts.append("时长 \(duration)") }
             if effectiveTakeCount > 1 { parts.append("总时长 \(effectiveTotalDuration.slDurationText)") }
         } else {
             parts.append("未拍")
@@ -165,8 +165,8 @@ struct ShotCardView: View {
         if effectiveClip != nil {
             HStack(alignment: .firstTextBaseline, spacing: SLSpacing.small) {
                 if effectiveTakeCount > 1 {
-                    // 条数已经标在缩略图角标上，这里只补一个总数
-                    Text("总时长 \(effectiveTotalDuration.slDurationText)")
+                    // 条数已经标在缩略图角标上，这里只补一个总数；时钟图标代替「总时长」三个字
+                    IconValue(systemImage: "clock", text: effectiveTotalDuration.slDurationText)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)

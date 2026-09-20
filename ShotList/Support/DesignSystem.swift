@@ -1,5 +1,11 @@
 import SwiftUI
 
+// 界面语言约定（需求 R-1，完整对照表见 Docs/requirements）：
+// - 按钮与菜单项只写动词或动宾短语；有通用图标的操作以图标为主，名称放进无障碍标签。
+// - 状态与统计用「图标 + 数字」（`IconValue`），不写「已拍 3 / 5 个镜头」这类句子。
+// - 空状态只有图标、一个名词短语和至多一个按钮；确认弹层正文只写波及数量与不可恢复。
+// - 错误提示写「失败 + 用户能执行的一步」；设计理由与实现取舍不进界面，留在代码注释里。
+
 /// 设计常量。间距统一为 8pt 网格（4pt 仅用于细调）。
 enum SLSpacing {
     /// 4pt
@@ -17,16 +23,16 @@ enum SLSpacing {
     ///
     /// 三页容器各不相同（分镜＝`List(.plain)`、历史＝`ScrollView`、导出＝`List(.insetGrouped)`），
     /// 各自默认的顶部内边距并不一样：实测同样不加边距时，历史的首张卡片最贴顶，
-    /// 分镜的首张卡片要低 1pt，导出的首个小节标题更低 7pt。三页都用
+    /// 分镜的首张卡片要低 1pt，导出的首块内容比统一基准高 5pt。三页都用
     /// `.contentMargins(.top, …)` 显式指定，让首个内容块的上沿落在同一条水平线上：
     /// - **分镜**：行自带 `tiny`（4pt）纵向内边距（时间线导轨要从行顶画到行底），
     ///   加上 List 默认的 1pt，正好 5pt → 不额外加边距；
     /// - **历史**：补 `pageTopInset`；
-    /// - **导出**：把 insetGrouped 多出来的那份用负边距收回（`groupedListTopSlack`）。
+    /// - **导出**：首块是没有小节标题的素材卡片，与历史一样补 `pageTopInset`。
     static let pageTopInset: CGFloat = 5
 
-    /// 导出页（`List(.insetGrouped)`）首个小节标题默认比统一基准多出的 7pt，
-    /// 用负的内容边距收回去。
+    /// `List(.insetGrouped)` 首个小节带标题时，标题默认比统一基准多出的 7pt
+    /// （「剪辑风格」页用负的内容边距收回去）。
     static let groupedListTopSlack: CGFloat = 7
 }
 
@@ -192,18 +198,29 @@ struct ProgressRing: View {
         }
         .frame(width: size, height: size)
         .overlay {
-            VStack(spacing: 0) {
-                Text("\(Int((clamped * 100).rounded()))%")
-                    .font(.title3.weight(.bold).monospacedDigit())
-                    .foregroundStyle(.primary)
-                Text("已完成")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
+            Text("\(Int((clamped * 100).rounded()))%")
+                .font(.title3.weight(.bold).monospacedDigit())
+                .foregroundStyle(.primary)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("拍摄进度")
-        .accessibilityValue("已完成 \(Int((clamped * 100).rounded()))%")
+        .accessibilityValue("\(Int((clamped * 100).rounded()))%")
+    }
+}
+
+/// 「图标 + 数值」：统计与状态的统一写法，图标代替「已拍」「总时长」这类字眼。
+///
+/// 字号与颜色从外层继承；图标对读屏隐藏，调用方在外层给出完整的朗读文本。
+struct IconValue: View {
+    let systemImage: String
+    let text: String
+
+    var body: some View {
+        HStack(spacing: SLSpacing.tiny) {
+            Image(systemName: systemImage)
+                .accessibilityHidden(true)
+            Text(text)
+        }
     }
 }
 

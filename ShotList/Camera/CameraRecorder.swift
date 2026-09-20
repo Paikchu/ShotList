@@ -520,7 +520,7 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
             guard let self, let device = self.videoInput?.device else { return }
 
             guard !self.movieOutput.isRecording else {
-                self.onMain { self.settingsError = "正在拍摄，先停止拍摄才能改画质。" }
+                self.onMain { self.settingsError = "拍摄中无法更改画质" }
                 return
             }
 
@@ -531,7 +531,7 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
             // 而不是悄悄按别的档位录下去。
             guard let applied = self.applyFormatLocked(resolution, frameRate, to: device) else {
                 self.publishFormatCapabilities(device)
-                self.onMain { self.settingsError = "这台摄像头不支持 \(resolution.title) 的 \(frameRate.title)，画质保持原样。" }
+                self.onMain { self.settingsError = "不支持 \(resolution.title) · \(frameRate.title)" }
                 return
             }
 
@@ -965,7 +965,7 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
     @objc private func sessionRuntimeError(_ notification: Notification) {
         stopRecording()
         onMain {
-            self.status = .unavailable("相机被系统中断，请关闭后重新打开。")
+            self.status = .unavailable("相机已中断，请重新打开。")
         }
     }
 }
@@ -1072,11 +1072,11 @@ enum CameraError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .noCameraAvailable:
-            return "这台设备没有可用的摄像头。iOS 模拟器不提供摄像头，请改用「从相册导入」。"
+            return "此设备没有可用的摄像头。"
         case .cannotAddInput:
-            return "无法启用摄像头输入。"
+            return "无法启用摄像头。"
         case .cannotAddOutput:
-            return "无法启用视频录制输出。"
+            return "无法启用视频录制。"
         }
     }
 }

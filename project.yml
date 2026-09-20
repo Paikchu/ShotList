@@ -74,9 +74,9 @@ targets:
         LSSupportsOpeningDocumentsInPlace: true
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
-        NSCameraUsageDescription: 分镜助手需要使用摄像头，才能在你的分镜里直接录制视频。
-        NSMicrophoneUsageDescription: 分镜助手需要使用麦克风，才能为分镜视频录制现场声音。
-        NSPhotoLibraryUsageDescription: 分镜助手需要访问相册，才能把已经拍好的视频导入到分镜中。
+        NSCameraUsageDescription: 用于录制分镜视频。
+        NSMicrophoneUsageDescription: 用于录制视频的现场声音。
+        NSPhotoLibraryUsageDescription: 用于从相册导入视频。
   ShotListTests:
     type: bundle.unit-test
     platform: iOS

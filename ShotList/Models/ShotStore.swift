@@ -3,7 +3,7 @@ import SwiftUI
 
 nonisolated enum ShotStoreError: LocalizedError {
     case targetMissing
-    var errorDescription: String? { "目标分镜已被删除，请重新选择分镜后再导入。" }
+    var errorDescription: String? { "镜头已被删除" }
 }
 
 /// 让整个界面停下来的存储失败。
@@ -27,7 +27,7 @@ nonisolated struct LoadFailure {
     static func deletionPending(_ error: Error) -> LoadFailure {
         LoadFailure(
             kind: .deletionPending,
-            message: "分镜记录没有丢失，只是删除后的收尾清理没有完成。已保留恢复记录和剩余素材，暂时不能编辑。请检查设备存储后重试。\n\(error.localizedDescription)"
+            message: "记录未丢失。请检查存储空间后重试。\n\(error.localizedDescription)"
         )
     }
 }
@@ -802,7 +802,7 @@ final class ShotStore: ObservableObject {
             }
             loadError = LoadFailure(
                 kind: .unreadable,
-                message: "无法读取分镜记录，已暂停编辑和文件清理，原文件不会被覆盖。请恢复可用的分镜记录后重试。\n\(error.localizedDescription)"
+                message: "原文件未改动。\n\(error.localizedDescription)"
             )
             films = []
             currentFilmID = nil
@@ -865,7 +865,7 @@ final class ShotStore: ObservableObject {
         } catch {
             loadError = LoadFailure(
                 kind: .upgradeFailed,
-                message: "无法升级旧版分镜记录，已保留原文件、不做任何改动。请检查设备存储后重试。\n\(error.localizedDescription)"
+                message: "原文件未改动。请检查存储空间后重试。\n\(error.localizedDescription)"
             )
             films = []
             currentFilmID = nil
@@ -885,7 +885,7 @@ final class ShotStore: ObservableObject {
         guard snapshot.isComplete, snapshot.sizes.isEmpty else {
             loadError = LoadFailure(
                 kind: .unreadable,
-                message: "无法读取分镜记录，已暂停编辑和文件清理，原文件不会被覆盖。请恢复可用的分镜记录后重试。"
+                message: "原文件未改动。"
             )
             films = []
             currentFilmID = nil
@@ -910,7 +910,7 @@ final class ShotStore: ObservableObject {
             try commit()
             return true
         } catch {
-            saveError = "未能保存本次更改，已保留之前的记录和素材。请检查设备存储后重试。\n\(error.localizedDescription)"
+            saveError = "保存失败，已保留原内容。请检查存储空间后重试。\n\(error.localizedDescription)"
             return false
         }
     }
@@ -1061,7 +1061,7 @@ final class ShotStore: ObservableObject {
     }
 
     private func reportDeletionFailures(_ names: [String]) {
-        saveError = "有 \(names.count) 个文件未能删除。仍有素材的片段已保留，可稍后重试；未使用文件的剩余数量已更新。\n" + names.joined(separator: "\n")
+        saveError = "\(names.count) 个文件未能删除，可稍后重试。\n" + names.joined(separator: "\n")
     }
 
     private func writeLibrary() throws {

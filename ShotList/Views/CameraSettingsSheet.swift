@@ -26,7 +26,7 @@ struct CameraSettingsSheet: View {
             List {
                 if isRecording {
                     Section {
-                        Label("正在拍摄，停止拍摄后才能修改画质。", systemImage: "record.circle")
+                        Label("拍摄中", systemImage: "record.circle")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -45,8 +45,6 @@ struct CameraSettingsSheet: View {
                     }
                 } header: {
                     Text("分辨率")
-                } footer: {
-                    Text("分辨率越高画面越清晰，文件也越大。")
                 }
 
                 Section {
@@ -62,12 +60,10 @@ struct CameraSettingsSheet: View {
                     }
                 } header: {
                     Text("帧率")
-                } footer: {
-                    Text("60 fps 画面更顺、方便后期慢放，24 fps 更接近电影的质感。可选的帧率取决于分辨率。")
                 }
 
                 Section {
-                    Label("单个片段最长 10 分钟；到达上限会自动停止，并提示已保存。", systemImage: "info.circle")
+                    Label("单段上限 10 分钟", systemImage: "timer")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -133,9 +129,9 @@ struct CameraSettingsSheet: View {
     }
 
     /// 分辨率不可用：这颗摄像头本身给不了，与当前选了什么无关。
-    private let resolutionUnavailableNote = "这台摄像头不支持"
+    private let resolutionUnavailableNote = "不支持"
     /// 帧率不可用：在当前选中的分辨率下不支持，换个分辨率可能就有了。
-    private let frameRateUnavailableNote = "该分辨率下不支持"
+    private let frameRateUnavailableNote = "不支持"
 }
 
 #Preview {

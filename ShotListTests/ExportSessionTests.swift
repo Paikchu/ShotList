@@ -119,7 +119,7 @@ final class ExportSessionTests: XCTestCase, @unchecked Sendable {
             await run.publish(ExportProgress(phase: .packaging, completed: 4, total: 4))
             return .success(result)
         })
-        XCTAssertEqual(seenDuringBuild?.text, "正在转码 2 / 4 段")
+        XCTAssertEqual(seenDuringBuild?.text, "转码 2 / 4")
         XCTAssertEqual(seenDuringBuild?.fraction, 0.25)
         XCTAssertNil(session.progress)
         XCTAssertEqual(session.package, result)

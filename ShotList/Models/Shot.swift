@@ -222,11 +222,6 @@ nonisolated extension Shot {
         return trimmed.isEmpty ? "镜头 \(number)" : trimmed
     }
 
-    /// 界面上展示的字幕；为空时回退成一行说明，用在面板的预览行上
-    var displayCaption: String {
-        hasCaption ? trimmedCaption : "未写字幕，成片上不出字"
-    }
-
     /// 最近一条的时长文本
     var durationText: String? { latestClip?.durationText }
 
@@ -367,12 +362,10 @@ nonisolated extension Shot {
         var parts: [String] = ["镜头 \(number)"]
         if hasNote { parts.append(displayDetail) }
         parts.append(status().title)
-        if clipCount > 1 { parts.append("共 \(clipCount) 段") }
-        if let durationText { parts.append("最近一段时长 \(durationText)") }
+        if clipCount > 1 { parts.append("\(clipCount) 段") }
+        if let durationText { parts.append("时长 \(durationText)") }
         return parts.joined(separator: "，")
     }
 
-    var accessibilityActionHint: String {
-        hasClip ? "查看、播放或分享拍好的片段" : "添加视频：用相机拍摄或从相册导入"
-    }
+    var accessibilityActionHint: String { "打开镜头" }
 }

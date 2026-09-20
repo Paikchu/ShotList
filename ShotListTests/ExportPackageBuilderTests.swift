@@ -134,7 +134,7 @@ final class ExportPackageBuilderTests: XCTestCase {
                     XCTFail("应当因空间不足失败：\(mode)")
                 } catch {
                     guard case ExportError.insufficientSpace = error else { return XCTFail("Expected space error: \(error)") }
-                    XCTAssertTrue(error.localizedDescription.contains("释放设备空间"))
+                    XCTAssertTrue(error.localizedDescription.contains("释放空间"))
                 }
                 if mode == "preflight" { XCTAssertEqual(fm.copyCount, 0) }
                 let exportRoot = root.appendingPathComponent("ShotListExport")
@@ -359,7 +359,7 @@ final class ExportPackageBuilderTests: XCTestCase {
         } catch {
             guard case ExportError.transcodeFailed(let fileName, _) = error else { return XCTFail("Expected transcode error: \(error)") }
             XCTAssertEqual(fileName, "02.mov")
-            XCTAssertTrue(error.localizedDescription.contains("改回「原片」"))
+            XCTAssertTrue(error.localizedDescription.contains("「原片」"))
         }
         // 失败后工作目录要清干净，不能留下半成品
         let exportRoot = root.appendingPathComponent("ShotListExport")

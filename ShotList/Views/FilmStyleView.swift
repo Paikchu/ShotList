@@ -30,23 +30,15 @@ struct FilmStyleView: View {
                 editor
             } header: {
                 SectionHeader(title: "风格描述", systemImage: "text.alignleft")
-            } footer: {
-                Text(
-                    "这段话会原样写进导出包的「剪辑风格.md」，交给剪辑工具照着剪。"
-                    + "写到的按你写的来，没写的由它按常规判断；留空就表示这条片子没有特别要求。"
-                )
             }
 
             Section {
-                ForEach(FilmStylePrompt.guidance, id: \.self) { item in
-                    Text(item)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
+                // 一行短词并排，只提示「能写哪几类」
+                Text(FilmStylePrompt.guidance.joined(separator: " · "))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             } header: {
-                SectionHeader(title: "可以写这些", systemImage: "list.bullet")
-            } footer: {
-                Text("只是提示能写什么，不必逐条都写，也不限于这些。")
+                SectionHeader(title: "可写", systemImage: "list.bullet")
             }
         }
         .listStyle(.insetGrouped)
@@ -94,7 +86,7 @@ struct FilmStyleView: View {
                 .font(.body)
                 .frame(minHeight: 200)
                 .focused($isEditing)
-                .accessibilityLabel("剪辑风格描述")
+                .accessibilityLabel("剪辑风格")
         }
         .padding(.vertical, SLSpacing.small)
     }

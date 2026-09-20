@@ -34,7 +34,7 @@ private enum ImportFailure: LocalizedError {
     case unsupportedFormat
 
     var errorDescription: String? {
-        "这个文件不是可用的视频格式。"
+        "不支持的视频格式"
     }
 }
 
@@ -48,7 +48,7 @@ private struct ImportBatch: Equatable {
     var done = 0
 
     var text: String {
-        total > 1 ? "正在导入 \(min(done + 1, total)) / \(total)" : "正在导入视频…"
+        total > 1 ? "导入 \(min(done + 1, total)) / \(total)" : "导入中"
     }
 }
 
@@ -246,9 +246,8 @@ struct ShotFlowModifier: ViewModifier {
 
     private func importFailureMessage(_ failures: [String], of total: Int) -> String {
         let reason = failures.first ?? ""
-        if total == 1 { return "没能导入这段视频：\(reason)" }
-        if failures.count == total { return "这 \(total) 段都没能导入：\(reason)" }
-        return "有 \(failures.count) 段没能导入，其余 \(total - failures.count) 段已加入：\(reason)"
+        if total == 1 { return reason }
+        return "\(failures.count) / \(total) 段失败：\(reason)"
     }
 }
 

@@ -168,18 +168,11 @@ nonisolated extension Film {
         Set(films.flatMap(\.clipFileNames))
     }
 
-    /// 「未开始」「3/5 已拍」这类进度文字。
+    /// 「3/5」这类进度数字，前面配一个勾选图标，不再写「已拍」。
     ///
     /// 已拍数由调用方给（磁盘口径），这样影片条、下拉项与导出页永远同一个数字。
     func progressText(recordedCount: Int) -> String {
-        if shots.isEmpty { return "未开始" }
-        if recordedCount >= shots.count { return "\(shots.count)/\(shots.count) 已拍完" }
-        return "\(recordedCount)/\(shots.count) 已拍"
-    }
-
-    /// 影片条与下拉项上的副行，例如「9月14日更新 · 2/5 已拍」
-    func subtitleText(recordedCount: Int) -> String {
-        "\(SLDateText.monthDay(updatedAt))更新 · \(progressText(recordedCount: recordedCount))"
+        "\(min(recordedCount, shots.count))/\(shots.count)"
     }
 
     /// 导出包名里用的标题片段；没有标题时返回空串，由调用方退回纯日期命名

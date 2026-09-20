@@ -30,9 +30,6 @@ nonisolated struct CameraChromeState: Equatable {
         !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    var takeCountText: String? {
-        savedTakeCount > 0 ? "已拍 \(savedTakeCount) 条" : nil
-    }
 }
 
 /// 取景页上统一的圆形图标外观（关闭、补光、切换摄像头都是它）。
@@ -116,7 +113,7 @@ struct CameraChrome: View {
                 Button { onClose() } label: {
                     CameraCircleGlyph(name: "xmark")
                 }
-                .accessibilityLabel("关闭相机")
+                .accessibilityLabel("关闭")
 
                 Spacer(minLength: 0)
 
@@ -124,8 +121,7 @@ struct CameraChrome: View {
                     settingsGlyph
                 }
                 .accessibilityLabel("拍摄设置")
-                .accessibilityValue(state.settingsAccessibilityText ?? "画质未知")
-                .accessibilityHint("选择分辨率与帧率")
+                .accessibilityValue(state.settingsAccessibilityText ?? "")
             }
         }
         .padding(.horizontal, SLSpacing.medium)
@@ -136,8 +132,9 @@ struct CameraChrome: View {
         VStack(spacing: 0) {
             Text("镜头 \(state.shotNumber)")
                 .font(.subheadline.weight(.semibold))
-            if let takeCountText = state.takeCountText {
-                Text(takeCountText)
+            // 已存条数：叠层图标 + 数字，不写「已拍 N 条」
+            if state.savedTakeCount > 0 {
+                IconValue(systemImage: "square.stack.3d.up.fill", text: "\(state.savedTakeCount)")
                     .font(.caption2)
                     .opacity(0.85)
             }
@@ -145,15 +142,22 @@ struct CameraChrome: View {
         .padding(.horizontal, SLSpacing.medium)
         .padding(.vertical, SLSpacing.small)
         .background(.ultraThinMaterial, in: Capsule())
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            state.savedTakeCount > 0
+            ? "镜头 \(state.shotNumber)，已拍 \(state.savedTakeCount) 条"
+            : "镜头 \(state.shotNumber)"
+        )
     }
 
     private var settingsGlyph: some View {
         HStack(spacing: SLSpacing.tiny) {
             Image(systemName: "slider.horizontal.3")
-            Text(state.settingsText ?? "画质")
-                .font(.caption.weight(.semibold))
-                .monospacedDigit()
+            if let settingsText = state.settingsText {
+                Text(settingsText)
+                    .font(.caption.weight(.semibold))
+                    .monospacedDigit()
+            }
         }
         .lineLimit(1)
         .minimumScaleFactor(0.7)
@@ -180,9 +184,9 @@ struct CameraChrome: View {
             onToggleNote()
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("分镜描述")
-        .accessibilityValue(state.hasNote ? state.note : "还没有写描述")
-        .accessibilityHint(isNoteExpanded ? "点「收起」收成三行" : "点按展开完整描述")
+        .accessibilityLabel("描述")
+        .accessibilityValue(state.hasNote ? state.note : "无")
+        .accessibilityHint(isNoteExpanded ? "收起" : "展开")
     }
 
     private var cardBackground: RoundedRectangle {
@@ -191,10 +195,11 @@ struct CameraChrome: View {
 
     private var noteHeader: some View {
         HStack(spacing: SLSpacing.small) {
-            Label("分镜描述", systemImage: "text.alignleft")
+            // 图标即标签，名称留给读屏
+            Image(systemName: "text.alignleft")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.white.opacity(0.75))
-                .labelStyle(.titleAndIcon)
+                .accessibilityHidden(true)
 
             Spacer(minLength: 0)
 
@@ -205,11 +210,13 @@ struct CameraChrome: View {
     @ViewBuilder
     private var noteHeaderAccessory: some View {
         if isNoteExpanded {
-            Button("收起") { onToggleNote() }
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.white.opacity(0.9))
-                .frame(minWidth: SLSize.minTouchTarget, minHeight: SLSpacing.large)
-                .accessibilityHint("把描述收成三行，让出取景画面")
+            Button { onToggleNote() } label: {
+                Image(systemName: "chevron.up")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .frame(minWidth: SLSize.minTouchTarget, minHeight: SLSpacing.large)
+            }
+            .accessibilityLabel("收起")
         } else if state.hasNote {
             Image(systemName: "chevron.down")
                 .font(.caption2.weight(.semibold))
@@ -242,15 +249,10 @@ struct CameraChrome: View {
         }
     }
 
-    /// 描述还没写时的占位：虚线的含义全应用统一——这里还没有内容。
+    /// 描述还没写时的占位：虚线的含义全应用统一——这里还没有内容，不再另写一句话。
     private var emptyNote: some View {
-        HStack(spacing: SLSpacing.small) {
-            NotePlaceholder(width: 96)
-            Text("这个分镜还没有写描述")
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.7))
-        }
-        .frame(minHeight: SLSpacing.large, alignment: .leading)
+        NotePlaceholder(width: 96)
+            .frame(minHeight: SLSpacing.large, alignment: .leading)
     }
 
     private var noteText: some View {
@@ -306,14 +308,14 @@ struct CameraChrome: View {
 
     private var focusLockChip: some View {
         Button { onUnlockFocus() } label: {
-            Label("对焦与曝光已锁定", systemImage: "lock.fill")
+            Label("AE/AF 锁定", systemImage: "lock.fill")
                 .font(.caption.weight(.semibold))
                 .padding(.horizontal, SLSpacing.medium)
                 .frame(minHeight: SLSize.minTouchTarget)
                 .background(.ultraThinMaterial, in: Capsule())
         }
         .buttonStyle(.plain)
-        .accessibilityHint("点按解除锁定，恢复自动对焦")
+        .accessibilityHint("解锁")
     }
 
     // MARK: - 录制
@@ -350,7 +352,7 @@ struct CameraChrome: View {
             }
             .disabled(!state.isTorchAvailable)
             .opacity(state.isTorchAvailable ? 1 : 0.35)
-            .accessibilityLabel(state.isTorchOn ? "关闭补光" : "打开补光")
+            .accessibilityLabel(state.isTorchOn ? "关闭补光灯" : "打开补光灯")
 
             Spacer(minLength: 0)
 
@@ -363,7 +365,7 @@ struct CameraChrome: View {
             }
             .disabled(state.isRecording)
             .opacity(state.isRecording ? 0.35 : 1)
-            .accessibilityLabel("切换前后摄像头")
+            .accessibilityLabel("切换摄像头")
         }
         .padding(.horizontal, SLSpacing.huge)
         .padding(.top, SLSpacing.large)
@@ -395,8 +397,7 @@ struct CameraChrome: View {
         }
         .buttonStyle(.plain)
         .disabled(state.isSaving)
-        .accessibilityLabel(state.isRecording ? "停止拍摄" : "开始拍摄")
-        .accessibilityHint("拍完可以回看，确认后再保存。同一个镜头可以拍很多条，后拍的不会覆盖前面的。")
+        .accessibilityLabel(state.isRecording ? "停止" : "拍摄")
         .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.7), value: state.isRecording)
     }
 
