@@ -768,6 +768,10 @@ final class BlockingCopyFileManager: FileManager, @unchecked Sendable {
     override func urls(for directory: FileManager.SearchPathDirectory, in domainMask: FileManager.SearchPathDomainMask) -> [URL] {
         [root.appendingPathComponent(directory == .documentDirectory ? "Documents" : "Support")]
     }
+    /// 模拟来源无法硬链接（跨卷等），让 `addClip` 走真实复制的退路；能链接时根本不会复制。
+    override func linkItem(at source: URL, to destination: URL) throws {
+        throw NSError(domain: NSCocoaErrorDomain, code: NSFileWriteUnknownError)
+    }
     override func copyItem(at source: URL, to destination: URL) throws {
         XCTAssertFalse(Thread.isMainThread, "Large-file copy must leave the UI thread")
         copyStarted.fulfill()

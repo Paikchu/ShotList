@@ -22,7 +22,8 @@ struct ExportView: View {
     @State private var isShowingStylePage =
         ProcessInfo.processInfo.arguments.contains("-preselectStylePage")
 
-    private var recordedShots: [Shot] { store.shots.filter(\.hasClip) }
+    /// 「已拍」读 `store` 的磁盘口径，与素材概览里的「已拍 N / M」是同一个判据
+    private var recordedShots: [Shot] { store.recordedShots }
 
     /// 当前影片的展示名（带书名号），用在确认弹层与说明文字里
     private var filmName: String {
@@ -317,7 +318,7 @@ struct ExportView: View {
     /// 示例文件名取自真实的分镜，而不是写死的文案：
     /// 有已拍镜头就用它的实际命名，随拍摄动态变化；一个分镜都没有时退回通用占位。
     private var exampleShot: Shot? {
-        store.shots.first { $0.hasClip } ?? store.shots.first
+        recordedShots.first ?? store.shots.first
     }
 
     /// 主素材示例，例如「夏日vlog-01-3.mov」。

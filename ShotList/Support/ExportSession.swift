@@ -1,7 +1,8 @@
 import Foundation
 import Combine
 
-/// 导出结果属于生成时的输入；输入变化后，已完成和在途结果都不能重新变成可分享状态。
+/// 导出结果属于生成时的输入；输入变化后，已完成结果保留在磁盘上供已发起的分享继续读取，
+/// 但在界面上标记为过期；在途结果不能重新变成可分享状态。
 @MainActor
 final class ExportSession: ObservableObject {
     @Published private(set) var package: ExportPackage?
@@ -23,8 +24,8 @@ final class ExportSession: ObservableObject {
         generation = UUID()
         progress = nil
         if package != nil || isBuilding { isStale = true }
-        discard(package)
-        package = nil
+        // 不在这里删除已生成的包。ShareLink 可能仍在系统分享面板或目标 App 中读取它；
+        // 旧包在下一次成功生成新包时替换，或由应用启动时的 cleanUp() 统一回收。
         errorMessage = nil
     }
 

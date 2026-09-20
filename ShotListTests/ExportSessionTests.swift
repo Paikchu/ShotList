@@ -34,19 +34,20 @@ final class ExportSessionTests: XCTestCase, @unchecked Sendable {
     }
 
     @MainActor
-    func testCompletedPackageInvalidatesAndFreshBuildReplacesIt() async throws {
+    func testCompletedPackageInvalidatesKeepsItUntilFreshBuildReplacesIt() async throws {
         let session = ExportSession()
         let first = try package()
         await session.build(request(first.zipURL), isCurrent: { true }, builder: { _, _ in .success(first) })
         XCTAssertEqual(session.package, first)
         session.invalidate()
-        XCTAssertNil(session.package)
+        XCTAssertEqual(session.package, first)
         XCTAssertTrue(session.isStale)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: first.zipURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: first.zipURL.path))
         let second = try package()
         await session.build(request(second.zipURL), isCurrent: { true }, builder: { _, _ in .success(second) })
         XCTAssertEqual(session.package, second)
         XCTAssertFalse(session.isStale)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: first.zipURL.path))
     }
 
     @MainActor

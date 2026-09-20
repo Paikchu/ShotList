@@ -7,7 +7,7 @@ import SwiftUI
 /// 三点菜单，所以这条只出现在历史页。
 ///
 /// 下拉不是系统 `Menu`：点箭头后从白条下方浮出一块与它同宽的面板
-/// （影片清单 + 重制入口），悬在下方内容之上、不挤压版式；
+/// （影片清单 + 新建影片入口），悬在下方内容之上、不挤压版式；
 /// 点影片载入、点面板外收起。
 ///
 /// 标题为空时画一道虚线（虚线在这套界面里一直是「这里还没有内容」的意思，
@@ -29,6 +29,14 @@ struct FilmBar: View {
     /// 白条自身的实际高度（含内边距），用来把悬浮面板锚在它的下沿。
     @State private var cardHeight: CGFloat = 0
 
+    /// 白条下沿到滚动区可视区下沿的距离，决定面板最高能有多高。
+    /// 面板展开后才由 `outsideTapCatcher` 量；量不到（还没量 / 不在滚动视图里）时为 `nil`，不设上限。
+    @State private var spaceBelowBar: CGFloat?
+    /// 影片清单全部行加起来的高度，与面板底部固定区的高度：
+    /// 清单只能占面板上限减去这一块之外的高度，见 `filmListHeight`。
+    @State private var filmListContentHeight: CGFloat = 0
+    @State private var panelFooterHeight: CGFloat = 0
+
     var body: some View {
         CardContainer(padding: SLSpacing.small + 2) {
             header
@@ -43,7 +51,7 @@ struct FilmBar: View {
         .overlay(alignment: .topLeading) {
             if isExpanded {
                 dropdownPanel
-                    .padding(.top, cardHeight + SLSpacing.tiny)
+                    .padding(.top, cardHeight + Self.panelGap)
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
@@ -101,27 +109,34 @@ struct FilmBar: View {
 
     // MARK: - 悬浮面板
 
-    /// 与白条同宽、悬浮在其下方的影片清单：当前影片打勾，末尾是重制入口。
+    /// 与白条同宽、悬浮在其下方的影片清单：当前影片打勾，末尾是新建影片入口。
+    ///
+    /// 面板挂在 `.overlay` 里，不参与外层 `ScrollView` 的内容高度，超出屏幕的部分既画不出来
+    /// 也滚不到。所以影片多到放不下时，清单在面板内部滚动；新建影片等操作行固定在清单下面，
+    /// 不随清单滚走。
     private var dropdownPanel: some View {
         VStack(spacing: 0) {
-            ForEach(store.sortedFilms) { film in
-                dropdownRow(film)
-            }
+            filmList
 
-            rowDivider
+            VStack(spacing: 0) {
+                rowDivider
 
-            if allowsRename {
-                actionRow(title: "修改标题", systemImage: "pencil") {
-                    titleDraft = store.currentFilm?.trimmedTitle ?? ""
-                    isEditingTitle = true
+                if allowsRename {
+                    actionRow(title: "修改标题", systemImage: "pencil") {
+                        titleDraft = store.currentFilm?.trimmedTitle ?? ""
+                        isEditingTitle = true
+                    }
+                }
+
+                actionRow(title: "新建影片", systemImage: "film.stack") {
+                    isConfirmingRemake = true
                 }
             }
-
-            actionRow(title: "重制", systemImage: "film.stack") {
-                isConfirmingRemake = true
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                panelFooterHeight = height
             }
         }
-        .padding(SLSpacing.small + 2)
+        .padding(Self.panelPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             Color(.secondarySystemGroupedBackground),
@@ -130,6 +145,40 @@ struct FilmBar: View {
         // 悬浮感：柔和投影把面板从下方内容上托起来。
         .shadow(color: .black.opacity(0.14), radius: 18, x: 0, y: 10)
     }
+
+    /// 高度跟着内容走、到了上限才滚动：`ScrollView` 会占满给它的高度，
+    /// 直接 `.frame(maxHeight:)` 会让只有两三部影片时也撑出一个空荡荡的大面板
+    /// （做法同 `CameraChrome.noteBody`）。
+    private var filmList: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                ForEach(store.sortedFilms) { film in
+                    dropdownRow(film)
+                }
+            }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                filmListContentHeight = height
+            }
+        }
+        .frame(height: filmListHeight)
+        .scrollBounceBehavior(.basedOnSize)
+    }
+
+    /// 清单的实际高度：内容多高就多高，但面板整体不能超出滚动区可视区的下沿，
+    /// 且至少留一行——空间小到极端（横屏）时也不至于把清单压没。
+    private var filmListHeight: CGFloat {
+        let content = max(filmListContentHeight, 1)
+        guard let spaceBelowBar else { return content }
+        let panelMaxHeight = spaceBelowBar - Self.panelGap - Self.panelBottomMargin
+        let room = panelMaxHeight - Self.panelPadding * 2 - panelFooterHeight
+        return min(content, max(room, SLSize.minTouchTarget))
+    }
+
+    private static let panelPadding: CGFloat = SLSpacing.small + 2
+    /// 面板与白条下沿的间隙。
+    private static let panelGap: CGFloat = SLSpacing.tiny
+    /// 面板下沿与滚动区可视区下沿之间留的空，别让投影和圆角贴着标签栏。
+    private static let panelBottomMargin: CGFloat = SLSpacing.medium
 
     private func dropdownRow(_ film: Film) -> some View {
         let isCurrent = film.id == store.currentFilmID
@@ -212,6 +261,11 @@ struct FilmBar: View {
                 .position(x: viewport.midX, y: viewport.midY)
                 .onTapGesture { isExpanded = false }
         }
+        // 顺带量出白条下沿到可视区下沿还剩多少空间，给面板定高度上限。
+        // 这一层只在展开时存在，所以收起状态下滚动不会触发任何重新布局。
+        .onGeometryChange(for: CGFloat?.self) { proxy in
+            proxy.bounds(of: .scrollView).map { $0.maxY - proxy.size.height }
+        } action: { spaceBelowBar = $0 }
         .accessibilityHidden(true)
     }
 
@@ -277,13 +331,13 @@ private struct FilmBarHeightKey: PreferenceKey {
     }
 }
 
-/// 切换影片、改标题、重制。
+/// 切换影片、改标题、新建影片。
 ///
 /// 分镜页三点按钮的入口，保留系统 `Menu`（历史页的影片条已换成与白条同宽的
 /// 自展开面板，见 `FilmBar`）。菜单项只放一行「日期 · 标题」，
 /// 当前影片由 `Picker` 自动打勾——不进第二层模态，也不需要自绘列表。
 ///
-/// 改标题弹窗和重制确认挂在外层（`filmActionDialogs`），不挂在 `Menu` 上：
+/// 改标题弹窗和新建影片确认挂在外层（`filmActionDialogs`），不挂在 `Menu` 上：
 /// 菜单一关掉，挂在它身上的弹层有时会一起被收掉。
 struct FilmSwitcherMenu<MenuLabel: View>: View {
     @EnvironmentObject private var store: ShotStore
@@ -321,9 +375,9 @@ struct FilmSwitcherMenu<MenuLabel: View>: View {
                 Haptics.impact(.light)
                 isConfirmingRemake = true
             } label: {
-                // 只写动词。括注「收起当前影片，开一部空白影片」交给确认弹层——
+                // 只写动作。括注「收起当前影片，开一部空白影片」交给确认弹层——
                 // 菜单项是原生单行文本，长句会被截断，而弹层里那句话说全了。
-                Label("重制", systemImage: "film.stack")
+                Label("新建影片", systemImage: "film.stack")
             }
         } label: {
             label()
@@ -335,8 +389,8 @@ struct FilmSwitcherMenu<MenuLabel: View>: View {
         // 屏幕朗读的用户同样需要知道切换是安全的。
         .accessibilityHint(
             showsTitleEdit
-            ? "切换影片、修改标题、重制影片。切换不会删除当前影片，它仍留在影片库里。"
-            : "切换影片、重制影片。切换不会删除当前影片，它仍留在影片库里。"
+            ? "切换影片、修改标题、新建影片。切换不会删除当前影片，它仍留在影片库里。"
+            : "切换影片、新建影片。切换不会删除当前影片，它仍留在影片库里。"
         )
     }
 
@@ -354,7 +408,7 @@ struct FilmSwitcherMenu<MenuLabel: View>: View {
     }
 }
 
-/// 改标题弹窗 + 重制确认。分镜页和历史页共用，避免两套文案。
+/// 改标题弹窗 + 新建影片确认。分镜页和历史页共用，避免两套文案。
 private struct FilmActionDialogs: ViewModifier {
     @EnvironmentObject private var store: ShotStore
 
@@ -371,12 +425,11 @@ private struct FilmActionDialogs: ViewModifier {
             } message: {
                 Text("留空也可以，之后在影片菜单里按日期找得到。")
             }
-            .confirmationDialog(
-                "重制当前影片？",
-                isPresented: $isConfirmingRemake,
-                titleVisibility: .visible
+            .alert(
+                "新建影片？",
+                isPresented: $isConfirmingRemake
             ) {
-                Button("开一部空白影片") { remake() }
+                Button("新建影片") { remake() }
                 Button("取消", role: .cancel) {}
             } message: {
                 Text(remakeMessage)
@@ -394,8 +447,8 @@ private struct FilmActionDialogs: ViewModifier {
         Haptics.success()
     }
 
-    /// 「重制」这个词本身就暗示会丢东西，所以这里必须把「东西去哪了」说清楚。
-    /// 确认按钮同理——写「开一部空白影片」，而不是复述一遍「重制」。
+    /// 「新建影片」不会覆盖当前影片，所以这里必须把「东西去哪了」说清楚。
+    /// 确认按钮同理——写「新建影片」，而不是复述一遍「开一部空白影片」。
     private var remakeMessage: String {
         guard let film = store.currentFilm else { return "现在打开一部空白影片。" }
         let subject = film.hasTitle ? "《\(film.trimmedTitle)》" : "当前影片"
