@@ -245,7 +245,7 @@ final class ExportPackageBuilderTests: XCTestCase {
 
     // MARK: - 导出文件名
 
-    /// 命名规则：`影片标题-分镜号[-片段序号]`，分镜描述不参与。
+    /// 命名规则：`影片标题-分镜号[-片段序号]`，分镜内容不参与。
     func testExportedFileNameCarriesFilmTitleShotNumberAndTakeIndex() {
         XCTAssertEqual(
             ExportPackageBuilder.exportedFileName(filmTitle: "夏日vlog", number: 1, takeIndex: nil, fileExtension: "mov"),
@@ -268,9 +268,9 @@ final class ExportPackageBuilderTests: XCTestCase {
         )
     }
 
-    /// 描述不进包内文件名：它又长又会重名，改一次描述不该换一次文件名。
-    /// 描述与编号的对应关系落在 CSV 与指南里，剪辑侧照样找得到。
-    func testDescriptionStaysOutOfFileNamesAndLivesInTextFiles() async throws {
+    /// 内容不进包内文件名：它又长又会重名，改一次内容不该换一次文件名。
+    /// 内容与编号的对应关系落在 CSV 与指南里，剪辑侧照样找得到。
+    func testContentStaysOutOfFileNamesAndLivesInTextFiles() async throws {
         let shot = Shot(
             number: 1,
             note: "无人机缓慢上升，配一句开场旁白",
@@ -284,8 +284,7 @@ final class ExportPackageBuilderTests: XCTestCase {
         XCTAssertFalse(fm.exportedFiles.keys.contains { $0.contains("无人机") })
         XCTAssertTrue(try exportedText(fm, "分镜清单.csv").contains("无人机缓慢上升，配一句开场旁白"))
         XCTAssertTrue(
-            try exportedText(fm, "分镜文字内容指南.md")
-                .contains("- 分镜描述：无人机缓慢上升，配一句开场旁白")
+            try exportedText(fm, "分镜文字内容指南.md").contains("无人机缓慢上升，配一句开场旁白")
         )
     }
 
@@ -470,16 +469,14 @@ final class ExportPackageBuilderTests: XCTestCase {
         XCTAssertTrue(guide.contains("本片没有那份文件"))
     }
 
-    // MARK: - 逐镜的屏幕字幕与角标
+    // MARK: - 逐镜的文字内容
 
-    /// 画面描述、屏幕字幕、角标文字要分开走到包里：CSV 各占一列，指南各占一行。
-    /// 三样混在一句话里，正是剪辑侧只能靠「改写」去猜哪句该上屏的根源。
-    func testShotCaptionAndBadgeSitApartFromNote() async throws {
+    /// 一个镜头的文字只有一段：CSV 一列、指南里一个代码围栏，逐行原样。
+    /// 不再按描述、字幕、角标拆开——AI 直接读文字。
+    func testShotContentGoesVerbatimToCSVAndGuide() async throws {
         let shot = Shot(
             number: 1,
-            note: "早上起床称体重",
-            caption: "今日体重114.1KG",
-            badgeText: "热量缺口：1758千卡",
+            note: "描述：早上起床称体重\n字幕：今日体重114.1KG\n上方角标：热量缺口：1758千卡",
             clips: [ShotClip(fileName: "a.mov", duration: 3)]
         )
         let (root, fm) = try singleShotRoot(shot)
@@ -487,78 +484,50 @@ final class ExportPackageBuilderTests: XCTestCase {
         _ = try await ExportPackageBuilder.build(request([shot], root), fileManager: fm)
 
         let csv = try exportedText(fm, "分镜清单.csv")
-        XCTAssertTrue(csv.contains("编号,分镜描述,屏幕字幕,角标文字"))
-        XCTAssertTrue(csv.contains("01,早上起床称体重,今日体重114.1KG,热量缺口：1758千卡,"))
+        XCTAssertTrue(csv.contains("编号,分镜内容,状态,片段,拍摄时间,时长,导出文件名"))
+        XCTAssertFalse(csv.contains("屏幕字幕"))
+        // 多行内容整体加引号，留在同一格里
+        XCTAssertTrue(csv.contains("01,\"描述：早上起床称体重\n字幕：今日体重114.1KG\n上方角标：热量缺口：1758千卡\","))
 
         let guide = try exportedText(fm, "分镜文字内容指南.md")
-        XCTAssertTrue(guide.contains("- 分镜描述：早上起床称体重"))
-        XCTAssertTrue(guide.contains("- 屏幕字幕：`今日体重114.1KG`"))
-        // 角标那一行给的就是**最终要显示的字**：剪辑侧不该自己再拼一次字符串
-        XCTAssertTrue(guide.contains("- 角标：`热量缺口：1758千卡`"))
+        XCTAssertTrue(guide.contains(
+            "内容：\n```text\n描述：早上起床称体重\n字幕：今日体重114.1KG\n上方角标：热量缺口：1758千卡\n```"
+        ))
+        XCTAssertFalse(guide.contains("- 屏幕字幕："))
+        XCTAssertFalse(guide.contains("- 角标："))
     }
 
-    /// 没写字幕、没填角标就是「这一镜没有」，写成 `—`；
-    /// 留白会被剪辑侧当成「用户忘了给」而自己补一句上去。
-    func testMissingPerShotTextReadsAsNone() async throws {
-        let shot = Shot(number: 1, note: "开场", clips: [ShotClip(fileName: "a.mov", duration: 3)])
+    /// 没写内容就是「这一镜没有要求」，指南里写成 `—`，CSV 里留空；
+    /// 不再回退成「镜头 N」，那会被当成用户写下的内容。
+    func testMissingContentReadsAsNone() async throws {
+        let shot = Shot(number: 1, clips: [ShotClip(fileName: "a.mov", duration: 3)])
         let (root, fm) = try singleShotRoot(shot)
 
         _ = try await ExportPackageBuilder.build(request([shot], root), fileManager: fm)
 
         let guide = try exportedText(fm, "分镜文字内容指南.md")
-        XCTAssertTrue(guide.contains("- 屏幕字幕：—"))
-        XCTAssertTrue(guide.contains("- 角标：—"))
-        // 没有字幕不等于没有描述，两者不连坐
-        XCTAssertTrue(guide.contains("- 分镜描述：开场"))
+        XCTAssertTrue(guide.contains("内容：—"))
+        XCTAssertTrue(try exportedText(fm, "分镜清单.csv").contains("\n01,,"))
     }
 
-    /// 字幕里的换行写成 `\n` 而不是真的断行：这一行是「字幕文案」这一个字段，
-    /// 真断行会让它看起来像两条不同的字段。
-    func testMultilineCaptionStaysOneField() async throws {
+    /// 内容本身带反引号时，代码围栏要比它更长，否则内容会提前把围栏截断。
+    func testFenceOutgrowsBackticksInContent() async throws {
         let shot = Shot(
             number: 1,
-            note: "器械划船",
-            caption: "器械划船 ⌄ 45KG * 4 * 10\n最后一组有点勉强",
+            note: "字幕：用 ``` 包起来",
             clips: [ShotClip(fileName: "a.mov", duration: 3)]
         )
         let (root, fm) = try singleShotRoot(shot)
 
         _ = try await ExportPackageBuilder.build(request([shot], root), fileManager: fm)
 
-        let guide = try exportedText(fm, "分镜文字内容指南.md")
-        XCTAssertTrue(guide.contains("- 屏幕字幕：`器械划船 ⌄ 45KG * 4 * 10\\n最后一组有点勉强`"))
-        XCTAssertFalse(guide.contains("- 屏幕字幕：`器械划船 ⌄ 45KG * 4 * 10\n"))
+        XCTAssertTrue(try exportedText(fm, "分镜文字内容指南.md").contains("````text\n字幕：用 ``` 包起来\n````"))
     }
 
-    /// 两行**无条件**出现：图层开关只写在「剪辑风格.md」那段描述里，
-    /// 指南这边没有依据判断「整片出不出这一层」，所以一律给出行、由 `—` 表示这一镜没有。
-    /// 只填了其中一样时，另一样也必须留着那一行——少列一行，
-    /// 剪辑侧就分不清「这片子不出角标」和「这一镜恰好没填角标」。
-    func testPerShotTextLinesAreAlwaysListed() async throws {
-        let shot = Shot(
-            number: 1,
-            note: "开场",
-            caption: "今日体重114.1KG",
-            clips: [ShotClip(fileName: "a.mov", duration: 3)]
-        )
-        let (root, fm) = try singleShotRoot(shot)
-
-        _ = try await ExportPackageBuilder.build(request([shot], root), fileManager: fm)
-
-        let guide = try exportedText(fm, "分镜文字内容指南.md")
-        XCTAssertTrue(guide.contains("- 屏幕字幕：`今日体重114.1KG`"))
-        XCTAssertTrue(guide.contains("- 角标：—"))
-    }
-
-    /// 镜头级字段是整镜共用的，同一个镜头拍了几条片段，CSV 的每一行都该带上它，
+    /// 内容是整镜共用的，同一个镜头拍了几条片段，CSV 的每一行都该带上它，
     /// 剪辑侧挑中「备用片段」那一行时不用回头去别的行找。
-    func testPerShotTextRepeatsOnEveryTakeRow() async throws {
-        var shot = Shot(
-            number: 1,
-            note: "器械划船",
-            caption: "器械划船 ⌄ 45KG * 4 * 10",
-            badgeText: "热量缺口：2318千卡"
-        )
+    func testContentRepeatsOnEveryTakeRow() async throws {
+        var shot = Shot(number: 1, note: "字幕：器械划船 ⌄ 45KG * 4 * 10")
         shot.clips = (1...3).map {
             ShotClip(fileName: "take\($0).mov", duration: 2, recordedAt: Date(timeIntervalSince1970: Double($0)))
         }
@@ -575,10 +544,7 @@ final class ExportPackageBuilderTests: XCTestCase {
         let rows = csv.split(separator: "\n").filter { $0.hasPrefix("01,") }
         XCTAssertEqual(rows.count, 3)
         for row in rows {
-            XCTAssertTrue(
-                row.contains(",器械划船,器械划船 ⌄ 45KG * 4 * 10,热量缺口：2318千卡,"),
-                "片段行缺少镜头级的字幕或角标：\(row)"
-            )
+            XCTAssertTrue(row.contains(",字幕：器械划船 ⌄ 45KG * 4 * 10,"), "片段行缺少镜头级的内容：\(row)")
         }
     }
 
