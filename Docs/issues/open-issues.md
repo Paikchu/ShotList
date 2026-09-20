@@ -50,13 +50,30 @@
 3. 观察：录制会在远未到 10 分钟时自行停止并直接进入回看，界面没有任何关于上限的说明；「回看第 N 条」正常，素材可用。
 4. 对照 code 位置确认该次停止来自 `maxRecordedFileSize`，而不是时长上限或中断。
 
-**修复状态：** 未修复
+**修复状态：** 待验证
 
-**修复说明：** 待修复；建议在录制回调里区分「达到体积 / 时长上限」与真正失败，把上限信息带到回看页明确说明；同时让体积上限随所选格式调整（或改为按预计体积提示用户），避免高画质档位下上限过早生效。改动落在真机录制回调上，模拟器没有摄像头，需要真机验证后再合并。
+**修复说明：**
 
-**验证结果：** 待验证；本轮仅做代码级确认与设置面板、README 的限制说明。取景页已列出「单个片段最长 10 分钟、最大 600 MB，4K 或 60 fps 会更早碰到体积上限」，但录制结束时不区分原因。
+根因有两处，均在 `ShotList/Camera/CameraRecorder.swift`：
 
-**修复 commit：** 待提交；完成后填写实际修复提交的完整 SHA。
+1. `fileOutput(_:didFinishRecordingTo:from:error:)` 只按 `recordingSuccessfullyFinished` 分「成功／失败」两类，撞上限（`error` 非空但素材完好）与用户主动停止（`error` 为 nil）被合并成同一个 `.success(URL)`，界面因此拿不到「是不是撞了上限」的信息。
+2. `configureIfNeeded` 把 `movieOutput.maxRecordedFileSize` 设成写死的 `600 * 1024 * 1024`，且只在初次配置时赋值一次，不随分辨率、帧率变化。
+
+修复：
+
+- 新增 `CameraRecorder.StopReason`（`userRequested` / `reachedLimit`）与 `RecordingOutput`（`url` + `stopReason`），`startRecording(completion:)` 的回调类型从 `Result<URL, Error>` 改为 `Result<RecordingOutput, Error>`。
+- `fileOutput(...)` 判定成功后，新增 `stopReason(matching:)`：把 `error` 转成 `AVError`，`.maximumFileSizeReached` / `.maximumDurationReached` 记为 `.reachedLimit`，其余情况（`error` 为 nil，或虽非 nil 但不是这两种 code，例如中断、磁盘写满）一律记为 `.userRequested`——不会把「来电中断但素材完好」误报成「撞了上限」。
+- `CameraCaptureView.toggleRecording()` 读取 `output.stopReason`；`.reachedLimit` 时置位新的 `@State reachedRecordingLimit`，驱动一条新增的短提示 alert「已达录制上限」／「这段已保存，可以回看或重拍。」，`enterReview(output.url)` 两种情况下都照常执行，视频本身不受影响。
+- 新增 `CameraRecorder.updateMaximumFileSize()`，在 `applyFormatLocked(...)` 每次成功套用格式后调用（覆盖初次进相机、设置面板改分辨率/帧率、切前后摄像头三个入口）：读 `movieOutput.outputSettings(for:)` 里 `AVVideoCompressionPropertiesKey/AVVideoAverageBitRateKey`——这是 AVFoundation 针对当前 `activeFormat` 实际会用的平均码率，不是自己按宽高猜的——按「码率 × 10 分钟时长上限 × 1.15 余量」换算成字节数，与原来的固定 600 MB 取较大值写回 `maxRecordedFileSize`。取不到码率（连接不存在、`AVVideoAverageBitRateKey` 缺失或为 0）时退回固定 600 MB。用 `max(...)` 兜底确保低码率格式下限不变，只对高码率格式放宽。
+- 顺带修正了同一根因下两处现在已经过期的说明文案：`ShotList/Views/CameraSettingsSheet.swift` 设置面板底部说明（原文断言「4K 或 60 fps 会更早碰到体积上限」，修复后不再准确），以及 `README.md` 两处（功能列表一行 + 「已知限制」段落，原文同样断言 600 MB 是固定值）。
+
+**验证结果：**
+
+- 构建：`xcodebuild -project ShotList.xcodeproj -scheme ShotList -destination 'generic/platform=iOS Simulator' -configuration Debug build` → `** BUILD SUCCEEDED **`；核对完整日志无新增警告，唯一出现的 `appintentsmetadataprocessor` 提示（"Metadata extraction skipped, no AppIntents.framework dependency found"）是本项目固有提示，与本次改动无关。
+- 隔离的代码级验证：把 `fileOutput(...)` 与 `stopReason(matching:)` 的判定逻辑原样搬到仓库外的独立 Swift 脚本，用真实 `AVError`/`NSError`（`AVFoundationErrorDomain`）构造样本，`swift <script>.swift` 直接执行，覆盖 6 种分支：① 用户主动停止（`error` 为 nil）→ `success(userRequested)`；② 撞 `.maximumFileSizeReached` 且 `recordingSuccessfullyFinished=true` → `success(reachedLimit)`；③ 撞 `.maximumDurationReached` 且 `recordingSuccessfullyFinished=true` → `success(reachedLimit)`；④ 其他「素材完好」但不属于这两种 code 的错误（用 `.diskFull` 代表）→ `success(userRequested)`，确认不会被误判成撞上限；⑤ `recordingSuccessfullyFinished=false` → `failure`；⑥ `userInfo` 完全不带该 key → `failure`。6 项全部通过。验证后已删除该临时脚本，未写入任何单元测试文件、未纳入提交。
+- 待验证（需要真机摄像头，本环境沙盒无真机、模拟器无摄像头，无法执行）：`updateMaximumFileSize()` 在真实设备上从 `outputSettings(for:)` 实际读到的 `AVVideoAverageBitRateKey` 数值是否符合预期量级；4K / 60 fps 实拍时体积上限是否确实不再远早于 10 分钟触发、具体在第几分钟触发；撞上限后回看页新增的「已达录制上限」提示的真实弹出时机、文案排版与交互手感；`updateMaximumFileSize()` 在 `switchCamera()` 路径下前后摄像头来回切换时的实际取值表现。
+
+**修复 commit：** `bdbbba6d337055543dcc7aea6f355f880aaf7063`
 
 **编号说明：** 本条原登记为 P2-34。同一编号同时被 main 上并行登记的「相册导入触发系统整段转码，导入耗时长且画质被降」占用——本条登记于 2026-09-16 00:47，该条登记于同日 00:56，本条在先，但 main 为主干且其条目已先行合入，故由本条让号，改编号为 P2-36（当时 P2 前缀最大序号 35 加一）。原编号 P2-34 不再复用。
 
