@@ -36,7 +36,7 @@ struct CameraSettingsSheet: View {
                     ForEach(CaptureResolution.allCases) { option in
                         row(
                             title: option.title,
-                            trailing: isResolutionAvailable(option) ? option.dimensionsText : unavailableNote,
+                            trailing: isResolutionAvailable(option) ? option.dimensionsText : resolutionUnavailableNote,
                             isSelected: resolution == option,
                             isEnabled: !isRecording && isResolutionAvailable(option)
                         ) {
@@ -53,7 +53,7 @@ struct CameraSettingsSheet: View {
                     ForEach(CaptureFrameRate.allCases) { option in
                         row(
                             title: option.title,
-                            trailing: isFrameRateAvailable(option) ? nil : unavailableNote,
+                            trailing: isFrameRateAvailable(option) ? nil : frameRateUnavailableNote,
                             isSelected: frameRate == option,
                             isEnabled: !isRecording && isFrameRateAvailable(option)
                         ) {
@@ -132,9 +132,10 @@ struct CameraSettingsSheet: View {
         availableFrameRates.contains(option)
     }
 
-    private var unavailableNote: String {
-        availableFrameRates.isEmpty ? "这台摄像头不支持" : "该分辨率下不支持"
-    }
+    /// 分辨率不可用：这颗摄像头本身给不了，与当前选了什么无关。
+    private let resolutionUnavailableNote = "这台摄像头不支持"
+    /// 帧率不可用：在当前选中的分辨率下不支持，换个分辨率可能就有了。
+    private let frameRateUnavailableNote = "该分辨率下不支持"
 }
 
 #Preview {
