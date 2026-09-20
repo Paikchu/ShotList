@@ -33,6 +33,7 @@
 | ☑ | P2-39 | [镜头面板把没改过的编号也当成一次编辑写回，面板打开期间编号被重排后，只改描述也会把镜头挪回旧位置](#p2-39) |
 | ☒ | P2-40 | [重排、插入、删除分镜时在主协程上逐条复制片段文件，素材多时界面卡住且短时占用双份磁盘](#p2-40) |
 | ☑ | P2-41 | [历史页进度环按磁盘口径、右侧三项统计按记录口径，同一屏两个数字会互相矛盾](#p2-41) |
+| ☑ | P2-42 | [拍摄设置里分辨率不可用时写成「该分辨率下不支持」，说的不是这一行的对象](#p2-42) |
 | ☑ | P2-43 | [保存拍摄与相册导入都会对已经属于本应用的临时文件再整份复制一次](#p2-43) |
 | ☑ | P2-44 | [历史页影片下拉面板不滚动，影片较多时底部的影片与「重制」落到屏幕外点不到](#p2-44) |
 | ☑ | P2-45 | [任何一次分镜编辑都会立刻删掉已生成的导出包，分享还没完成时会被中断](#p2-45) |
@@ -940,6 +941,39 @@
 **未验证：** 真机；点按「已拍 / 未拍」筛选后的列表（无点击自动化，仅代码级：列表与三项统计读同一个 `store.recordedShots` / `store.pendingShots`）；写盘失败回滚（`commit()` 的 catch 分支）自然触发的那条不一致路径（仅代码级）。**代码级推断、未实测：** 目录持续不可读时切换影片，进度环分子 `availableShotCount` 仍是上一次成功枚举时「上一部影片」的缓存，而列表按当前影片的记录派生，两者仍可能不一致；这是 `applySnapshot`「枚举失败时保留旧值」的既有取舍，iOS 上 `Documents` 目录持续不可读的情形罕见，本次不改。
 
 **修复 commit：** d61bd44adc2d7db75dd2e6b0ac9df385ec6cb01c
+
+<a id="p2-42"></a>
+
+### P2-42 · 拍摄设置里分辨率不可用时写成「该分辨率下不支持」，说的不是这一行的对象
+
+**验证状态：** 模拟器实测（借助已有的 Debug 验收入口 `-chromeDemo 4`；未在真机切前置摄像头验证）
+
+**代码位置：** ShotList/Views/CameraSettingsSheet.swift · `resolutionUnavailableNote` / `frameRateUnavailableNote`（修复后，第 135–138 行）、分辨率分节（第 35–50 行）、帧率分节（第 52–67 行）
+
+**问题详情**
+
+**预期行为：** 某档分辨率在当前摄像头上不可用时，这一行右侧应写「这台摄像头不支持」；某档帧率在当前分辨率下不可用时，才写「该分辨率下不支持」。
+
+**实际行为：** 两个分节共用同一个 `unavailableNote`，它只按 `availableFrameRates.isEmpty` 二选一。`availableFrameRates` 由调用方按当前选中分辨率算出（CameraCaptureView.swift:243），正常情况下非空，于是**分辨率**行的不可用说明也会写成「该分辨率下不支持」——一行分辨率选项右侧写着「该分辨率下不支持」，指代不明。
+
+**根因证据：** `CameraSettingsSheet.swift:39` 与 `:56` 都取同一个 `unavailableNote`，而它的判据（`availableFrameRates` 是否为空）与「这一行是分辨率还是帧率」无关。
+
+**影响范围：** 切到前置摄像头时 4K 通常不可用，这一行就会出现这句话。只影响文案可读性，不影响拍摄，定为 P2。
+
+**复现方法**
+
+1. 真机上进入任意镜头的取景页，切到前置摄像头（前置多数不支持 4K）。
+2. 点右上角「拍摄设置」。
+3. 观察「分辨率」一节里 4K 那一行右侧的说明文字。
+4. 实际显示「该分辨率下不支持」；预期正确结果是「这台摄像头不支持」。
+
+**修复状态：** 已修复
+
+**修复说明：** 根因是两个分节共用同一个 `unavailableNote`，其判据（`availableFrameRates.isEmpty`）与「这一行是分辨率还是帧率」无关：`availableFrameRates` 由调用方按当前选中分辨率算出，正常情况下非空，导致分辨率行的不可用说明总是落到「该分辨率下不支持」分支。修复：拆成两个专用文案——`resolutionUnavailableNote`（「这台摄像头不支持」，分辨率行用）与 `frameRateUnavailableNote`（「该分辨率下不支持」，帧率行用），两处 `trailing:` 参数各自取用对应文案，删除原先共用且判据错位的 `unavailableNote`。`row(...)` 的无障碍标签 / 值直接读同一个 `trailing` 参数，随之自动更正，无需单独改动。
+
+**验证结果：** iOS 26.5 / iPhone 17 Pro 模拟器，Debug 构建。`CameraSettingsSheet` 设计为纯值视图（可不可用由调用方算好传入），借助已有的 Debug 验收入口 `CameraChromeDemoScreen`（`-chromeDemo 4` 本就会弹出拍摄设置面板）临时把该入口里的 `availableResolutions` 改为 `[.hd1080, .hd720]`（去掉 `.uhd4K`，`availableFrameRates` 保持 `[.fps24, .fps30]` 非空，构造「分辨率不可用但帧率列表非空」的条件）；`xcrun simctl launch <UDID> com.max.ShotList -chromeDemo 4` 启动后截图：「分辨率」一节「4K」行显示「这台摄像头不支持」，「帧率」一节「60 fps」行显示「该分辨率下不支持」，两行文案分别对应各自的对象，不再指代不清。验证完成后已用 `git checkout` 把该临时改动从 `CameraChromePreviewScreen.swift` 还原，最终提交只包含 `CameraSettingsSheet.swift` 的修复。构建命令 `xcodebuild -project ShotList.xcodeproj -scheme ShotList -destination 'generic/platform=iOS Simulator' -configuration Debug build` 执行 `BUILD SUCCEEDED`，输出中唯一的 `warning:` 是既有的、与本次改动无关的 `appintentsmetadataprocessor` 提示，没有新增编译告警。**未验证：** 真机切前置摄像头的真实路径（环境无真机、模拟器无摄像头，本次通过纯值视图直接构造等价数据代替）；无障碍朗读走系统检查器逐条听读确认（本次工具环境的 `inspect` 不可用，改为代码级核对 `accessibilityLabel` 与界面文案同源于同一个 `trailing` 字符串）。
+
+**修复 commit：** d193179de895efc8fe687d34ff6c1e9d5d6a2e18
 
 <a id="p2-43"></a>
 
