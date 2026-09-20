@@ -349,6 +349,27 @@ final class ShotStore: ObservableObject {
         return true
     }
 
+    /// 当前影片「应用模板」时填进去的文字（没自定义就是默认模板）
+    var shotTemplate: String { currentFilm?.effectiveShotTemplate ?? Film.defaultShotTemplate }
+
+    /// 改当前影片的分镜模板。
+    ///
+    /// 与 `updateStylePrompt` 同一条写入路：写模板也算一次用户编辑。
+    /// 裁掉首尾空白后与默认模板一样就存空串，等于没自定义——
+    /// 这样「打开模板页又什么都没改就关掉」不会平白多出一次编辑，也不会把默认值固化成自定义。
+    ///
+    /// 值没有变化时直接返回，不刷新 `updatedAt`：模板页每敲一个字都会发一次。
+    @discardableResult
+    func updateShotTemplate(_ template: String) -> Bool {
+        guard loadError == nil else { return false }
+        var trimmed = template.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed == Film.defaultShotTemplate { trimmed = "" }
+        guard let current = currentFilm, current.shotTemplate != trimmed else { return false }
+        mutateCurrentFilm { $0.shotTemplate = trimmed }
+        persist()
+        return true
+    }
+
     /// 删除整部影片（连同它的片段）。
     func deleteFilm(_ id: Film.ID) {
         guard loadError == nil else { return }

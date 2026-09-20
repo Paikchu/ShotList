@@ -72,6 +72,11 @@ struct ClipOptionsSheet: View {
         1...max(1, store.shots.count)
     }
 
+    /// 内容框里是不是还什么都没写（去首尾空白后为空，与 `Shot.hasNote` 同一口径）
+    private var isContentBlank: Bool {
+        draftNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     /// 与导出结果同一套命名规则：改编号或换影片时，这里实时看到最终文件名。
     ///
     /// 文件名是「影片标题-镜头编号[-片段序号]」，**不含内容**：内容是给剪辑侧读的
@@ -124,6 +129,17 @@ struct ClipOptionsSheet: View {
                             .lineLimit(4...12)
                             .focused($isNoteFocused)
                             .accessibilityLabel("内容")
+                    }
+
+                    // 只在框还空着时出现：模板是整段填进去的，框里已经有字就不覆盖。
+                    // 看的是草稿而不是仓库——刚清空的那一刻按钮就该回来，不用等落盘。
+                    if isContentBlank {
+                        Button {
+                            draftNote = store.shotTemplate
+                        } label: {
+                            Label("应用模板", systemImage: "text.badge.plus")
+                        }
+                        .accessibilityHint("填入影片模板")
                     }
                 }
 
