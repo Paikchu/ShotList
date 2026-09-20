@@ -60,6 +60,23 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
         }
     }
 
+    /// 一次成功的录制是怎么停下来的。
+    ///
+    /// `reachedLimit`：撞到本类自己设的体积或时长上限——素材完好、判定为成功，
+    /// 但用户看到的只是「自己停了」，界面需要据此补一句说明。来电、切后台、
+    /// 主动点停止都经同一个 `stopRecording()` 收尾，不带这两种 error code，
+    /// 因此仍归为 `userRequested`，不会被误报成撞上限。
+    enum StopReason: Equatable {
+        case userRequested
+        case reachedLimit
+    }
+
+    /// 一次录制成功结束时的产出：文件地址，以及它是怎么停下来的。
+    struct RecordingOutput {
+        let url: URL
+        let stopReason: StopReason
+    }
+
     // MARK: - 界面状态（主线程）
 
     @MainActor @Published private(set) var status: Status = .idle
@@ -112,7 +129,7 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
     /// `stop()` 关相机时也由主线程清空——清空之后收尾回调不会再往一个已经
     /// 消失的页面上跑（那会把音频会话切成播放模式，还会留下一个没人回收的
     /// 临时文件，见 `stop()`）。
-    private var completion: (@MainActor (Result<URL, Error>) -> Void)?
+    private var completion: (@MainActor (Result<RecordingOutput, Error>) -> Void)?
 
     // MARK: - 主线程资源（只在主线程访问）
 
@@ -123,7 +140,11 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
     private var zoomObservation: NSKeyValueObservation?
     private var timer: Timer?
 
-    /// 单个镜头最长录制时长
+    /// 体积、时长上限。
+    ///
+    /// `maximumFileSize` 是查不到设备实际码率时的兜底值，也是任何格式下的下限——
+    /// 见 `updateMaximumFileSize`，它只会把上限往宽估，不会比这个值更严格。
+    /// `maximumDurationSeconds` 是单个镜头最长录制时长。
     private static let maximumFileSize: Int64 = 600 * 1024 * 1024
     private static let maximumDurationSeconds: Double = 600
 
@@ -290,7 +311,7 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
     /// `isRecording` 刻意留在主线程**同步**置位（而不是等队列确认后再回主线程），
     /// 否则连点两次录制按钮会在两次点击之间留下空档，同时启动两段录制。
     @MainActor
-    func startRecording(completion: @MainActor @escaping (Result<URL, Error>) -> Void) {
+    func startRecording(completion: @MainActor @escaping (Result<RecordingOutput, Error>) -> Void) {
         guard status == .ready, !isRecording else { return }
 
         self.completion = completion
@@ -552,7 +573,6 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
         }
 
         session.beginConfiguration()
-        defer { session.commitConfiguration() }
 
         if session.sessionPreset != .inputPriority { session.sessionPreset = .inputPriority }
 
@@ -568,10 +588,44 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
             device.activeVideoMinFrameDuration = targetFrameRate.frameDuration
             device.activeVideoMaxFrameDuration = targetFrameRate.frameDuration
         } catch {
+            session.commitConfiguration()
             return nil
         }
 
+        session.commitConfiguration()
+
+        // 体积上限按新格式的实际码率重新估算：不这样做的话，它会一直停在
+        // 兜底的固定值上，4K / 60 fps 这类高码率格式就会远早于时长上限被截断
+        // （即 P2-36 的根因）。
+        updateMaximumFileSize()
+
         return (targetResolution, targetFrameRate)
+    }
+
+    /// 按当前生效格式重新估算体积上限，避免固定值在高分辨率、高帧率下
+    /// 远早于时长上限触发。
+    ///
+    /// `outputSettings(for:)` 返回 AVFoundation 就当前 `activeFormat` 实际会用的
+    /// 编码参数（含平均码率），比自己按宽高、帧率去估算更准，也不需要跟着
+    /// 新机型的编码器选择逐个调整。取不到码率时退回固定的 600 MB，上限依然存在。
+    ///
+    /// 只在估算值比固定档更宽松时才采用（`max` 兜底）：画质调低不该反而把
+    /// 上限收紧，否则退回 1080p 之后，原本录得完的时长反而录不完。
+    private func updateMaximumFileSize() {
+        guard let connection = movieOutput.connection(with: .video) else { return }
+
+        let settings = movieOutput.outputSettings(for: connection)
+        guard let compression = settings[AVVideoCompressionPropertiesKey] as? [String: Any],
+              let averageBitRate = (compression[AVVideoAverageBitRateKey] as? NSNumber)?.doubleValue,
+              averageBitRate > 0 else {
+            movieOutput.maxRecordedFileSize = Self.maximumFileSize
+            return
+        }
+
+        // 留 15% 余量：平均码率会因画面复杂度、音轨与封装开销上下浮动，
+        // 卡在整点上会让体积上限比时长上限先一步触发，回到修复前的问题。
+        let estimatedBytes = averageBitRate / 8 * Self.maximumDurationSeconds * 1.15
+        movieOutput.maxRecordedFileSize = max(Int64(estimatedBytes), Self.maximumFileSize)
     }
 
     /// 回到默认焦距，并放开对焦与曝光的锁定。
@@ -941,11 +995,12 @@ nonisolated extension CameraRecorder: AVCaptureFileOutputRecordingDelegate {
         let finishedSuccessfully = (error as NSError?)?
             .userInfo[AVFileOutputErrorUserInfoKey.recordingSuccessfullyFinished] as? Bool ?? false
 
-        let result: Result<URL, Error>
+        let result: Result<RecordingOutput, Error>
         if let error, !finishedSuccessfully {
             result = .failure(error)
         } else {
-            result = .success(outputFileURL)
+            let output = RecordingOutput(url: outputFileURL, stopReason: Self.stopReason(matching: error))
+            result = .success(output)
         }
 
         // `Error` 不是 Sendable，套壳带到主线程；随后只在主线程使用
@@ -965,6 +1020,23 @@ nonisolated extension CameraRecorder: AVCaptureFileOutputRecordingDelegate {
             }
             self.completion = nil
             handler(boxed.value)
+        }
+    }
+
+    /// 区分「用户 / 系统主动停止」与「撞到本类自己设的体积、时长上限」。
+    ///
+    /// 撞上限时 AVFoundation 会带着具体的 `AVError`（`.maximumFileSizeReached` /
+    /// `.maximumDurationReached`）：素材完好、判定为成功，但用户看到的只是
+    /// 「自己停了」，界面需要据此补一句说明。来电、切后台等中断都经
+    /// `stopRecording()` 主动收尾（`error` 为 nil 或不是这两种 code），因此仍归为
+    /// `userRequested`，不会被误报成撞上限。
+    private static func stopReason(matching error: Error?) -> StopReason {
+        guard let avError = error as? AVError else { return .userRequested }
+        switch avError.code {
+        case .maximumFileSizeReached, .maximumDurationReached:
+            return .reachedLimit
+        default:
+            return .userRequested
         }
     }
 }

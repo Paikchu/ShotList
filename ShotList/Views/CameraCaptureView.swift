@@ -36,6 +36,8 @@ struct CameraCaptureView: View {
     @State private var isSaving = false
     @State private var isVisible = false
     @State private var errorMessage: String?
+    /// 这一条是撞上体积/时长上限自动停止的，需要在回看页告诉用户
+    @State private var reachedRecordingLimit = false
 
     // MARK: - 取景控制状态
 
@@ -102,6 +104,11 @@ struct CameraCaptureView: View {
             Button("好", role: .cancel) {}
         } message: {
             Text(errorMessage ?? "")
+        }
+        .alert("已达录制上限", isPresented: $reachedRecordingLimit) {
+            Button("好", role: .cancel) {}
+        } message: {
+            Text("这段已保存，可以回看或重拍。")
         }
         .sheet(isPresented: $isShowingSettings) { settingsSheet }
     }
@@ -498,8 +505,11 @@ struct CameraCaptureView: View {
         } else {
             recorder.startRecording { result in
                 switch result {
-                case .success(let url):
-                    enterReview(url)
+                case .success(let output):
+                    enterReview(output.url)
+                    if output.stopReason == .reachedLimit {
+                        reachedRecordingLimit = true
+                    }
                 case .failure(let error):
                     Haptics.error()
                     errorMessage = "录制没有完成：\(error.localizedDescription)"
