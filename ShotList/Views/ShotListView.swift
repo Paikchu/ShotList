@@ -332,7 +332,7 @@ struct ShotListView: View {
         ToolbarItem(placement: .topBarTrailing) {
             Menu {
                 Button { quickShoot() } label: {
-                    Label("快速拍摄", systemImage: "video.badge.plus")
+                    Label("快速拍摄", systemImage: "square.grid.2x2")
                 }
             } label: {
                 Label("添加", systemImage: "plus")
