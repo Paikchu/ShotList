@@ -315,7 +315,7 @@
 
 **验证状态：** 模拟器实测（除下列未验证项）；真机录制 →「使用」→ 描述页这一路待真机实测
 
-**代码位置：** ShotList/Views/ShotListView.swift · `toolbarContent` 里的加号 `Menu`（第 327–353 行，两个 `ControlGroup`）与 `quickShoot()`（第 394 行）；ShotList/Views/ShotFlowModifier.swift · `ShotCaptureRequest`（第 34 行）、`onChange(of: captureRequest)`（第 136 行）、`startCapture` / `finishQuickShoot`（第 242 / 252 行）、`drainQueue` 的导入分支（第 230 行）、`importMovies(…opensDescription:)`（第 269 行）；未改动 ShotList/Views/CameraCaptureView.swift 与 ShotList/Views/ClipOptionsSheet.swift（复用其 `save` 后 `dismiss()` 与 `autoFocusNote`）
+**代码位置：** ShotList/Views/ShotListView.swift · `toolbarContent` 里的加号 `Menu`（第 333–344 行，只有一个「快速拍摄」按钮）与 `quickShoot()`（第 386 行）；ShotList/Views/ShotFlowModifier.swift · `ShotCaptureRequest`（第 34 行）、`onChange(of: captureRequest)`（第 136 行）、`startCapture` / `finishQuickShoot`（第 242 / 252 行）、`drainQueue` 的导入分支（第 230 行）、`importMovies(…opensDescription:)`（第 269 行）；未改动 ShotList/Views/CameraCaptureView.swift 与 ShotList/Views/ClipOptionsSheet.swift（复用其 `save` 后 `dismiss()` 与 `autoFocusNote`）
 
 **预期结果：** 分镜页右上角加号：点一下仍是添加一个镜头；长按只有一项**快速拍摄**（原来的「添加 3 个 / 5 个 / 10 个」已按用户指示移除）。点「快速拍摄」：在影片末尾新建一个空镜头，直接进入它的相机取景页，中间不经过镜头面板。拍完点「使用」、相机关闭后，直接打开这个镜头的面板（描述页），光标已在描述框里，写完点「完成」回到分镜页，列表滚到这个新镜头并短暂高亮。
 
@@ -373,11 +373,12 @@
 12. 打开 VoiceOver 聚焦加号：提示里含长按的新入口；展开后可读到并激活「快速拍摄」。
 13. 失败判据：点快速拍摄后先弹出镜头面板；拍完（或导入完）停在分镜页没有弹描述页；相机点取消后留下空镜头；描述页出现了但光标不在描述框；点一下加号的行为变了；新镜头编号没接在末尾，或已有镜头编号错乱；从面板「拍摄」进入的相机拍完也弹出了描述页；长按后仍出现「添加 3 个 / 5 个 / 10 个」。
 
-**实现状态：** 进行中（追加调整：去掉批量添加，长按加号只保留「快速拍摄」；此前的实现与验证见下，待随本次调整更新）
+**实现状态：** 已实现，待真机验收
 
 **实现说明：**
 
-- **2×2 展开：** 仍是系统 `Menu`（点一下走 `primaryAction`、长按展开都不变，无障碍语义由系统给），菜单内容改成两个 `ControlGroup`，各排一行「图标 + 标题」，叠起来就是 2×2；没有自绘弹层。新增一格「快速拍摄」（`video.badge.plus`）。无障碍提示改为「长按展开批量添加与快速拍摄」。
+- **长按菜单：** 仍是系统 `Menu`（点一下走 `primaryAction`、长按展开都不变，无障碍语义由系统给），菜单里只有一个「快速拍摄」按钮（`video.badge.plus`）；无障碍提示改为「长按快速拍摄」。
+- **追加调整（用户指示）：** 第一版按 2×2 宫格做（两个 `ControlGroup`，四格：添加 3 / 5 / 10 个 + 快速拍摄），并已在模拟器验证；随后用户指示去掉三项批量添加、只保留「快速拍摄」，于是 `ControlGroup` 一并去掉，改为单个 `Button`，同时删除随之无用的 `ShotListView.addShots(count:)`。`ShotStore.addShots(count:)` 保留（`ShotStoreTests` 仍引用），应用内已无调用方。
 - **从列表直接进相机的入口：** `ShotFlowModifier` 增加绑定 `captureRequest: ShotCaptureRequest?`（`shotID` + `isQuick`），`shotFlow(sheet:captureRequest:)` 默认传常量 `nil`，历史页不受影响。收下请求后立刻清空、以该镜头设置 `cover = .camera`。[R-6](#r-6) 可以直接复用这个入口，传 `isQuick: false` 即可（不做收尾）。
 - **收尾判定放在 `ShotFlowModifier`：** `quickShotID` 记着正在快速拍摄的镜头，相机 `fullScreenCover` 收起后由 `drainQueue` → `finishQuickShoot` 处理：有片段 → 下一轮主循环里 `sheet = .options(shot, autoFocusNote: true)`；没有 → `store.delete(shot)` 撤销空镜头。相机页里选「导入」时排队的导入优先：`drainQueue` 把 `quickShotID` 折成 `pickerOpensDescription` 交给选片，`importMovies` 在全部成功、且此时没有别的弹层时打开描述页；`pickerOpensDescription` 每次呈现选片都重新赋值，取消选片留下的值不会串到下一次导入。
 - **高亮与滚动：** `quickShoot()` 新建镜头后把它记进已有的 `pendingFlashID`，描述页关掉时走原来的「滚过去并高亮」；取消撤销后该镜头已不存在，`onChange(of: sheet?.id)` 里加了一句存在性判断，不去指一个已删除的镜头。
@@ -385,12 +386,16 @@
 - **没有改** `CameraCaptureView` 与 `ClipOptionsSheet`；面板里点「拍摄」、卡片、历史页的既有流程不带 `quickShotID`，收尾逻辑对它们是空操作。
 - **已知取舍：** 相机不可用而走导入时，取消选片会留下空镜头（用户已明确要往里导入，与「点加号新增后不写内容就关面板」一样，是普通的空镜头）；导入部分失败时先给「导入失败」提示，不自动打开描述页。
 
-**验证结果：** 环境：Xcode 27.0，独立的 iPhone 17 / iOS 26.5 模拟器（新建、无既有数据，未动其他任务在用的模拟器），Debug 构建成功，触碰的两个文件无新增告警；模拟器没有摄像头，相机页停在「需要访问摄像头」前置页，用它的「导入」入口代替录制。模拟器相册里放了一段 4 秒的屏幕录像（`simctl addmedia`）。没有跑单元测试（按仓库规范只做集成验证）。
+**验证结果：**
+
+**追加调整后（长按只剩「快速拍摄」）：** 同一台独立模拟器（iPhone 17 / iOS 26.5）重新构建安装，Debug 构建成功、无新增告警；已有 18 个镜头的影片上：长按加号，菜单里只有「快速拍摄」一项（无「添加 3 / 5 / 10 个」，验收 3）；点它直接出现相机页，点「取消」后落盘镜头数仍是 18（验收 4、7）；再走「快速拍摄 → 导入 → 选片」，落到「镜头 19」描述页，片段 1 条 4 秒、光标在「内容」框里（验收 9 前半）；单击加号仍新增镜头 20 并弹出面板、光标在输入框（验收 2）。以下是去掉批量添加之前（2×2 版本）的完整验证记录，其中与批量添加、宫格相关的观察已不适用，其余路径的代码没有变。
+
+环境（2×2 版本）：Xcode 27.0，独立的 iPhone 17 / iOS 26.5 模拟器（新建、无既有数据，未动其他任务在用的模拟器），Debug 构建成功，触碰的两个文件无新增告警；模拟器没有摄像头，相机页停在「需要访问摄像头」前置页，用它的「导入」入口代替录制。模拟器相册里放了一段 4 秒的屏幕录像（`simctl addmedia`）。没有跑单元测试（按仓库规范只做集成验证）。
 
 逐步观察（对应验收方法）：
 
 - **步骤 2：** 单击加号，新增镜头 6 并弹出面板，光标在描述框，行为不变。
-- **步骤 3：** 长按加号，展开为 2×2 图标：第一行「添加 3 个 / 添加 5 个」，第二行「添加 10 个 / 快速拍摄」，没有纵向列表项；点「添加 3 个」，末尾多 3 个空镜头。
+- **步骤 3（2×2 版本，已被上面的单项菜单取代）：** 长按加号，展开为 2×2 图标：第一行「添加 3 个 / 添加 5 个」，第二行「添加 10 个 / 快速拍摄」；点「添加 3 个」，末尾多 3 个空镜头。
 - **步骤 4：** 长按加号点「快速拍摄」，**直接**出现相机页（前置页），没有镜头面板；空影片上同样成立。
 - **步骤 7：** 相机页点「取消」，落盘的 `films.json` 里镜头数为 0，无面板弹出，与点之前一致。
 - **步骤 9：** 快速拍摄 → 「导入」→ 选片确认：导入完成后自动弹出「镜头 04」描述页，头部是导入的片段（1 条、4 秒），光标在描述框；输入文字点「完成」，卡片显示描述、缩略图与时间。在选片界面点取消：回到分镜页，末尾留着空镜头 5，无面板。
@@ -400,4 +405,4 @@
 
 **未验证：** ① 真机录制 →「使用」→ 描述页（步骤 5、6、8）——模拟器没有摄像头，这一路只能经导入代替；两条路在 `ShotFlowModifier` 里共用同一处收尾（相机 `fullScreenCover` 收起 → `finishQuickShoot` 或导入完成），区别只在片段是怎么进 `ShotStore` 的，相机页本身未改动。② 相机权限被拒（步骤 10）——只走了「未授权」前置页，没有走系统设置里关闭权限后的拒绝页。③ VoiceOver 朗读（步骤 12）——代码级确认，菜单项自带文字标签。④ 高亮动效的实际画面。以上待真机走查后补记，通过后再移入已交付。
 
-**实现 commit：** b9f6df3540564a4b80843794b556c858b1181157
+**实现 commit：** b9f6df3540564a4b80843794b556c858b1181157（快速拍摄与 2×2 菜单）；772ea0092de22b54f223ef7bc6c25dc7a4f67325（追加：去掉批量添加，只保留快速拍摄）
