@@ -67,7 +67,7 @@ struct CameraSettingsSheet: View {
                 }
 
                 Section {
-                    Label("单个片段最长 10 分钟、最大 600 MB，4K 或 60 fps 会更早碰到体积上限。", systemImage: "info.circle")
+                    Label("单个片段最长 10 分钟；到达上限会自动停止，并提示已保存。", systemImage: "info.circle")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
