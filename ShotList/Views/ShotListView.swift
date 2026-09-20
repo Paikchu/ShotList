@@ -3,12 +3,15 @@ import SwiftUI
 /// 「分镜」标签页：录入编号 1、2、3… 的镜头，并把每个镜头变成可点击添加视频的模块。
 ///
 /// 导航栏大标题是当前影片的名字（不再写死「分镜」——标签栏已经标明这是哪一页），
-/// 点标题即可改名。加号点一下加一个镜头，长按一次加 3 / 5 / 10 个；
+/// 点标题即可改名。加号点一下加一个镜头，长按展开成 2×2 图标：一次加 3 / 5 / 10 个，
+/// 或「快速拍摄」（新建镜头直接开拍，拍完落到描述页）；
 /// 三点打开影片菜单（切换、改标题、新建影片）。
 struct ShotListView: View {
     @EnvironmentObject private var store: ShotStore
 
     @State private var sheet: ShotSheet?
+    /// 快速拍摄：新建镜头后交给 `shotFlow` 直接开相机
+    @State private var captureRequest: ShotCaptureRequest?
     @State private var pendingDeletion: Shot?
     @State private var pendingClear: Shot?
 
@@ -52,7 +55,7 @@ struct ShotListView: View {
                 }
             }
         }
-        .shotFlow(sheet: $sheet)
+        .shotFlow(sheet: $sheet, captureRequest: $captureRequest)
         .task { await openPreselectedShot() }
         .confirmationDialog(
             "清空片段？",
@@ -76,6 +79,8 @@ struct ShotListView: View {
             // 编辑器关掉了，这时候用户才真正在看列表
             guard newValue == nil, let target = pendingFlashID else { return }
             pendingFlashID = nil
+            // 快速拍摄被取消时新镜头已经撤销，没有东西可指
+            guard store.shot(withID: target) != nil else { return }
             flash(target)
         }
     }
@@ -321,14 +326,22 @@ struct ShotListView: View {
 
         ToolbarItem(placement: .topBarTrailing) {
             Menu {
-                Button { addShots(count: 3) } label: {
-                    Label("添加 3 个", systemImage: "square.grid.3x3")
+                // 两个 `ControlGroup` 各排一行图标，叠起来就是 2×2
+                ControlGroup {
+                    Button { addShots(count: 3) } label: {
+                        Label("添加 3 个", systemImage: "square.grid.3x3")
+                    }
+                    Button { addShots(count: 5) } label: {
+                        Label("添加 5 个", systemImage: "square.grid.3x3.fill")
+                    }
                 }
-                Button { addShots(count: 5) } label: {
-                    Label("添加 5 个", systemImage: "square.grid.3x3.fill")
-                }
-                Button { addShots(count: 10) } label: {
-                    Label("添加 10 个", systemImage: "rectangle.grid.2x2")
+                ControlGroup {
+                    Button { addShots(count: 10) } label: {
+                        Label("添加 10 个", systemImage: "rectangle.grid.2x2")
+                    }
+                    Button { quickShoot() } label: {
+                        Label("快速拍摄", systemImage: "video.badge.plus")
+                    }
                 }
             } label: {
                 Label("添加", systemImage: "plus")
@@ -336,7 +349,7 @@ struct ShotListView: View {
                 addShot()
             }
             .menuIndicator(.hidden)
-            .accessibilityHint("长按批量添加")
+            .accessibilityHint("长按展开批量添加与快速拍摄")
         }
 
         ToolbarItem(placement: .topBarTrailing) {
@@ -370,6 +383,19 @@ struct ShotListView: View {
         guard let shot = store.addShot() else { return }
         // 新镜头是空的，用户此刻就是要写它——直接把光标放进描述输入框
         sheet = .options(shot, autoFocusNote: true)
+    }
+
+    /// 快速拍摄：先拍后写。新建一个空镜头，直接进它的相机；
+    /// 拍完落到描述页、取消则撤销，收尾在 `ShotFlowModifier`。
+    ///
+    /// 新镜头加在末尾，用户此刻多半在列表顶部：先记下要指的镜头，
+    /// 等描述页关掉（已有的 `onChange(of: sheet?.id)`）再滚过去高亮，
+    /// 与「在下方插入」同一套做法。
+    private func quickShoot() {
+        Haptics.impact(.light)
+        guard let shot = store.addShot() else { return }
+        pendingFlashID = shot.id
+        captureRequest = ShotCaptureRequest(shotID: shot.id, isQuick: true)
     }
 
     /// 调试启动参数 `-preselectShot <编号>`：直接把某个镜头的面板打开。
