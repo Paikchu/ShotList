@@ -30,6 +30,14 @@ enum ShotCover: Identifiable {
     }
 }
 
+/// 从列表直接进相机的请求，不经过镜头面板。
+struct ShotCaptureRequest: Equatable {
+    let shotID: Shot.ID
+    /// 快速拍摄：镜头是刚新建的空镜头。相机关闭时有片段就接着打开它的描述页，
+    /// 一条片段都没有就把它撤销，让「点了快速拍摄又退出」不留痕。
+    var isQuick = false
+}
+
 private enum ImportFailure: LocalizedError {
     case unsupportedFormat
 
@@ -60,15 +68,22 @@ private struct ImportBatch: Equatable {
 /// 再在 `onDismiss` 里呈现下一个，而不是在弹层里再套一层。
 struct ShotFlowModifier: ViewModifier {
     @Binding var sheet: ShotSheet?
+    /// 列表侧发来的「直接拍这个镜头」。收下后立刻清空，是一次性的。
+    @Binding var captureRequest: ShotCaptureRequest?
 
     @EnvironmentObject private var store: ShotStore
 
     @State private var cover: ShotCover?
     @State private var queuedCover: ShotCover?
     @State private var queuedImportShot: Shot?
+    /// 正在快速拍摄的那个新镜头：相机收起时据此收尾（打开描述页或撤销空镜头）。
+    @State private var quickShotID: Shot.ID?
 
     @State private var isPickerPresented = false
     @State private var pickerTarget: Shot?
+    /// 这次选片是快速拍摄接力来的：导入全部成功后接着打开描述页。
+    /// 每次呈现选片时重新赋值，取消选片留下的值不会带到下一次导入里。
+    @State private var pickerOpensDescription = false
     @State private var pickerItems: [PhotosPickerItem] = []
 
     @State private var importBatch: ImportBatch?
@@ -118,13 +133,20 @@ struct ShotFlowModifier: ViewModifier {
                 preferredItemEncoding: .current,
                 photoLibrary: .shared()
             )
+            .onChange(of: captureRequest) { _, request in
+                guard let request else { return }
+                captureRequest = nil
+                startCapture(request)
+            }
             .onChange(of: pickerItems) { _, newValue in
                 guard !newValue.isEmpty, let target = pickerTarget else { return }
                 // 同步取走本次选择与目标：导入任务结束不再触碰后续的选择（P2-25）。
                 let items = newValue
+                let opensDescription = pickerOpensDescription
                 pickerItems = []
                 pickerTarget = nil
-                Task { await importMovies(items, into: target) }
+                pickerOpensDescription = false
+                Task { await importMovies(items, into: target, opensDescription: opensDescription) }
             }
             .alert("导入失败", isPresented: importErrorBinding) {
                 Button("好", role: .cancel) {}
@@ -204,10 +226,38 @@ struct ShotFlowModifier: ViewModifier {
         }
         if let shot = queuedImportShot {
             queuedImportShot = nil
+            // 快速拍摄在相机里改走导入：收尾交给选片之后的导入（`importMovies`）
+            pickerOpensDescription = shot.id == quickShotID
+            quickShotID = nil
             DispatchQueue.main.async {
                 pickerTarget = shot
                 isPickerPresented = true
             }
+            return
+        }
+        finishQuickShoot()
+    }
+
+    /// 列表直接进相机。请求来自加号菜单，此刻没有别的弹层，不必排队。
+    private func startCapture(_ request: ShotCaptureRequest) {
+        guard let shot = store.shot(withID: request.shotID) else { return }
+        quickShotID = request.isQuick ? shot.id : nil
+        cover = .camera(shot)
+    }
+
+    /// 相机收起后的快速拍摄收尾：拍到了就接着写描述，一条都没有就撤销这个空镜头。
+    ///
+    /// 「点了快速拍摄又退出」是取消，不该在列表末尾留一个没人要的空镜头；
+    /// 「保存并再拍」之后再关闭则已经有片段，同样落到描述页。
+    private func finishQuickShoot() {
+        guard let id = quickShotID else { return }
+        quickShotID = nil
+        guard let shot = store.shot(withID: id) else { return }
+
+        if shot.hasClip {
+            DispatchQueue.main.async { sheet = .options(shot, autoFocusNote: true) }
+        } else {
+            store.delete(shot)
         }
     }
 
@@ -216,7 +266,11 @@ struct ShotFlowModifier: ViewModifier {
     /// 顺序即时间：每段落地时取当前时间，所以后选的更新，仍然是主素材。
     /// 单段失败不打断后面的——已经落地的片段都算数，最后统一报一次。
     @MainActor
-    private func importMovies(_ items: [PhotosPickerItem], into shot: Shot) async {
+    private func importMovies(
+        _ items: [PhotosPickerItem],
+        into shot: Shot,
+        opensDescription: Bool
+    ) async {
         let batch = ImportBatch(id: UUID(), total: items.count)
         withAnimation { importBatch = batch }
         defer {
@@ -238,6 +292,10 @@ struct ShotFlowModifier: ViewModifier {
 
         if failures.isEmpty {
             Haptics.success()
+            // 导入期间用户可能已经去开了别的弹层，那时不去抢
+            if opensDescription, sheet == nil, cover == nil {
+                sheet = .options(current(shot), autoFocusNote: true)
+            }
         } else {
             Haptics.error()
             importError = importFailureMessage(failures, of: items.count)
@@ -253,7 +311,12 @@ struct ShotFlowModifier: ViewModifier {
 
 extension View {
     /// 挂载整套分镜操作流程
-    func shotFlow(sheet: Binding<ShotSheet?>) -> some View {
-        modifier(ShotFlowModifier(sheet: sheet))
+    ///
+    /// - Parameter captureRequest: 列表要「直接拍某个镜头」时写入；不需要这个入口的页面不传。
+    func shotFlow(
+        sheet: Binding<ShotSheet?>,
+        captureRequest: Binding<ShotCaptureRequest?> = .constant(nil)
+    ) -> some View {
+        modifier(ShotFlowModifier(sheet: sheet, captureRequest: captureRequest))
     }
 }
