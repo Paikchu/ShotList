@@ -3,8 +3,7 @@ import SwiftUI
 /// 「分镜」标签页：录入编号 1、2、3… 的镜头，并把每个镜头变成可点击添加视频的模块。
 ///
 /// 导航栏大标题是当前影片的名字（不再写死「分镜」——标签栏已经标明这是哪一页），
-/// 点标题即可改名。加号点一下加一个镜头，长按展开成 2×2 图标：一次加 3 / 5 / 10 个，
-/// 或「快速拍摄」（新建镜头直接开拍，拍完落到描述页）；
+/// 点标题即可改名。加号点一下加一个镜头，长按是「快速拍摄」（新建镜头直接开拍，拍完落到描述页）；
 /// 三点打开影片菜单（切换、改标题、写模板、新建影片）。
 struct ShotListView: View {
     @EnvironmentObject private var store: ShotStore
@@ -332,22 +331,8 @@ struct ShotListView: View {
 
         ToolbarItem(placement: .topBarTrailing) {
             Menu {
-                // 两个 `ControlGroup` 各排一行图标，叠起来就是 2×2
-                ControlGroup {
-                    Button { addShots(count: 3) } label: {
-                        Label("添加 3 个", systemImage: "square.grid.3x3")
-                    }
-                    Button { addShots(count: 5) } label: {
-                        Label("添加 5 个", systemImage: "square.grid.3x3.fill")
-                    }
-                }
-                ControlGroup {
-                    Button { addShots(count: 10) } label: {
-                        Label("添加 10 个", systemImage: "rectangle.grid.2x2")
-                    }
-                    Button { quickShoot() } label: {
-                        Label("快速拍摄", systemImage: "video.badge.plus")
-                    }
+                Button { quickShoot() } label: {
+                    Label("快速拍摄", systemImage: "video.badge.plus")
                 }
             } label: {
                 Label("添加", systemImage: "plus")
@@ -355,7 +340,7 @@ struct ShotListView: View {
                 addShot()
             }
             .menuIndicator(.hidden)
-            .accessibilityHint("长按展开批量添加与快速拍摄")
+            .accessibilityHint("长按快速拍摄")
         }
 
         ToolbarItem(placement: .topBarTrailing) {
@@ -465,13 +450,6 @@ struct ShotListView: View {
             fromOffsets: IndexSet(integer: index),
             toOffset: target > index ? target + 1 : target
         )
-    }
-
-    private func addShots(count: Int) {
-        Haptics.impact(.light)
-        let created = store.addShots(count: count)
-        // 新镜头加在末尾，而用户此刻在列表顶部，不指一下不知道加在哪儿了
-        if let first = created.first { flash(first.id) }
     }
 }
 
