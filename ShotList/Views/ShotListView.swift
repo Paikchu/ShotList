@@ -3,7 +3,7 @@ import SwiftUI
 /// 「分镜」标签页：录入编号 1、2、3… 的镜头，并把每个镜头变成可点击添加视频的模块。
 ///
 /// 导航栏大标题是当前影片的名字（不再写死「分镜」——标签栏已经标明这是哪一页），
-/// 点标题即可改名。加号点一下加一个镜头，长按是「快速拍摄」（新建镜头直接开拍，拍完落到描述页）；
+/// 点标题即可改名。加号点一下加一个镜头，长按展开「快速拍摄」卡片（新建镜头直接开拍，拍完落到描述页）；
 /// 三点打开影片菜单（切换、改标题、写模板、新建影片）。
 struct ShotListView: View {
     @EnvironmentObject private var store: ShotStore
@@ -11,6 +11,10 @@ struct ShotListView: View {
     @State private var sheet: ShotSheet?
     /// 快速拍摄：新建镜头后交给 `shotFlow` 直接开相机
     @State private var captureRequest: ShotCaptureRequest?
+    /// 长按加号展开的「快速拍摄」卡片
+    @State private var isShowingQuickCard = false
+    /// 点了卡片：等卡片收起再开相机，免得两个弹层抢同一帧
+    @State private var pendingQuickShoot = false
     @State private var pendingDeletion: Shot?
     @State private var pendingClear: Shot?
 
@@ -78,6 +82,16 @@ struct ShotListView: View {
             Button("取消", role: .cancel) { pendingClear = nil }
         } message: { shot in
             Text("\(shot.clipCount) 段视频将被删除，无法恢复。")
+        }
+        .onChange(of: isShowingQuickCard) { _, isShown in
+            guard !isShown, pendingQuickShoot else { return }
+            pendingQuickShoot = false
+            // 卡片收起的转场没走完就弹相机，相机会被系统丢掉：页面停在半路，
+            // 相机页的深色外观却已经生效。等转场走完再开。
+            Task {
+                try? await Task.sleep(for: .milliseconds(400))
+                quickShoot()
+            }
         }
         .onChange(of: sheet?.id) { _, newValue in
             // 编辑器关掉了，这时候用户才真正在看列表
@@ -329,18 +343,31 @@ struct ShotListView: View {
         }
         .sharedBackgroundVisibility(.hidden)
 
+        // 加号不用 `Button` / `Menu`：长按要展开自己的卡片，系统 `Menu` 只能显示成固定的小气泡；
+        // 而工具栏里的 `Button` 收不到 SwiftUI 的长按手势（实测：长按松手只触发点击、新增一个镜头）。
+        // 所以用 `Image` 挂点按与长按，按钮语义交给无障碍修饰补齐。
         ToolbarItem(placement: .topBarTrailing) {
-            Menu {
-                Button { quickShoot() } label: {
-                    Label("快速拍摄", systemImage: "square.grid.2x2")
+            Image(systemName: "plus")
+                .frame(minWidth: SLSize.minTouchTarget, minHeight: SLSize.minTouchTarget)
+                .contentShape(Rectangle())
+                .onTapGesture { addShot() }
+                .onLongPressGesture(minimumDuration: 0.35) {
+                    Haptics.impact(.medium)
+                    isShowingQuickCard = true
                 }
-            } label: {
-                Label("添加", systemImage: "plus")
-            } primaryAction: {
-                addShot()
-            }
-            .menuIndicator(.hidden)
-            .accessibilityHint("长按快速拍摄")
+                .popover(isPresented: $isShowingQuickCard) {
+                    QuickShootCard {
+                        pendingQuickShoot = true
+                        isShowingQuickCard = false
+                    }
+                    .presentationCompactAdaptation(.popover)
+                }
+                .accessibilityElement()
+                .accessibilityLabel("添加")
+                .accessibilityAddTraits(.isButton)
+                .accessibilityHint("长按快速拍摄")
+                .accessibilityAction { addShot() }
+                .accessibilityAction(named: "快速拍摄") { quickShoot() }
         }
 
         ToolbarItem(placement: .topBarTrailing) {
@@ -450,6 +477,27 @@ struct ShotListView: View {
             fromOffsets: IndexSet(integer: index),
             toOffset: target > index ? target + 1 : target
         )
+    }
+}
+
+/// 长按加号展开的卡片：一张 2×2 个图标大小的方卡，整张可点。
+private struct QuickShootCard: View {
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: SLSpacing.small) {
+                Image(systemName: "square.grid.2x2")
+                    .font(.system(size: 40))
+                    .foregroundStyle(Color.accentColor)
+                Text("快速拍摄")
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+            }
+            .frame(width: 132, height: 132)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
