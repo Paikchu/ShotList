@@ -1,19 +1,17 @@
 import SwiftUI
 
-/// 点开一个镜头后弹出的面板：写这个镜头的文字内容、改编号，继续拍、再导入，
+/// 点开一个镜头后弹出的面板：写这个镜头的文字内容，继续拍、再导入，
 /// 以及管理已经拍好的每一条片段。
 ///
 /// 文字内容**就在这一页写**，不再跳一个编辑器页面——点开镜头是为了拍，顺手能改内容才顺手；
 /// 单独开一页的结果是「只想改一句话也要跳两层、还得点保存」。
-/// 同一页上还留着导出文件名预览与编号：文件名由「影片标题 + 镜头编号 + 片段序号」
-/// 决定（不含内容），编号即位置（改动会移动镜头），所以预览跟在「顺序」一节里。
+/// 镜头的编号即位置，调顺序在分镜列表里拖动或上移 / 下移，这一页不再重复放一个编号步进器。
 ///
 /// 文字只有**一个输入框**：描述、字幕、角标、转场……想写什么、按什么格式写都由用户定，
 /// 成片交给 AI 粗剪，它读得懂自然语言，不需要在界面上把这几样拆开填。
 ///
-/// 内容与编号都按草稿攒 400 毫秒再落盘：每敲一个字写一次 JSON 没必要，
-/// 而编号一变就会触发整段重编号 + 磁盘改名，更不能跟着 Stepper 的每次点击跑。
-/// 面板关掉时（点「完成」或去做别的）立即落一次，不漏。
+/// 内容自动保存，没有「完成」按钮：按草稿攒 400 毫秒再落盘（每敲一个字写一次 JSON 没必要），
+/// 面板被下滑 / 点外面关掉、去拍摄 / 导入 / 播放、或 App 切到后台时立即再落一次，不漏。
 struct ClipOptionsSheet: View {
     /// 点开的那个镜头。只借它定位，展示时始终取仓库里的最新数据。
     let shot: Shot
@@ -26,21 +24,13 @@ struct ClipOptionsSheet: View {
 
     @EnvironmentObject private var store: ShotStore
     @Environment(\.dismiss) private var dismiss
-
-    /// 导出格式是用户偏好，导出页也读这个键：预览的文件名与最终导出永远同名。
-    @AppStorage(ExportTranscodeOption.storageKey) private var transcodeOption: ExportTranscodeOption = .original
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var clipToDelete: ShotClip?
     @State private var showClearConfirm = false
     @State private var showDeleteConfirm = false
 
     @State private var draftNote: String
-    /// 用户在这一页拨过的编号；没拨过就是 `nil`，编号一律取仓库当前值。
-    ///
-    /// 不能像文字内容那样在打开时抄一份：这一页开着期间，这个镜头的编号可能被别的路径改掉
-    /// （删除补偿找回镜头时会整库重编号）。过期的副本一旦跟着别的字段一起落盘，
-    /// 就会把镜头按旧编号挪回原位，用户明明只改了几个字。
-    @State private var numberEdit: Int?
     @State private var draftSaveTask: Task<Void, Never>?
     @FocusState private var isNoteFocused: Bool
 
@@ -61,17 +51,6 @@ struct ClipOptionsSheet: View {
 
     private var live: Shot { store.shot(withID: shot.id) ?? shot }
 
-    /// Stepper 与文件名预览显示的编号：拨过就用拨的，否则跟着仓库。
-    private var displayedNumber: Int { numberEdit ?? live.number }
-
-    private var numberBinding: Binding<Int> {
-        Binding(get: { displayedNumber }, set: { numberEdit = $0 })
-    }
-
-    private var numberRange: ClosedRange<Int> {
-        1...max(1, store.shots.count)
-    }
-
     /// 套用模板之后内容会变成什么样：已经写的字都保留，只补缺的标签行（见 `Shot.applyingTemplate`）。
     private var templatedContent: String {
         Shot.applyingTemplate(store.shotTemplate, to: draftNote)
@@ -83,25 +62,6 @@ struct ClipOptionsSheet: View {
         templatedContent != draftNote.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// 与导出结果同一套命名规则：改编号或换影片时，这里实时看到最终文件名。
-    ///
-    /// 文件名是「影片标题-镜头编号[-片段序号]」，**不含内容**：内容是给剪辑侧读的
-    /// 整段话，进文件名会又长又容易重名，所以它在 CSV 与指南里，不在这里。
-    ///
-    /// 扩展名取自该镜头主素材的真实格式（相册导入的 mp4 导出后仍是 mp4）；
-    /// 导出页选了转码格式时换成转码后的容器——预览与打包读的是同一个函数，
-    /// 不会出现「预览写 .mp4、导出却是 .mov」。
-    /// 镜头拍了多条时，主素材（按拍摄时间选择的最新一条）带片段序号，
-    /// 与 `ExportPackageBuilder.build` 的落盘命名保持一致；只拍一条时不带。
-    private var previewFileName: String {
-        ExportPackageBuilder.exportedFileName(
-            filmTitle: store.currentFilm?.exportTitleToken ?? "",
-            number: displayedNumber,
-            takeIndex: live.clipCount > 1 ? live.latestTakeIndex : nil,
-            fileExtension: transcodeOption.exportedFileExtension(sourceExtension: live.mainFileExtension)
-        )
-    }
-
     var body: some View {
         NavigationStack {
             List {
@@ -109,14 +69,15 @@ struct ClipOptionsSheet: View {
                     header
                         .listRowInsets(
                             EdgeInsets(
-                                top: SLSpacing.small,
+                                top: 0,
                                 leading: SLSpacing.medium,
-                                bottom: SLSpacing.small,
+                                bottom: 0,
                                 trailing: SLSpacing.medium
                             )
                         )
                         .listRowBackground(Color.clear)
                 }
+                .listSectionSpacing(.compact)
 
                 Section {
                     Button(action: { if flushDraft() { onCapture() } }) {
@@ -148,35 +109,6 @@ struct ClipOptionsSheet: View {
                     }
                 }
 
-                Section {
-                    Stepper(value: numberBinding, in: numberRange) {
-                        HStack {
-                            Label("编号", systemImage: "number")
-                            Spacer()
-                            Text("\(displayedNumber)")
-                                .font(.body.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .accessibilityLabel("编号")
-                    .accessibilityValue("\(displayedNumber)")
-
-                    // 导出文件名跟在编号这一节：名字由「影片标题 + 编号 + 片段序号」组成，
-                    // 内容不参与。放在内容输入框下面会让人以为改内容就能改名。
-                    LabeledContent {
-                        Text(previewFileName)
-                            .font(.footnote.monospaced())
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    } label: {
-                        Label("文件名", systemImage: "doc.text")
-                    }
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("文件名")
-                    .accessibilityValue(previewFileName)
-                }
-
                 // 片段列表放最后：已拍镜头可能有十几条，摆太靠上会把内容挤到屏幕外，
                 // 而「拍摄 / 写内容」才是打开这一页的两个主要目的。
                 if live.hasClip {
@@ -206,24 +138,23 @@ struct ClipOptionsSheet: View {
                 }
             }
             .listStyle(.insetGrouped)
+            // 首个小节是没有标题的头部：默认的顶部留白会在导航栏与缩略图之间空出一大块，
+            // 这里把额外的顶部边距去掉，头部行与下面的间距也一并收紧
+            .contentMargins(.top, 0, for: .scrollContent)
             .safeAreaInset(edge: .top) { StorageSaveErrorBanner() }
             .navigationTitle("镜头 \(live.paddedNumber)")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") { if flushDraft() { dismiss() } }
-                }
-            }
         }
-        // 这一页现在是镜头的正门：头部、拍摄、片段、内容、顺序、删除都在这里，
+        // 这一页现在是镜头的正门：头部、拍摄、片段、内容、删除都在这里，
         // medium 那份高度装不下，会在输入框中间截断。
         .presentationDetents([.large])
+        // 保存失败的横幅还在时不让下滑关掉：草稿没落盘，关了就丢；先在横幅里点「关闭」
         .interactiveDismissDisabled(store.saveError != nil)
         .presentationDragIndicator(.visible)
         .onChange(of: draftNote) { _, _ in scheduleDraftSave() }
-        .onChange(of: numberEdit) { _, edit in
-            // 落盘成功后 `numberEdit` 会被清回 nil，那不是用户操作，不必再排一次写盘
-            if edit != nil { scheduleDraftSave() }
+        .onChange(of: scenePhase) { _, phase in
+            // 切到后台后随时可能被系统回收，攒着的草稿不能再等那 400 毫秒
+            if phase != .active { flushDraft() }
         }
         .task {
             // 等弹层落位再把光标放进去，否则键盘会和转场打架
@@ -298,8 +229,7 @@ struct ClipOptionsSheet: View {
     }
 
     /// 把草稿写回仓库。文字裁掉首尾空白（否则行尾多一个回车就会被当成
-    /// 「写过内容」），拨过的编号夹进有效区间；没拨过编号就沿用仓库当前值，
-    /// 不会把它当成一次移动。
+    /// 「写过内容」）；基于仓库当前的镜头只改文字，编号沿用仓库值，不会引发移动。
     ///
     /// 与仓库当前值一致时直接返回，所以「同时打开又关掉」不会产生一次多余的写盘。
     @discardableResult
@@ -308,20 +238,11 @@ struct ClipOptionsSheet: View {
         draftSaveTask = nil
 
         let trimmedNote = draftNote.trimmingCharacters(in: .whitespacesAndNewlines)
-        let number = numberEdit.map { min(max($0, numberRange.lowerBound), numberRange.upperBound) } ?? live.number
-
-        guard trimmedNote != live.trimmedNote || number != live.number else {
-            // 拨过又拨回去：与仓库一致，不必再保留这份编辑，否则之后仓库编号变了仍会被它盖回
-            numberEdit = nil
-            return true
-        }
+        guard trimmedNote != live.trimmedNote else { return true }
 
         var edited = live
         edited.note = trimmedNote
-        edited.number = number
-        guard store.update(edited) else { return false }
-        numberEdit = nil
-        return true
+        return store.update(edited)
     }
 
     // MARK: - 头部
