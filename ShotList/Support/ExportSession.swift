@@ -29,7 +29,10 @@ final class ExportSession: ObservableObject {
         cancellation = nil
         generation = UUID()
         progress = nil
-        if package != nil || isBuilding { isStale = true }
+        // 「过期」只对有东西可过期的时候成立：有已生成的包，或有一次刚被作废的在途打包。
+        // 用赋值而不是只置 true——否则一次被丢弃的打包留下的标记只有靠成功打出新包才能清掉，
+        // 切到从没打过包的影片（或空影片）后界面上仍挂着「需重新打包」。
+        isStale = package != nil || isBuilding
         // 不在这里删除已生成的包。ShareLink 可能仍在系统分享面板或目标 App 中读取它；
         // 旧包在下一次成功生成新包时替换，或由应用启动时的 cleanUp() 统一回收。
         errorMessage = nil
