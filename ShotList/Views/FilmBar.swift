@@ -346,7 +346,7 @@ private struct FilmBarHeightKey: PreferenceKey {
     }
 }
 
-/// 切换影片、改标题、写模板与剪辑风格、新建影片。
+/// 切换影片、改标题、选模板、写剪辑风格、新建影片。
 ///
 /// 分镜页三点按钮的入口，保留系统 `Menu`（历史页的影片条已换成与白条同宽的
 /// 自展开面板，见 `FilmBar`）。菜单项只放一行「日期 · 标题」，
@@ -432,12 +432,17 @@ struct FilmSwitcherMenu<MenuLabel: View>: View {
 }
 
 /// 改标题弹窗 + 新建影片确认。分镜页和历史页共用，避免两套文案。
+///
+/// 库里有自建模板时，新建影片的确认框多一个「从模板新建」，点它弹出选模板页；
+/// 没有自建模板时确认框与原来完全一致。
 private struct FilmActionDialogs: ViewModifier {
     @EnvironmentObject private var store: ShotStore
 
     @Binding var isEditingTitle: Bool
     @Binding var titleDraft: String
     @Binding var isConfirmingRemake: Bool
+
+    @State private var isPickingTemplate = false
 
     func body(content: Content) -> some View {
         content
@@ -451,9 +456,15 @@ private struct FilmActionDialogs: ViewModifier {
                 isPresented: $isConfirmingRemake
             ) {
                 Button("新建") { remake() }
+                if !store.templates.isEmpty {
+                    Button("从模板新建") { isPickingTemplate = true }
+                }
                 Button("取消", role: .cancel) {}
             } message: {
                 Text(remakeMessage)
+            }
+            .sheet(isPresented: $isPickingTemplate) {
+                FilmTemplatePicker { template in remake(from: template) }
             }
     }
 
@@ -463,8 +474,8 @@ private struct FilmActionDialogs: ViewModifier {
         Haptics.selection()
     }
 
-    private func remake() {
-        store.remakeCurrentFilm()
+    private func remake(from template: FilmTemplate? = nil) {
+        store.remakeCurrentFilm(templateID: template?.id)
         Haptics.success()
     }
 

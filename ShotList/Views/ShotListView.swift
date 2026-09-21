@@ -4,7 +4,7 @@ import SwiftUI
 ///
 /// 导航栏大标题是当前影片的名字（不再写死「分镜」——标签栏已经标明这是哪一页），
 /// 点标题即可改名。加号点一下加一个镜头，长按展开「快速拍摄」卡片（新建镜头直接开拍，拍完落到描述页）；
-/// 三点打开影片菜单（切换、改标题、写模板与剪辑风格、新建影片）。
+/// 三点打开影片菜单（切换、改标题、选模板与写剪辑风格、新建影片）。
 struct ShotListView: View {
     @EnvironmentObject private var store: ShotStore
 
@@ -56,7 +56,7 @@ struct ShotListView: View {
             .toolbar { toolbarContent }
             // 挂在导航栈里面：外面那一层已经有 `shotFlow` 的镜头面板 sheet
             .sheet(isPresented: $isEditingTemplate) {
-                ShotTemplateSheet()
+                FilmTemplateSheet()
             }
             .sheet(isPresented: $isEditingStyle) {
                 FilmStyleView()

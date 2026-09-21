@@ -71,6 +71,9 @@ final class ShotStore: ObservableObject {
     /// 当前影片的 id。任一时刻只有一部。
     @Published private(set) var currentFilmID: UUID?
 
+    /// 影片模板库（应用级），按创建先后排列。影片只通过 `Film.templateID` 引用其中一份。
+    @Published private(set) var templates: [FilmTemplate] = []
+
     /// 每部影片的磁盘口径统计。由 `applySnapshot` 在刷新时一次算好，
     /// 视图读的是缓存——`body` 里不做跨 N 个片段的同步文件 I/O。
     @Published private(set) var filmStats: [Film.ID: FilmStats] = [:]
@@ -80,6 +83,7 @@ final class ShotStore: ObservableObject {
     @Published var saveError: String?
     private var committedFilms: [Film] = []
     private var committedCurrentFilmID: UUID?
+    private var committedTemplates: [FilmTemplate] = []
     private var stagedFileNames: Set<String> = []
 
     private let fileManager: FileManager
@@ -91,6 +95,8 @@ final class ShotStore: ObservableObject {
     private var migratedMetadataURL: URL { metadataURL.deletingLastPathComponent().appendingPathComponent("shots.json.migrated") }
     /// 字幕、角标并进描述之前的 `films.json` 原文。见 `backUpBeforeTextMerge`。
     private var preMergeBackupURL: URL { metadataURL.deletingLastPathComponent().appendingPathComponent("films.json.before-merge") }
+    /// 影片自带模板搬进模板库之前的 `films.json` 原文。见 `backUpBeforeTemplateMigration`。
+    private var preTemplateBackupURL: URL { metadataURL.deletingLastPathComponent().appendingPathComponent("films.json.before-templates") }
     private var deletionRecoveryURL: URL { metadataURL.deletingLastPathComponent().appendingPathComponent("pending-deletions.json") }
 
     /// 分镜片段统一存放目录
@@ -310,11 +316,15 @@ final class ShotStore: ObservableObject {
     /// 重制：收起当前影片、开一部空白影片。
     ///
     /// 与「新建影片」是同一个动作的两种说法，所以全应用只有这一个入口。
+    /// 传 `templateID` 就是「从模板新建」：新影片直接绑定那份模板；
+    /// 模板不在库里时按没传处理，不留一个指向空气的引用。
     @discardableResult
-    func remakeCurrentFilm(title: String = "") -> Film? {
+    func remakeCurrentFilm(title: String = "", templateID: FilmTemplate.ID? = nil) -> Film? {
         guard loadError == nil else { return nil }
         let previous = currentFilmID
-        let film = Film(title: title)
+        let film = Film(title: title, templateID: templateID.flatMap { id in
+            templates.contains { $0.id == id } ? id : nil
+        })
         films.append(film)
         currentFilmID = film.id
         discardBlankFilm(previous)
@@ -349,25 +359,103 @@ final class ShotStore: ObservableObject {
         return true
     }
 
-    /// 当前影片「应用模板」时填进去的文字（没自定义就是默认模板）
-    var shotTemplate: String { currentFilm?.effectiveShotTemplate ?? Film.defaultShotTemplate }
+    // MARK: - 影片模板
 
-    /// 改当前影片的分镜模板。
+    func template(withID id: FilmTemplate.ID) -> FilmTemplate? {
+        templates.first { $0.id == id }
+    }
+
+    /// 当前影片绑定的模板。没绑定，或绑定的那份已不在库里（外部改过 JSON）时为 `nil`，
+    /// 调用方按默认模板处理。
+    var boundTemplate: FilmTemplate? {
+        currentFilm?.templateID.flatMap(template(withID:))
+    }
+
+    /// 当前影片「应用模板」默认填进去的文字：绑定的模板，没有就是默认模板
+    var shotTemplate: String { boundTemplate?.effectiveContent ?? Film.defaultShotTemplate }
+
+    /// 「应用模板」菜单里的全部选项：当前影片绑定的排第一，其余自建模板按库里顺序，内置默认排最后。
+    /// 没绑定时默认模板就是「绑定的那份」，排第一。
+    var templateChoices: [TemplateChoice] {
+        let boundID = boundTemplate?.id
+        var choices = templates.map {
+            TemplateChoice(templateID: $0.id, name: $0.displayName, content: $0.effectiveContent, isBound: $0.id == boundID)
+        }
+        choices.append(
+            TemplateChoice(templateID: nil, name: Film.defaultTemplateName, content: Film.defaultShotTemplate, isBound: boundID == nil)
+        )
+        if let index = choices.firstIndex(where: \.isBound), index != 0 {
+            choices.insert(choices.remove(at: index), at: 0)
+        }
+        return choices
+    }
+
+    /// 有多少部影片绑定着这份模板（删除确认里写「N 部影片将改用默认」用）
+    func boundFilmCount(of id: FilmTemplate.ID) -> Int {
+        films.filter { $0.templateID == id }.count
+    }
+
+    /// 把一份模板放进库里（新建，或从「新建后一个字没改」的草稿变成真的一份）。
     ///
-    /// 与 `updateStylePrompt` 同一条写入路：写模板也算一次用户编辑。
-    /// 裁掉首尾空白后与默认模板一样就存空串，等于没自定义——
-    /// 这样「打开模板页又什么都没改就关掉」不会平白多出一次编辑，也不会把默认值固化成自定义。
-    ///
-    /// 值没有变化时直接返回，不刷新 `updatedAt`：模板页每敲一个字都会发一次。
+    /// 名称与文字都裁掉首尾空白。模板不属于某部影片，写它**不**刷新任何影片的 `updatedAt`。
     @discardableResult
-    func updateShotTemplate(_ template: String) -> Bool {
-        guard loadError == nil else { return false }
-        var trimmed = template.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed == Film.defaultShotTemplate { trimmed = "" }
-        guard let current = currentFilm, current.shotTemplate != trimmed else { return false }
-        mutateCurrentFilm { $0.shotTemplate = trimmed }
+    func addTemplate(_ template: FilmTemplate) -> Bool {
+        guard loadError == nil, !templates.contains(where: { $0.id == template.id }) else { return false }
+        var added = template
+        added.name = template.trimmedName
+        added.content = template.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        templates.append(added)
+        return persist()
+    }
+
+    /// 改一份模板的名称与文字。值没有变化时直接返回：编辑页每敲一个字都会发一次。
+    @discardableResult
+    func updateTemplate(_ id: FilmTemplate.ID, name: String, content: String) -> Bool {
+        guard loadError == nil, let index = templates.firstIndex(where: { $0.id == id }) else { return false }
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let content = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard templates[index].name != name || templates[index].content != content else { return false }
+        templates[index].name = name
+        templates[index].content = content
+        return persist()
+    }
+
+    /// 复制一份模板，插在原模板后面。名称后加「 副本」；原名为空时副本也空。
+    @discardableResult
+    func duplicateTemplate(_ id: FilmTemplate.ID) -> FilmTemplate? {
+        guard loadError == nil, let index = templates.firstIndex(where: { $0.id == id }) else { return nil }
+        let original = templates[index]
+        let copy = FilmTemplate(
+            name: original.trimmedName.isEmpty ? "" : "\(original.trimmedName) 副本",
+            content: original.content
+        )
+        templates.insert(copy, at: index + 1)
+        return persist() ? copy : nil
+    }
+
+    /// 删除一份模板，并把绑定着它的影片改回默认。
+    ///
+    /// 清绑定是模板被删的连带结果，不是用户编辑那些影片，所以不刷新它们的 `updatedAt`
+    /// （同磁盘自愈不刷新 `updatedAt` 的理由）。已经应用到镜头里的文字是拷贝，不受影响。
+    func deleteTemplate(_ id: FilmTemplate.ID) {
+        guard loadError == nil, let index = templates.firstIndex(where: { $0.id == id }) else { return }
+        templates.remove(at: index)
+        for filmIndex in films.indices where films[filmIndex].templateID == id {
+            films[filmIndex].templateID = nil
+        }
         persist()
-        return true
+    }
+
+    /// 给当前影片绑定一份模板；传 `nil` 改回默认。创建影片之后随时可以改绑。
+    ///
+    /// 走 `mutateCurrentFilm`：绑定算一次用户编辑。值没有变化时直接返回，不刷新 `updatedAt`。
+    @discardableResult
+    func bindTemplate(_ id: FilmTemplate.ID?) -> Bool {
+        guard loadError == nil else { return false }
+        if let id, !templates.contains(where: { $0.id == id }) { return false }
+        guard let current = currentFilm, current.templateID != id else { return false }
+        mutateCurrentFilm { $0.templateID = id }
+        return persist()
     }
 
     /// 删除整部影片（连同它的片段）。
@@ -816,6 +904,7 @@ final class ShotStore: ObservableObject {
                 message: "原文件未改动。\n\(error.localizedDescription)"
             )
             films = []
+            templates = []
             currentFilmID = nil
             orphanFileNames = []
             orphanBytes = 0
@@ -824,11 +913,13 @@ final class ShotStore: ObservableObject {
 
         backUpBeforeTextMerge(stored)
         films = library.films
+        templates = library.templates
         // 指针可能指向一部已经不存在的影片（外部编辑过 JSON），回落到第一部
         currentFilmID = library.currentFilmID.flatMap { id in
             films.contains { $0.id == id } ? id : nil
         } ?? films.first?.id
         committedFilms = films
+        committedTemplates = templates
         committedCurrentFilmID = currentFilmID
         loadError = nil
         do {
@@ -839,8 +930,54 @@ final class ShotStore: ObservableObject {
             loadError = .deletionPending(error)
             return true
         }
-        if ensureFilmExists() { persist() }
+        // 放在恢复之后：被找回来的整部旧影片也可能带着旧的自带模板文字
+        let migratedTemplates = migrateLegacyShotTemplates()
+        if migratedTemplates {
+            backUpBeforeTemplateMigration(stored)
+            // 已提交口径对齐到搬完之后的样子：落盘失败回滚时内存仍是搬完的状态，
+            // 用户的模板不会因为一次写盘失败在这次运行里消失；下次启动会照旧文件再搬一遍
+            committedFilms = films
+            committedTemplates = templates
+        }
+        if ensureFilmExists() || migratedTemplates { persist() }
         return true
+    }
+
+    /// 把 R-10 时每部影片自带的模板文字搬进模板库。
+    ///
+    /// 有自带文字的影片各绑定一份名为「影片名 模板」的模板，文字完全相同的合并为同一份；
+    /// 文字等于默认模板的不需要建（等于没自定义）。搬完清空 `legacyShotTemplate`，
+    /// 之后写盘不再带 `shotTemplate` 键。
+    ///
+    /// - Returns: 是否改动过（调用方据此留备份并落盘）。
+    private func migrateLegacyShotTemplates() -> Bool {
+        var migrated = false
+        for index in films.indices {
+            let text = films[index].legacyShotTemplate
+            guard !text.isEmpty else { continue }
+            films[index].legacyShotTemplate = ""
+            migrated = true
+
+            guard text != Film.defaultShotTemplate, films[index].templateID == nil else { continue }
+            if let existing = templates.first(where: { $0.content == text }) {
+                films[index].templateID = existing.id
+            } else {
+                let template = FilmTemplate(name: "\(films[index].displayTitle) 模板", content: text)
+                templates.append(template)
+                films[index].templateID = template.id
+            }
+        }
+        return migrated
+    }
+
+    /// 影片自带模板搬进模板库之前，先把 `films.json` 原文留一份（已存在则不覆盖）。
+    ///
+    /// 与 `backUpBeforeTextMerge` 同一个思路：那是用户一个字一个字写的模板，搬迁万一出错，
+    /// 把这份改回 `films.json` 即可找回。只留第一份——之后写盘的记录里已经没有 `shotTemplate`，
+    /// 不会再触发，也就不会拿搬完之后的内容盖掉真正的原文。
+    private func backUpBeforeTemplateMigration(_ stored: Data) {
+        guard !fileManager.fileExists(atPath: preTemplateBackupURL.path) else { return }
+        try? stored.write(to: preTemplateBackupURL, options: .atomic)
     }
 
     /// 读到还带着独立字幕、角标字段的 `films.json` 时，先把原文留一份。
@@ -897,6 +1034,7 @@ final class ShotStore: ObservableObject {
                 message: "原文件未改动。请检查存储空间后重试。\n\(error.localizedDescription)"
             )
             films = []
+            templates = []
             currentFilmID = nil
             orphanFileNames = []
             orphanBytes = 0
@@ -917,6 +1055,7 @@ final class ShotStore: ObservableObject {
                 message: "原文件未改动。"
             )
             films = []
+            templates = []
             currentFilmID = nil
             orphanFileNames = []
             orphanBytes = 0
@@ -952,6 +1091,7 @@ final class ShotStore: ObservableObject {
             try writeLibrary()
         } catch {
             films = committedFilms
+            templates = committedTemplates
             currentFilmID = committedCurrentFilmID
             for name in stagedFileNames { removeFile(named: name) }
             stagedFileNames.removeAll()
@@ -962,6 +1102,7 @@ final class ShotStore: ObservableObject {
         let previous = Film.referencedFileNames(in: committedFilms)
         let current = Film.referencedFileNames(in: films)
         committedFilms = films
+        committedTemplates = templates
         committedCurrentFilmID = currentFilmID
         let failures = previous.union(stagedFileNames).subtracting(current).sorted().filter { !removeFile(named: $0) }
         stagedFileNames.removeAll()
@@ -1099,7 +1240,7 @@ final class ShotStore: ObservableObject {
         }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(FilmLibrary(films: films, currentFilmID: currentFilmID))
+        let data = try encoder.encode(FilmLibrary(films: films, currentFilmID: currentFilmID, templates: templates))
         try data.write(to: metadataURL, options: .atomic)
     }
 

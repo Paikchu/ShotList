@@ -51,15 +51,17 @@ struct ClipOptionsSheet: View {
 
     private var live: Shot { store.shot(withID: shot.id) ?? shot }
 
-    /// 套用模板之后内容会变成什么样：已经写的字都保留，只补缺的标签行（见 `Shot.applyingTemplate`）。
-    private var templatedContent: String {
-        Shot.applyingTemplate(store.shotTemplate, to: draftNote)
+    /// 套用某份模板之后内容会变成什么样：已经写的字都保留，只补缺的标签行（见 `Shot.applyingTemplate`）。
+    private func templatedContent(_ choice: TemplateChoice) -> String {
+        Shot.applyingTemplate(choice.content, to: draftNote)
     }
 
-    /// 已经是模板的样子时套用不会有任何变化，那个按钮就不必出现，免得点了没反应。
-    /// 看的是草稿而不是仓库——刚清空或刚改完的那一刻按钮就该跟着变，不用等落盘。
-    private var canApplyTemplate: Bool {
-        templatedContent != draftNote.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// 套用后内容真的会变的那些模板。已经是某份模板的样子时套用它不会有任何变化，
+    /// 那一项就不必出现，免得点了没反应；全都不会变时整个入口不出现。
+    /// 看的是草稿而不是仓库——刚清空或刚改完的那一刻入口就该跟着变，不用等落盘。
+    private var applicableTemplates: [TemplateChoice] {
+        let current = draftNote.trimmingCharacters(in: .whitespacesAndNewlines)
+        return store.templateChoices.filter { templatedContent($0) != current }
     }
 
     var body: some View {
@@ -99,14 +101,7 @@ struct ClipOptionsSheet: View {
                     }
 
                     // 框里有字也能套：已写的内容保留，只补上缺的标签行；框还空着就是整段模板。
-                    if canApplyTemplate {
-                        Button {
-                            draftNote = templatedContent
-                        } label: {
-                            Label("应用模板", systemImage: "text.badge.plus")
-                        }
-                        .accessibilityHint("已写的内容保留")
-                    }
+                    applyTemplateControl
                 }
 
                 // 片段列表放最后：已拍镜头可能有十几条，摆太靠上会把内容挤到屏幕外，
@@ -198,6 +193,41 @@ struct ClipOptionsSheet: View {
         } message: {
             if live.hasClip {
                 Text("\(live.clipCount) 段视频将被删除，无法恢复。")
+            }
+        }
+    }
+
+    /// 「应用模板」。库里没有自建模板时就是一个按钮，应用默认模板；
+    /// 有自建模板时是一个菜单：当前影片绑定的排第一并打勾，其余自建模板随后，默认模板最后，点哪份应用哪份。
+    /// 按库里有没有自建模板来定形态，而不是按此刻有几项可选——入口的样子不该随着打字忽而按钮、忽而菜单。
+    @ViewBuilder
+    private var applyTemplateControl: some View {
+        let options = applicableTemplates
+        if !options.isEmpty {
+            if store.templates.isEmpty {
+                Button {
+                    draftNote = templatedContent(options[0])
+                } label: {
+                    Label("应用模板", systemImage: "text.badge.plus")
+                }
+                .accessibilityHint("已写的内容保留")
+            } else {
+                Menu {
+                    ForEach(options) { choice in
+                        Button {
+                            draftNote = templatedContent(choice)
+                        } label: {
+                            if choice.isBound {
+                                Label(choice.name, systemImage: "checkmark")
+                            } else {
+                                Text(choice.name)
+                            }
+                        }
+                    }
+                } label: {
+                    Label("应用模板", systemImage: "text.badge.plus")
+                }
+                .accessibilityHint("已写的内容保留")
             }
         }
     }

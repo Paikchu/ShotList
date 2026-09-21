@@ -9,7 +9,7 @@ import SwiftUI
 ///
 /// 风格是**影片级**的：数据挂在 `Film.stylePrompt` 上，写给当前这部影片，
 /// 换片后看到的是那一部自己的。所以入口放在分镜页的影片菜单里、与「模板」并列，
-/// 以 sheet 呈现（同 `ShotTemplateSheet`），并在导航栏副标题写出影片名——
+/// 以 sheet 呈现（同 `FilmTemplateSheet`），并在导航栏副标题写出影片名——
 /// 放在导出页里的固定入口像一项全局设置，切换影片后内容悄悄变了，界面上没有任何一处说明它是谁的。
 ///
 /// 输入框留空时显示一段完整示例（`FilmStylePrompt.placeholder`），
