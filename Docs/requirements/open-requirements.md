@@ -1,6 +1,6 @@
 # 分镜助手 · 未完成需求
 
-更新日期：2026-09-20。共 **7 项未完成**：**P0 0 项、P1 2 项、P2 5 项**。保留原需求编号，按优先级及编号排序。
+更新日期：2026-09-21。共 **7 项未完成**：**P0 0 项、P1 2 项、P2 5 项**。保留原需求编号，按优先级及编号排序。
 
 未完成需求保留在优先级分组；完成项移至 [delivered-requirements](delivered-requirements.md)，保留验收与实现提交以便追溯。边界条件或验收标准缺失时，先按现有产品行为和代码补全；无法判断且影响实现方向时再向用户澄清。
 
@@ -78,9 +78,9 @@
 
 ### R-6 · 用户点分镜页里还没拍的镜头的虚线加号时，应直接进入该镜头的拍摄，而不是先进镜头面板再点「拍摄」
 
-**验证状态：** 待验证
+**验证状态：** 模拟器实测（除下列未验证项）；真机录制 → 保存 → 回到分镜页这一路、VoiceOver 的「拍摄」操作待真机实测
 
-**代码位置：** 待实现。现状为 ShotList/Views/ShotCardView.swift · `body`（整张卡片是一个 `Button`）；ShotList/Views/ClipThumbnailView.swift · 未拍时的虚线框与 `plus`（第 83–89 行）；ShotList/Views/ShotListView.swift · `shotRow`（第 118–143 行，点击只会 `sheet = .options(shot)`）；ShotList/Views/ShotFlowModifier.swift · `cover` / `queuedCover`（相机 `fullScreenCover` 是这个 modifier 的私有状态，目前只有镜头面板里的「拍摄」能触发它）
+**代码位置：** ShotList/Views/ShotCardView.swift · `onCapture` / `captureAction` / `captureTarget`（虚线加号的独立点击层）与 `accessibilityActions`（自定义操作「拍摄」）；ShotList/Views/ClipThumbnailView.swift · `ThumbnailCaptureButtonStyle`；ShotList/Views/ShotListView.swift · `shotRow` 的 `onCapture`；ShotList/Views/HistoryView.swift · `card(for:)` 的 `onCapture` 与 `captureRequest`；复用 ShotList/Views/ShotFlowModifier.swift · `ShotCaptureRequest` / `startCapture`（R-11 已加，本条未改逻辑）
 
 **预期结果：** 分镜页上，还没有片段的镜头，卡片左侧的虚线加号可以直接点：点一下就进入这个镜头的相机取景页，中间不经过镜头面板。卡片其余区域的点击行为不变，仍打开镜头面板。
 
@@ -128,13 +128,34 @@
 9. 在系统设置里关闭本应用的相机权限后再点加号：走与「面板 → 拍摄」相同的权限说明页，不是无反应或崩溃。
 10. 失败判据：点加号后仍先出现镜头面板；点卡片其余区域进了相机；已拍镜头的点击行为变化；相机关闭后停在镜头面板而不是分镜页；一次点击同时触发面板与相机。
 
-**实现状态：** 未开始
+**实现状态：** 已实现，待真机验收
 
-**实现说明：** 待实现；完成后记录卡片点击区域的拆分方式、从列表直接触发相机的入口放在哪里，以及历史页是否同步。
+**实现说明：**
 
-**验证结果：** 待验证；完成后记录环境、逐步观察结果与验证限制。
+- **点击区域的拆分：** 卡片仍是一个 `Button`（整卡点击、按压缩放不变）。加号不能嵌进它的标签里，所以在 `Button` 之后 `overlay` 一层与缩略图位重合的透明 `Button`（`captureTarget`，`Color.clear` + 与缩略图同圆角的 `contentShape`，按下时盖一层浅 accent 作反馈，样式 `ThumbnailCaptureButtonStyle`）。叠层与缩略图的对位靠两个共用常量：卡片内边距 `ShotCardView.contentInset`、无障碍字号下的上下布局尺寸 `stackedThumbnailSize`；常规布局垂直居中对齐 `.leading`，上下布局对齐 `.topLeading`。**改缩略图位置或卡片内边距时这一层要一起改。**
+- **只对「虚线加号那一支」生效：** `captureAction = clipURL == nil ? onCapture : nil`，与 `ClipThumbnailView.isRecorded`（`url != nil`）同一个判据；已拍镜头没有叠层，行为完全不变。传 `onCapture: nil`（默认）的调用方与改前一致。
+- **从列表直接进相机：** 直接复用 [R-11](#r-11) 在 `ShotFlowModifier` 里加的 `captureRequest` 入口，传 `ShotCaptureRequest(shotID:)`（`isQuick` 默认 `false`，不做收尾——拍完 / 关闭相机后回到列表，不弹面板、不撤销镜头）。`ShotFlowModifier` 本身没有改逻辑，只更新了 `startCapture` 的注释。请求来自列表，此刻列表上没有别的弹层（有弹层时加号被盖住点不到），所以不必走 `drainQueue` 排队；`drainQueue` 里的 `finishQuickShoot` 对非快速拍摄是空操作。
+- **无障碍：** 卡片对读屏仍是一个合并的按钮（默认操作＝打开面板）；`accessibilityActions` 里仅在未拍时多一个「拍摄」，叠层对读屏隐藏，不会多出一个元素。
+- **历史页同步：** 采用了本条的「推断」——`HistoryView` 传入 `captureRequest` 与 `onCapture`，「全部 / 未拍」筛选下的虚线加号行为与分镜页一致；历史页没有别的入口需要变。
+- **没有改** `CameraCaptureView`、`ClipOptionsSheet`、导入流程，也没有改「新增分镜」与 R-11 的快速拍摄。README 里「虚线框 + 加号」与「点卡片 → 拍摄」两处说法同步更新。
+- **已知取舍：** 新叠层是一个额外的 `Button`。长按加号仍出现卡片的长按菜单（`contextMenu` 挂在行上，实测不触发相机）；左滑删除不受影响（实测从加号上起手左滑仍露出「删除」）；`onMove` 排序未改动、未复测。加号点击没有 SwiftUI 按钮的默认高亮，只有那层浅 accent 反馈。
 
-**实现 commit：** 待提交；完成后填写实际实现提交的完整 SHA。
+**验证结果：** 环境：Xcode 27.0，独立新建的 iPhone 17 / iOS 26.5 模拟器（`R6-verify`，未动其他任务在用的模拟器），`Tools/seed-simulator.py` 灌入演示数据（「夏日vlog」5 个镜头、镜头 4、5 未拍；占位视频用 `simctl io recordVideo` 录出，相册里另放了一段 3 秒视频）。Debug 构建成功，触碰的文件无新增告警。没有跑单元测试（按仓库规范只做集成验证）。模拟器没有摄像头，相机页停在「需要访问摄像头」前置页，用它的「导入」代替录制。
+
+逐步观察（截图确认）：
+
+- 验收 2：点镜头 4 的虚线加号，**直接**出现相机前置页，中间没有镜头面板；点「取消」回到分镜页，没有面板。
+- 验收 3（导入路径代替）：点镜头 5 的虚线加号 → 相机页「导入」→ 选片：回到分镜页，**镜头 5**（不是镜头 4）显示缩略图与 0:03、虚线加号消失，镜头 4 保持未拍；面板没有出现。
+- 验收 4：点镜头 4 卡片右侧空白处，弹出「镜头 04」面板，面板里「拍摄」可用。
+- 验收 5：点已拍的镜头 5 缩略图，打开「镜头 05」面板，与改前一致。
+- 验收 6：长按镜头 4 卡片弹出上下文菜单（编辑 / 在下方插入 / 在下方复制 / 上移 / 下移 / 删除）；**长按加号本身**同样弹出这个菜单、不进相机；从加号上起手左滑露出「删除」，相机没有被误触发。拖动排序未复测（`onMove` 挂在 `ForEach` 上、未改动）。
+- 验收 8：「历史」页「未拍」筛选下点镜头 4 的虚线加号，直接出现相机页；经「导入」选片后回到历史页，进度 5/5、100%，「未拍」筛选显示「全部已拍」，没有面板。
+- 边界：无障碍字号（`accessibility-extra-large`，缩略图改为上下布局）下，未拍的空镜头 6 的加号在新布局位置上点击同样直接进相机、取消后空镜头保留（非快速拍摄不撤销）。
+- 验收 9：模拟器相机权限为「未决定」，走的是与「面板 → 拍摄」相同的权限前置页；系统「已拒绝」的那一页没有单独走（同一个 `CameraCaptureView`，入口不影响它）。
+
+未验证：① 真机录制、点「保存」、关闭相机后回到分镜页——模拟器没有摄像头；② VoiceOver 的「拍摄」自定义操作、已拍镜头没有该操作——模拟器控制工具的 `inspect` 不可用（同 [R-1](#r-1)），仅代码级确认（`accessibilityActions` 只在 `clipURL == nil` 且传入 `onCapture` 时出现，叠层 `accessibilityHidden`）；③ 加号的按压反馈只做了代码级确认，未截到按下瞬间。以上待真机 / VoiceOver 走查后补记，通过后再移入已交付。
+
+**实现 commit：** d943802248669c491cc92079e66b9aa80dd61ae3
 
 ## P2
 
