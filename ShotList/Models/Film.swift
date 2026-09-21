@@ -23,11 +23,14 @@ nonisolated struct Film: Identifiable, Codable, Hashable {
     /// 挂在影片上而不是全局偏好里：它是「这一次创作要什么样子」，
     /// 换一部影片（重制 / 新建）就该重新写，而不是把上一部片子的要求带到新片里。
     var stylePrompt: String
-    /// 这部影片的分镜模板：**一段纯文字**，镜头面板里「应用模板」时原样填进内容框。
+    /// 这部影片绑定的模板（`FilmLibrary.templates` 里的一份）。`nil` 表示用内置的默认模板。
     ///
-    /// 空串表示没有自定义，用 `Film.defaultShotTemplate`。挂在影片上而不是全局偏好里：
-    /// 每部片子要写的标签不同（有的要转场、有的只要字幕），换一部影片就该各用各的。
-    var shotTemplate: String
+    /// 只记**引用**：模板文字存在库里，改一处处处生效；模板被删除时由 `ShotStore.deleteTemplate`
+    /// 一并清掉这里的引用。读到指向已不存在的模板的引用时同样按默认处理，见 `ShotStore.boundTemplate`。
+    var templateID: FilmTemplate.ID?
+    /// R-10 时每部影片自带的模板文字。**只读不写**：读取时留给 `ShotStore` 搬进模板库，
+    /// 搬完清空，编码走手写的 `encode(to:)`，不会再产生 `shotTemplate` 这个键。
+    var legacyShotTemplate: String
     /// 这部影片的分镜，编号在影片内从 1 连续编排
     var shots: [Shot]
     var createdAt: Date
@@ -41,7 +44,7 @@ nonisolated struct Film: Identifiable, Codable, Hashable {
         id: UUID = UUID(),
         title: String = "",
         stylePrompt: String = "",
-        shotTemplate: String = "",
+        templateID: FilmTemplate.ID? = nil,
         shots: [Shot] = [],
         createdAt: Date = Date(),
         updatedAt: Date = Date()
@@ -49,7 +52,8 @@ nonisolated struct Film: Identifiable, Codable, Hashable {
         self.id = id
         self.title = title
         self.stylePrompt = stylePrompt
-        self.shotTemplate = shotTemplate
+        self.templateID = templateID
+        self.legacyShotTemplate = ""
         self.shots = shots
         self.createdAt = createdAt
         self.updatedAt = updatedAt
@@ -59,16 +63,18 @@ nonisolated struct Film: Identifiable, Codable, Hashable {
         case id
         case title
         case stylePrompt
-        case shotTemplate
+        case templateID
         case shots
         case createdAt
         case updatedAt
         /// 旧版本的结构化风格。**只读不写**：解码时用来补出 `stylePrompt`，
         /// 编码走手写的 `encode(to:)`，不会再产生这个键。
         case legacyStyle = "style"
+        /// R-10 的影片自带模板文字。**只读不写**，见 `legacyShotTemplate`。
+        case legacyShotTemplate = "shotTemplate"
     }
 
-    /// 手写解码而不是用合成的那个：`stylePrompt`、`shotTemplate` 是后加的字段，库里已有的
+    /// 手写解码而不是用合成的那个：`stylePrompt`、`templateID` 是后加的字段，库里已有的
     /// 影片 JSON 里没有它们。合成解码器遇到缺键会整份抛错，那会把**所有**影片一起读不出来。
     ///
     /// 老数据分两种，都要接住：
@@ -89,7 +95,8 @@ nonisolated struct Film: Identifiable, Codable, Hashable {
             stylePrompt = ""
         }
 
-        shotTemplate = (try container.decodeIfPresent(String.self, forKey: .shotTemplate) ?? "")
+        templateID = try container.decodeIfPresent(FilmTemplate.ID.self, forKey: .templateID)
+        legacyShotTemplate = (try container.decodeIfPresent(String.self, forKey: .legacyShotTemplate) ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         shots = try container.decodeIfPresent([Shot].self, forKey: .shots) ?? []
@@ -98,30 +105,49 @@ nonisolated struct Film: Identifiable, Codable, Hashable {
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
     }
 
-    /// 手写编码：只写 `stylePrompt`，不再写旧的 `style` 键。
+    /// 手写编码：只写 `stylePrompt`，不再写旧的 `style`、`shotTemplate` 键。
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
         try container.encode(title, forKey: .title)
         try container.encode(stylePrompt, forKey: .stylePrompt)
-        try container.encode(shotTemplate, forKey: .shotTemplate)
+        try container.encodeIfPresent(templateID, forKey: .templateID)
         try container.encode(shots, forKey: .shots)
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(updatedAt, forKey: .updatedAt)
     }
 }
 
-/// 落盘结构：影片库 + 「当前影片」指针。
+/// 落盘结构：影片库 + 「当前影片」指针 + 模板库。
 ///
-/// 指针与影片放在同一份文件里，是为了让「切到哪部影片」和「影片内容」一起
-/// 原子落盘——分成两个文件就可能出现「指针指向一部不存在的影片」。
+/// 指针、模板与影片放在同一份文件里，是为了让「切到哪部影片」「影片绑定了哪份模板」
+/// 和影片内容一起原子落盘——分成几个文件就可能出现「指针指向一部不存在的影片」
+/// 「影片绑定着一份不存在的模板」。
 nonisolated struct FilmLibrary: Codable {
     var films: [Film]
     var currentFilmID: UUID?
+    /// 影片模板库（应用级）。旧文件没有这个键，按空处理。
+    var templates: [FilmTemplate]
 
-    init(films: [Film] = [], currentFilmID: UUID? = nil) {
+    init(films: [Film] = [], currentFilmID: UUID? = nil, templates: [FilmTemplate] = []) {
         self.films = films
         self.currentFilmID = currentFilmID
+        self.templates = templates
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case films
+        case currentFilmID
+        case templates
+    }
+
+    /// 手写解码：`templates` 是后加的键，缺键时按空处理。合成解码器遇到缺键会整份抛错，
+    /// 那会把**所有**影片一起读不出来（同 `Film.init(from:)`）。
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        films = try container.decode([Film].self, forKey: .films)
+        currentFilmID = try container.decodeIfPresent(UUID.self, forKey: .currentFilmID)
+        templates = try container.decodeIfPresent([FilmTemplate].self, forKey: .templates) ?? []
     }
 }
 
@@ -157,23 +183,20 @@ nonisolated extension Film {
     /// 导出包里不会出现 `剪辑风格.md`。
     var hasStylePrompt: Bool { !stylePrompt.isEmpty }
 
-    /// 没有自定义模板时用的默认模板：四行标签，标签后面留给用户写具体内容。
+    /// 没有绑定模板时用的默认模板：四行标签，标签后面留给用户写具体内容。
     static let defaultShotTemplate = "描述：\n字幕：\n上方角标：\n转场："
 
-    /// 写过自己的模板没有。空串就是没写，用默认模板。
-    var hasShotTemplate: Bool { !shotTemplate.isEmpty }
-
-    /// 「应用模板」时真正填进去的文字：自定义的，没有就用默认的
-    var effectiveShotTemplate: String { hasShotTemplate ? shotTemplate : Self.defaultShotTemplate }
-
-    /// 什么都没写：没有镜头、没有标题，也没写风格描述与模板。
+    /// 什么都没写：没有镜头、没有标题，也没写风格描述。
     ///
     /// 「切换影片」「重制」时按这个口径静默回收，否则影片库会堆一堆
     /// 用户早就忘了的空壳。
     ///
-    /// 写过风格或模板的影片**不算空壳**：用户可能先把要求写好、再去拍，
+    /// 写过风格的影片**不算空壳**：用户可能先把要求写好、再去拍，
     /// 按「无分镜 + 无标题」回收会把刚写好的那段一起丢掉。
-    var isBlank: Bool { shots.isEmpty && !hasTitle && !hasStylePrompt && !hasShotTemplate }
+    ///
+    /// 绑定模板**不算**「写过内容」：那只是从库里点选了一份，模板本身留在库里，
+    /// 回收这部影片不会丢掉任何用户写的字。
+    var isBlank: Bool { shots.isEmpty && !hasTitle && !hasStylePrompt }
 
     /// 这部影片的全部片段（跨镜头）
     var allClips: [ShotClip] { shots.flatMap(\.clips) }
