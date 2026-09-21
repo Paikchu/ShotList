@@ -30,10 +30,6 @@ enum SLSpacing {
     /// - **历史**：补 `pageTopInset`；
     /// - **导出**：首块是没有小节标题的素材卡片，与历史一样补 `pageTopInset`。
     static let pageTopInset: CGFloat = 5
-
-    /// `List(.insetGrouped)` 首个小节带标题时，标题默认比统一基准多出的 7pt
-    /// （「剪辑风格」页用负的内容边距收回去）。
-    static let groupedListTopSlack: CGFloat = 7
 }
 
 /// 尺寸常量。

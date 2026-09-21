@@ -7,6 +7,11 @@ import SwiftUI
 /// 为每种风格加一个旋钮既加不完，也表达不了旋钮之外的偏好（「快切不拖沓」
 /// 「别加音乐」这类要求没有对应的控件，却是用户真正想说的事）。
 ///
+/// 风格是**影片级**的：数据挂在 `Film.stylePrompt` 上，写给当前这部影片，
+/// 换片后看到的是那一部自己的。所以入口放在分镜页的影片菜单里、与「模板」并列，
+/// 以 sheet 呈现（同 `ShotTemplateSheet`），并在导航栏副标题写出影片名——
+/// 放在导出页里的固定入口像一项全局设置，切换影片后内容悄悄变了，界面上没有任何一处说明它是谁的。
+///
 /// 输入框留空时显示一段完整示例（`FilmStylePrompt.placeholder`），
 /// 下面再列一遍「可以写这些」。示例是**灰色占位**，不会被当成已填内容写进文件。
 ///
@@ -14,6 +19,7 @@ import SwiftUI
 /// `films.json` 会卡手，所以等手停下来再写（见 `body` 末尾的 `task(id:)`）。
 struct FilmStyleView: View {
     @EnvironmentObject private var store: ShotStore
+    @Environment(\.dismiss) private var dismiss
 
     @State private var draft: String = ""
     /// 草稿是从哪部影片读进来的。
@@ -25,26 +31,36 @@ struct FilmStyleView: View {
     @FocusState private var isEditing: Bool
 
     var body: some View {
-        List {
-            Section {
-                editor
-            } header: {
-                SectionHeader(title: "风格描述", systemImage: "text.alignleft")
-            }
+        NavigationStack {
+            List {
+                Section {
+                    editor
+                } header: {
+                    SectionHeader(title: "风格描述", systemImage: "text.alignleft")
+                }
 
-            Section {
-                // 一行短词并排，只提示「能写哪几类」
-                Text(FilmStylePrompt.guidance.joined(separator: " · "))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            } header: {
-                SectionHeader(title: "可写", systemImage: "list.bullet")
+                Section {
+                    // 一行短词并排，只提示「能写哪几类」
+                    Text(FilmStylePrompt.guidance.joined(separator: " · "))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                } header: {
+                    SectionHeader(title: "可写", systemImage: "list.bullet")
+                }
+            }
+            .listStyle(.insetGrouped)
+            .navigationTitle("剪辑风格")
+            // 影片名写在标题下：一眼看出这段风格是哪部影片的
+            .navigationSubtitle(store.currentFilm?.displayTitle ?? "")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") { dismiss() }
+                }
             }
         }
-        .listStyle(.insetGrouped)
-        .contentMargins(.top, -SLSpacing.groupedListTopSlack, for: .scrollContent)
-        .navigationTitle("剪辑风格")
-        .navigationBarTitleDisplayMode(.inline)
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
         .task(id: store.currentFilmID) {
             draft = store.currentFilm?.stylePrompt ?? ""
             loadedFilmID = store.currentFilmID
@@ -57,8 +73,8 @@ struct FilmStyleView: View {
             guard loadedFilmID == store.currentFilmID else { return }
             store.updateStylePrompt(draft)
         }
-        // 返回上一页会取消上面那个等待中的任务，最后这一次改动必须在这里补上，
-        // 否则「写完立刻返回」丢掉的就是用户刚敲的那几个字
+        // 关掉页面（点「完成」或下拉）会取消上面那个等待中的任务，最后这一次改动必须在这里补上，
+        // 否则「写完立刻关掉」丢掉的就是用户刚敲的那几个字
         .onDisappear {
             guard loadedFilmID == store.currentFilmID else { return }
             store.updateStylePrompt(draft)
@@ -93,8 +109,6 @@ struct FilmStyleView: View {
 }
 
 #Preview {
-    NavigationStack {
-        FilmStyleView()
-            .environmentObject(ShotStore())
-    }
+    FilmStyleView()
+        .environmentObject(ShotStore())
 }

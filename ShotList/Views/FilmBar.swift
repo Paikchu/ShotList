@@ -346,7 +346,7 @@ private struct FilmBarHeightKey: PreferenceKey {
     }
 }
 
-/// 切换影片、改标题、新建影片。
+/// 切换影片、改标题、写模板与剪辑风格、新建影片。
 ///
 /// 分镜页三点按钮的入口，保留系统 `Menu`（历史页的影片条已换成与白条同宽的
 /// 自展开面板，见 `FilmBar`）。菜单项只放一行「日期 · 标题」，
@@ -363,6 +363,7 @@ struct FilmSwitcherMenu<MenuLabel: View>: View {
     @Binding var titleDraft: String
     @Binding var isConfirmingRemake: Bool
     @Binding var isEditingTemplate: Bool
+    @Binding var isEditingStyle: Bool
 
     @ViewBuilder var label: () -> MenuLabel
 
@@ -392,6 +393,14 @@ struct FilmSwitcherMenu<MenuLabel: View>: View {
                 isEditingTemplate = true
             } label: {
                 Label("模板", systemImage: "doc.text")
+            }
+
+            // 与「模板」同属影片级文字设置：写给这一部影片，换片后看到的是那一部自己的
+            Button {
+                Haptics.impact(.light)
+                isEditingStyle = true
+            } label: {
+                Label("剪辑风格", systemImage: "text.alignleft")
             }
 
             Button {

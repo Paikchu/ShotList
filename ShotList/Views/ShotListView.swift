@@ -4,7 +4,7 @@ import SwiftUI
 ///
 /// 导航栏大标题是当前影片的名字（不再写死「分镜」——标签栏已经标明这是哪一页），
 /// 点标题即可改名。加号点一下加一个镜头，长按展开「快速拍摄」卡片（新建镜头直接开拍，拍完落到描述页）；
-/// 三点打开影片菜单（切换、改标题、写模板、新建影片）。
+/// 三点打开影片菜单（切换、改标题、写模板与剪辑风格、新建影片）。
 struct ShotListView: View {
     @EnvironmentObject private var store: ShotStore
 
@@ -25,6 +25,8 @@ struct ShotListView: View {
     @State private var titleDraft = ""
     @State private var isConfirmingRemake = false
     @State private var isEditingTemplate = false
+    /// 影片菜单里的「剪辑风格」页。调试参数 `-preselectStylePage` 让它在启动后自己弹出（见 `openPreselectedStyle`）。
+    @State private var isEditingStyle = false
 
     /// 刚新增的镜头，用来在列表里把它指出来（卡片 accent 描边 + 导轨上段变色）。
     @State private var flashID: Shot.ID?
@@ -56,6 +58,9 @@ struct ShotListView: View {
             .sheet(isPresented: $isEditingTemplate) {
                 ShotTemplateSheet()
             }
+            .sheet(isPresented: $isEditingStyle) {
+                FilmStyleView()
+            }
             .filmActionDialogs(
                 isEditingTitle: $isEditingTitle,
                 titleDraft: $titleDraft,
@@ -72,6 +77,7 @@ struct ShotListView: View {
         }
         .shotFlow(sheet: $sheet, captureRequest: $captureRequest)
         .task { await openPreselectedShot() }
+        .task { await openPreselectedStyle() }
         .confirmationDialog(
             "清空片段？",
             isPresented: Binding(
@@ -393,7 +399,8 @@ struct ShotListView: View {
                 isEditingTitle: $isEditingTitle,
                 titleDraft: $titleDraft,
                 isConfirmingRemake: $isConfirmingRemake,
-                isEditingTemplate: $isEditingTemplate
+                isEditingTemplate: $isEditingTemplate,
+                isEditingStyle: $isEditingStyle
             ) {
                 Label("影片", systemImage: "ellipsis.circle")
             }
@@ -437,11 +444,12 @@ struct ShotListView: View {
 
     /// 桌面小组件点进来：先收起这一页自己开着的面板，等界面空下来再走快速拍摄。
     ///
-    /// 镜头面板与模板页都是自动保存的，收起不丢已写的内容。别的弹层（相机、播放页、选片、
+    /// 镜头面板、模板页与剪辑风格页都是自动保存的，收起不丢已写的内容。别的弹层（相机、播放页、选片、
     /// 确认弹窗……）不去打断：等不到界面空下来就放弃这次请求，也就不新建镜头。
     private func quickShootFromWidget() async {
         sheet = nil
         isEditingTemplate = false
+        isEditingStyle = false
         isShowingQuickCard = false
         // 冷启动时页面与转场还没落位，弹层收起也要一个转场的时间：与卡片收起、
         // `-preselectShot` 一样先等 400 毫秒，再判断界面是不是空的
@@ -471,6 +479,16 @@ struct ShotListView: View {
         try? await Task.sleep(for: .milliseconds(400))
         guard !Task.isCancelled else { return }
         sheet = .options(target)
+    }
+
+    /// 调试启动参数 `-preselectStylePage`：启动后直接停在「剪辑风格」页。
+    ///
+    /// 与 `-preselectShot` 同一套用法：等标签页与影片条落位再弹，启动瞬间就发 sheet 会和转场抢同一帧。
+    private func openPreselectedStyle() async {
+        guard ProcessInfo.processInfo.arguments.contains("-preselectStylePage") else { return }
+        try? await Task.sleep(for: .milliseconds(400))
+        guard !Task.isCancelled else { return }
+        isEditingStyle = true
     }
 
     /// 在某个镜头后面插入一个空白镜头，并直接进它的面板。

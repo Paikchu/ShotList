@@ -13,14 +13,6 @@ struct ExportView: View {
     /// 不能等弹窗渲染时现读 `store`——那时文件已经删了，文案会变成「0 个」。
     @State private var orphanPrompt: String?
 
-    /// 支持调试启动参数 `-preselectStylePage`：验收截图直接停在「剪辑风格」页。
-    ///
-    /// 与 `-preselectTab` / `-preselectFilm` / `-preselectShot` 同一套用法。
-    /// 这一页是 `NavigationLink` 推出来的，没有参数就只能靠手点，
-    /// 而本机没有可用的点击自动化（见 AGENTS.md 的验收方式）。
-    @State private var isShowingStylePage =
-        ProcessInfo.processInfo.arguments.contains("-preselectStylePage")
-
     /// 当前影片的展示名（带书名号），用在导出设置与素材概览的朗读文本里
     private var filmName: String {
         guard let film = store.currentFilm else { return "当前影片" }
@@ -31,7 +23,6 @@ struct ExportView: View {
         NavigationStack {
             List {
                 overviewSection
-                styleSection
                 buildSection
                 if let package = export.package {
                     resultSection(package)
@@ -55,10 +46,6 @@ struct ExportView: View {
             .navigationTitle("导出")
             // 标题与右侧内容同行（inlineLarge），不单独占一行；三页起始位置一致
             .toolbarTitleDisplayMode(.inlineLarge)
-            // 只在带了 `-preselectStylePage` 时才为 true，正常使用不受影响
-            .navigationDestination(isPresented: $isShowingStylePage) {
-                FilmStyleView()
-            }
         }
         .onChange(of: store.shots) { _, _ in export.invalidate() }
         // 剪辑风格写进了包内的「剪辑风格.md」，改了它，已生成的包就是旧的
@@ -114,42 +101,12 @@ struct ExportView: View {
         }
     }
 
-    // MARK: - 剪辑风格
+    // MARK: - 打包
 
     /// 剪辑风格描述是这次导出的输入：改了它，已经生成的包就不再对应当前设定。
+    /// 风格本身在分镜页的影片菜单里写（`FilmStyleView`），导出页只读它。
     private var stylePrompt: String { store.currentFilm?.stylePrompt ?? "" }
 
-    /// 列表里那一行的内容：没写就写「未设置」，
-    /// 而不是显示一片空白——空白看起来像加载失败。
-    private var styleSummary: String {
-        guard !stylePrompt.isEmpty else { return "未设置" }
-        // 多行描述压成一行预览，省得这几行把导出页撑得很长
-        return stylePrompt
-            .split(separator: "\n")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-            .joined(separator: " / ")
-    }
-
-    private var styleSection: some View {
-        Section {
-            NavigationLink {
-                FilmStyleView()
-            } label: {
-                // 分组标题已经是「剪辑风格」，这一行只给内容，不再重复标题
-                Text(styleSummary)
-                    .foregroundStyle(stylePrompt.isEmpty ? .secondary : .primary)
-                    .lineLimit(2)
-                    .frame(maxWidth: .infinity, minHeight: SLSize.minTouchTarget, alignment: .leading)
-            }
-            .accessibilityLabel("剪辑风格")
-            .accessibilityValue(styleSummary)
-        } header: {
-            SectionHeader(title: "剪辑风格", systemImage: "text.alignleft")
-        }
-    }
-
-    // MARK: - 打包
 
     private var buildSection: some View {
         Section {
