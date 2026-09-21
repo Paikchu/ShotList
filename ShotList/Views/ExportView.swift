@@ -27,12 +27,6 @@ struct ExportView: View {
                 if let package = export.package {
                     resultSection(package)
                 }
-                if export.isStale {
-                    Section {
-                        Label("需重新打包", systemImage: "arrow.clockwise")
-                            .foregroundStyle(.secondary)
-                    }
-                }
                 // 只在磁盘上确有无归属文件时才出现
                 if store.orphanFileCount > 0 {
                     maintenanceSection
@@ -107,6 +101,14 @@ struct ExportView: View {
     /// 风格本身在分镜页的影片菜单里写（`FilmStyleView`），导出页只读它。
     private var stylePrompt: String { store.currentFilm?.stylePrompt ?? "" }
 
+    /// 结果已经不对应当前设定。
+    ///
+    /// 它是对「刚生成的导出包」的说明，所以并进结果一节（没有结果时并进打包一节），
+    /// 而不是自己占一个没有标题的小节：那样它会掉到首屏之外，看起来与前后都无关。
+    private var staleNotice: some View {
+        Label("需重新打包", systemImage: "arrow.clockwise")
+            .foregroundStyle(.secondary)
+    }
 
     private var buildSection: some View {
         Section {
@@ -144,6 +146,11 @@ struct ExportView: View {
                 Label("无可导出视频", systemImage: "video.slash")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+            }
+
+            // 打包途中输入变了、结果被丢弃：没有结果一节可并，说明放在这里
+            if export.package == nil && export.isStale {
+                staleNotice
             }
         }
     }
@@ -191,6 +198,11 @@ struct ExportView: View {
 
     private func resultSection(_ package: ExportPackage) -> some View {
         Section {
+            // 放在第一行而不是末行：末行会落到底部打包按钮下面，正好被遮住
+            if export.isStale {
+                staleNotice
+            }
+
             HStack(spacing: SLSpacing.medium) {
                 Image(systemName: "doc.zipper")
                     .font(.title2)
