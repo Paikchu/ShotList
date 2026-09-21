@@ -34,6 +34,7 @@
 
 ### 1. 录入编号 1、2、3… 的镜头分镜
 「分镜」标签页的导航栏标题是当前影片的名字，点标题可以改名。点加号添加一个镜头；长按加号展开「快速拍摄」卡片，点卡片——新建镜头直接开拍，拍完（或从相册导入后）直接落到该镜头的描述页，先拍后写；中途退出则不留空镜头。三点菜单里切换或重制影片。
+主屏还能添加小号（2×2）的「快速拍摄」桌面小组件：点一下打开应用并进入同样的流程；此时若界面上开着镜头面板或模板页会先收起（内容已自动保存），开着相机等其他弹层则不打断、不新建镜头。
 镜头按拍摄顺序连续编号，拖动排序或长按卡片选「上移 / 下移」后编号会自动重排；镜头面板里不再单独改编号。
 
 长按任意卡片选「在下方插入」，会在它后面插进一个空白镜头并直接打开镜头面板、光标落在描述框里。编号即位置，
@@ -264,17 +265,23 @@ ShotList/
 ├── Support/
 │   ├── DesignSystem.swift           间距、尺寸、编号徽标、进度环、时间线导轨等基础组件
 │   ├── AppLocale.swift              格式化区域固定为简体中文
+│   ├── QuickShootLink.swift         小组件与应用约定的「快速拍摄」链接（两个 target 共用）
+│   ├── ModalPresentation.swift      判断界面上有没有弹层，供外部请求（小组件链接）决定要不要开相机
 │   ├── ExportPackageBuilder.swift   打包 zip、分镜清单、导出说明
 │   ├── Haptics.swift                触觉反馈、视频元数据、缩略图缓存
 │   └── MediaImport.swift            相册导入的 Transferable 实现
 └── Resources/
     └── Assets.xcassets              应用图标与强调色（含深色变体）
 
+ShotListWidget/
+├── QuickShootWidget.swift           桌面小组件：小号（2×2）「快速拍摄」，点一下用链接打开应用
+└── Assets.xcassets                  小组件的强调色（与应用一致）
+
 Tools/
 ├── generate-icon.swift              用 CoreGraphics 生成 1024×1024 应用图标
 └── seed-simulator.py                开发辅助：往模拟器里灌演示数据（先清空旧数据）
 
-project.yml                          XcodeGen 工程定义（权限键、部署目标等）
+project.yml                          XcodeGen 工程定义（权限键、URL scheme、部署目标、小组件 target 等）
 ```
 
 ---

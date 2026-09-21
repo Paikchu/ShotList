@@ -8,6 +8,9 @@ import SwiftUI
 struct ShotListView: View {
     @EnvironmentObject private var store: ShotStore
 
+    /// 桌面小组件点进来的「快速拍摄」请求（`RootTabView` 收到链接后置位）。收下就清零，一次性。
+    @Binding private var quickShootRequest: Bool
+
     @State private var sheet: ShotSheet?
     /// 快速拍摄：新建镜头后交给 `shotFlow` 直接开相机
     @State private var captureRequest: ShotCaptureRequest?
@@ -31,6 +34,10 @@ struct ShotListView: View {
     @State private var flashTask: Task<Void, Never>?
     /// `-preselectShot` 只生效一次，用户关掉面板后不再弹回来
     @State private var didApplyPreselect = false
+
+    init(quickShootRequest: Binding<Bool> = .constant(false)) {
+        _quickShootRequest = quickShootRequest
+    }
 
     var body: some View {
         NavigationStack {
@@ -92,6 +99,12 @@ struct ShotListView: View {
                 try? await Task.sleep(for: .milliseconds(400))
                 quickShoot()
             }
+        }
+        // `initial`：从别的标签切过来时这一页才刚创建，请求在出现之前就已经置位了
+        .onChange(of: quickShootRequest, initial: true) { _, requested in
+            guard requested else { return }
+            quickShootRequest = false
+            Task { await quickShootFromWidget() }
         }
         .onChange(of: sheet?.id) { _, newValue in
             // 编辑器关掉了，这时候用户才真正在看列表
@@ -420,6 +433,21 @@ struct ShotListView: View {
         guard let shot = store.addShot() else { return }
         pendingFlashID = shot.id
         captureRequest = ShotCaptureRequest(shotID: shot.id, isQuick: true)
+    }
+
+    /// 桌面小组件点进来：先收起这一页自己开着的面板，等界面空下来再走快速拍摄。
+    ///
+    /// 镜头面板与模板页都是自动保存的，收起不丢已写的内容。别的弹层（相机、播放页、选片、
+    /// 确认弹窗……）不去打断：等不到界面空下来就放弃这次请求，也就不新建镜头。
+    private func quickShootFromWidget() async {
+        sheet = nil
+        isEditingTemplate = false
+        isShowingQuickCard = false
+        // 冷启动时页面与转场还没落位，弹层收起也要一个转场的时间：与卡片收起、
+        // `-preselectShot` 一样先等 400 毫秒，再判断界面是不是空的
+        try? await Task.sleep(for: .milliseconds(400))
+        guard await ModalPresentation.waitUntilIdle() else { return }
+        quickShoot()
     }
 
     /// 调试启动参数 `-preselectShot <编号>`：直接把某个镜头的面板打开。

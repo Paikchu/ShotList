@@ -12,6 +12,8 @@ struct RootTabView: View {
 
     @EnvironmentObject private var store: ShotStore
     @SceneStorage("root.selectedTab") private var selectedTabRaw: String = Self.initialTabRawValue()
+    /// 桌面小组件的「快速拍摄」链接：切到分镜页后交给它开拍。一次性，`ShotListView` 收下就清掉。
+    @State private var quickShootRequest = false
 
     private var selectedTab: Binding<TabSelection> {
         Binding(
@@ -49,7 +51,7 @@ struct RootTabView: View {
     private var tabs: some View {
         TabView(selection: selectedTab) {
             Tab("分镜", systemImage: "film.stack", value: TabSelection.shots) {
-                ShotListView()
+                ShotListView(quickShootRequest: $quickShootRequest)
             }
 
             Tab("历史", systemImage: "clock.arrow.circlepath", value: TabSelection.history) {
@@ -62,6 +64,11 @@ struct RootTabView: View {
         }
         .tabBarMinimizeBehavior(.onScrollDown)
         .safeAreaInset(edge: .top) { StorageSaveErrorBanner() }
+        .onOpenURL { url in
+            guard QuickShootLink.matches(url) else { return }
+            selectedTabRaw = TabSelection.shots.rawValue
+            quickShootRequest = true
+        }
     }
 }
 

@@ -16,7 +16,10 @@
 		1E64696F72129E94B27A8785 /* ShotCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47517FD3AE1E223D6734C6CB /* ShotCardView.swift */; };
 		1ECA56BC932E2F9FFCE63AB6 /* Haptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9073D61D5A3DF4BF61FFD7AB /* Haptics.swift */; };
 		23DB3C6EF28DC8AAE618B371 /* CaptureSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C3F924D0E4F03ECC55D21FE /* CaptureSettingsTests.swift */; };
+		256F923050CE78982FA13ADE /* QuickShootLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7DDE95354664AA95E498FC7 /* QuickShootLink.swift */; };
+		25C5777B5C0D39F76234786D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = FAFF1E0FABFCCBCFB90238AD /* Assets.xcassets */; };
 		25FB81A35482AB9F4C15DE35 /* ShotFlowModifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62EC7FF482193C60D2209FED /* ShotFlowModifier.swift */; };
+		27BD14DD9E22BBCC4EAAF93D /* ShotListWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 46ADFEA13DB7B18CF4286528 /* ShotListWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		2982D2BF9B38B42757A8AC71 /* FilmStylePromptTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39262C595E6C09205CA7C6BF /* FilmStylePromptTests.swift */; };
 		2E5ECD9F0FA3F8FB9CC241AF /* RootTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81C9698A509ED42D71FB1527 /* RootTabView.swift */; };
 		35A52488473D9CF94F74EA58 /* Shot.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0E501978889D16338C1BE24 /* Shot.swift */; };
@@ -28,12 +31,14 @@
 		3F35C9C0C7F1A9DC5553BD37 /* CameraRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D9A2BAE74434A56C2619447 /* CameraRecorder.swift */; };
 		4301F6A0696596A7C8AAEE45 /* FilmBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3C02C575D39BB64815784FF /* FilmBar.swift */; };
 		4D21B8AA463B959342129383 /* ClipThumbnailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D76C58778AA070D969E3B132 /* ClipThumbnailView.swift */; };
+		4D7AE7F6FEC30ECCA7DC5A32 /* ModalPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A6CEE62555559623C57AA50 /* ModalPresentation.swift */; };
 		4F4F6D91B75F0D68F0756098 /* CaptureFramingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 977223A4DE801D3BB5F5E9A3 /* CaptureFramingTests.swift */; };
 		5C4FE1217570B860446DA863 /* MovieImporterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DEF91792082840C9C11B500 /* MovieImporterTests.swift */; };
 		5E5B618FEC440413A298DFEC /* ClipPlayerScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5E3482625A9371AE0EDE25E /* ClipPlayerScreen.swift */; };
 		65042A1B65E812DE8CDD135E /* ShotTemplateSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E4CD4789C21CAA5AD276FA1 /* ShotTemplateSheet.swift */; };
 		672DB3A39BC93331A7F51C9F /* MediaImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 664AE32EEA99C983D3224F47 /* MediaImport.swift */; };
 		6A41F1B86754D866F2281412 /* MediaTranscode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0010E187571A3AB14ECCCC93 /* MediaTranscode.swift */; };
+		6B246E7A20D5D69C21065974 /* QuickShootLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7DDE95354664AA95E498FC7 /* QuickShootLink.swift */; };
 		7C2F23CC95455B3E9A77CC88 /* CameraChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88320AFB37A1C5C3AECCA5D1 /* CameraChrome.swift */; };
 		897CE56DB6EB353F35AB3949 /* CaptureSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD3C08ED2FE5D57D75950AA1 /* CaptureSettings.swift */; };
 		8D96CBDA644ED28662C1407A /* ExportSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40CA2B28173BD100C6752C4C /* ExportSession.swift */; };
@@ -45,6 +50,7 @@
 		D2228A85CA00B0A27F2D4673 /* ShotListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F345BA5C98213C00B5D91F71 /* ShotListView.swift */; };
 		DAB4E3BD81AAE03764751D83 /* CameraChromePreviewScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDD7EB1D57BC67C03145BBE4 /* CameraChromePreviewScreen.swift */; };
 		E31D638691D56019F67CE414 /* ClipOptionsSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9BB8D59E84723F29E8A8760 /* ClipOptionsSheet.swift */; };
+		E780991AB7DFCEAC41C3C48A /* QuickShootWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = F34288C7EBC5843E8D8F5ABC /* QuickShootWidget.swift */; };
 		ED3B42E85A145211F4309267 /* AppLocale.swift in Sources */ = {isa = PBXBuildFile; fileRef = 673119B608C24939B34681E9 /* AppLocale.swift */; };
 		FB503617BA07F1EE62950F7D /* ExportSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03F045688B89578B79D9C94A /* ExportSessionTests.swift */; };
 		FE91F3FFC585F62DBF9B1DEF /* ThumbnailLoaderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C95A35F83AD0A2623E9B58B /* ThumbnailLoaderTests.swift */; };
@@ -58,7 +64,28 @@
 			remoteGlobalIDString = E75AD9EEF4C9F3B41F53E0A7;
 			remoteInfo = ShotList;
 		};
+		BF4F0213DC56FE869701C2AA /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 263D3411959987174DF90AA1 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 6569AF9EF7620AA905F85DC6;
+			remoteInfo = ShotListWidget;
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		9B7DE2C6FC846B72C872AFA0 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				27BD14DD9E22BBCC4EAAF93D /* ShotListWidget.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		0010E187571A3AB14ECCCC93 /* MediaTranscode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaTranscode.swift; sourceTree = "<group>"; };
@@ -67,11 +94,13 @@
 		174A3D35CA4D3F5E03135937 /* ShotStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShotStoreTests.swift; sourceTree = "<group>"; };
 		1F62FE93A71CC8A153C903AE /* ExportPackageBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportPackageBuilder.swift; sourceTree = "<group>"; };
 		23B537AF7F5EAF0533FE66B8 /* ShotListApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShotListApp.swift; sourceTree = "<group>"; };
+		2A6CEE62555559623C57AA50 /* ModalPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModalPresentation.swift; sourceTree = "<group>"; };
 		3277FC5C7EAAEBCD489F460B /* ShotListTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = ShotListTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		39262C595E6C09205CA7C6BF /* FilmStylePromptTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilmStylePromptTests.swift; sourceTree = "<group>"; };
 		3C95A35F83AD0A2623E9B58B /* ThumbnailLoaderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThumbnailLoaderTests.swift; sourceTree = "<group>"; };
 		3E511E62E73DE15BE0505C52 /* Film.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Film.swift; sourceTree = "<group>"; };
 		40CA2B28173BD100C6752C4C /* ExportSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportSession.swift; sourceTree = "<group>"; };
+		46ADFEA13DB7B18CF4286528 /* ShotListWidget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = ShotListWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		47517FD3AE1E223D6734C6CB /* ShotCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShotCardView.swift; sourceTree = "<group>"; };
 		4DEF91792082840C9C11B500 /* MovieImporterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MovieImporterTests.swift; sourceTree = "<group>"; };
 		5E4CD4789C21CAA5AD276FA1 /* ShotTemplateSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShotTemplateSheet.swift; sourceTree = "<group>"; };
@@ -90,6 +119,7 @@
 		9073D61D5A3DF4BF61FFD7AB /* Haptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Haptics.swift; sourceTree = "<group>"; };
 		977223A4DE801D3BB5F5E9A3 /* CaptureFramingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureFramingTests.swift; sourceTree = "<group>"; };
 		A5E3482625A9371AE0EDE25E /* ClipPlayerScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipPlayerScreen.swift; sourceTree = "<group>"; };
+		A7DDE95354664AA95E498FC7 /* QuickShootLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickShootLink.swift; sourceTree = "<group>"; };
 		B5B0AA0E228B531616DA2E46 /* HistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryView.swift; sourceTree = "<group>"; };
 		C0E501978889D16338C1BE24 /* Shot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Shot.swift; sourceTree = "<group>"; };
 		C8B276D607BED622DE6060EB /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -101,7 +131,9 @@
 		DD3C08ED2FE5D57D75950AA1 /* CaptureSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureSettings.swift; sourceTree = "<group>"; };
 		E96BA9F062E201E9A304FA95 /* FilmStylePrompt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilmStylePrompt.swift; sourceTree = "<group>"; };
 		E9BB8D59E84723F29E8A8760 /* ClipOptionsSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipOptionsSheet.swift; sourceTree = "<group>"; };
+		F34288C7EBC5843E8D8F5ABC /* QuickShootWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickShootWidget.swift; sourceTree = "<group>"; };
 		F345BA5C98213C00B5D91F71 /* ShotListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShotListView.swift; sourceTree = "<group>"; };
+		FAFF1E0FABFCCBCFB90238AD /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		FCE42D7F06169D67DA903949 /* FilmStyleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilmStyleView.swift; sourceTree = "<group>"; };
 		FDD7EB1D57BC67C03145BBE4 /* CameraChromePreviewScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraChromePreviewScreen.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -170,6 +202,7 @@
 			children = (
 				846E9224F0CEEEFD6C04878B /* ShotList.app */,
 				3277FC5C7EAAEBCD489F460B /* ShotListTests.xctest */,
+				46ADFEA13DB7B18CF4286528 /* ShotListWidget.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -192,8 +225,19 @@
 				9073D61D5A3DF4BF61FFD7AB /* Haptics.swift */,
 				664AE32EEA99C983D3224F47 /* MediaImport.swift */,
 				0010E187571A3AB14ECCCC93 /* MediaTranscode.swift */,
+				2A6CEE62555559623C57AA50 /* ModalPresentation.swift */,
+				A7DDE95354664AA95E498FC7 /* QuickShootLink.swift */,
 			);
 			path = Support;
+			sourceTree = "<group>";
+		};
+		AC6D263908F0DD6FE8790F11 /* ShotListWidget */ = {
+			isa = PBXGroup;
+			children = (
+				FAFF1E0FABFCCBCFB90238AD /* Assets.xcassets */,
+				F34288C7EBC5843E8D8F5ABC /* QuickShootWidget.swift */,
+			);
+			path = ShotListWidget;
 			sourceTree = "<group>";
 		};
 		CAF01DEAA7373258466BA0CE /* Views */ = {
@@ -224,6 +268,7 @@
 			children = (
 				74E8CAFF1245298F76DBA7DA /* ShotList */,
 				065D10131371659B59AFFECD /* ShotListTests */,
+				AC6D263908F0DD6FE8790F11 /* ShotListWidget */,
 				7B255C282E5997904C369743 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -231,6 +276,24 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		6569AF9EF7620AA905F85DC6 /* ShotListWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = EA67D4A3A16A0CA89A1E0B79 /* Build configuration list for PBXNativeTarget "ShotListWidget" */;
+			buildPhases = (
+				3C61BD1D0B3F3C57CE7503BF /* Sources */,
+				3DD8BAF9D2EE499EA723BDD4 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ShotListWidget;
+			packageProductDependencies = (
+			);
+			productName = ShotListWidget;
+			productReference = 46ADFEA13DB7B18CF4286528 /* ShotListWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		AC237D8054E3B1E2BD53F82F /* ShotListTests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = B133DAC713A577304AD12ED9 /* Build configuration list for PBXNativeTarget "ShotListTests" */;
@@ -255,10 +318,12 @@
 			buildPhases = (
 				46B8995224CA629EF8580006 /* Sources */,
 				5FD3EE2D5E6E6CE522B03C51 /* Resources */,
+				9B7DE2C6FC846B72C872AFA0 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				5AA85B40BFCC33A7B3B2F643 /* PBXTargetDependency */,
 			);
 			name = ShotList;
 			packageProductDependencies = (
@@ -277,6 +342,10 @@
 				LastUpgradeCheck = 2660;
 				ORGANIZATIONNAME = Max;
 				TargetAttributes = {
+					6569AF9EF7620AA905F85DC6 = {
+						DevelopmentTeam = QNQR296DT7;
+						ProvisioningStyle = Automatic;
+					};
 					E75AD9EEF4C9F3B41F53E0A7 = {
 						DevelopmentTeam = QNQR296DT7;
 						ProvisioningStyle = Automatic;
@@ -299,11 +368,20 @@
 			targets = (
 				E75AD9EEF4C9F3B41F53E0A7 /* ShotList */,
 				AC237D8054E3B1E2BD53F82F /* ShotListTests */,
+				6569AF9EF7620AA905F85DC6 /* ShotListWidget */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		3DD8BAF9D2EE499EA723BDD4 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				25C5777B5C0D39F76234786D /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		5FD3EE2D5E6E6CE522B03C51 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -327,6 +405,15 @@
 				5C4FE1217570B860446DA863 /* MovieImporterTests.swift in Sources */,
 				3E1FDC85952F705BF268EB9F /* ShotStoreTests.swift in Sources */,
 				FE91F3FFC585F62DBF9B1DEF /* ThumbnailLoaderTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		3C61BD1D0B3F3C57CE7503BF /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				256F923050CE78982FA13ADE /* QuickShootLink.swift in Sources */,
+				E780991AB7DFCEAC41C3C48A /* QuickShootWidget.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -358,6 +445,8 @@
 				09C2763C7D09BF8F3BCB4EB9 /* HistoryView.swift in Sources */,
 				672DB3A39BC93331A7F51C9F /* MediaImport.swift in Sources */,
 				6A41F1B86754D866F2281412 /* MediaTranscode.swift in Sources */,
+				4D7AE7F6FEC30ECCA7DC5A32 /* ModalPresentation.swift in Sources */,
+				6B246E7A20D5D69C21065974 /* QuickShootLink.swift in Sources */,
 				2E5ECD9F0FA3F8FB9CC241AF /* RootTabView.swift in Sources */,
 				35A52488473D9CF94F74EA58 /* Shot.swift in Sources */,
 				1E64696F72129E94B27A8785 /* ShotCardView.swift in Sources */,
@@ -372,6 +461,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		5AA85B40BFCC33A7B3B2F643 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 6569AF9EF7620AA905F85DC6 /* ShotListWidget */;
+			targetProxy = BF4F0213DC56FE869701C2AA /* PBXContainerItemProxy */;
+		};
 		AE142E8345F59C25B0A9067A /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = E75AD9EEF4C9F3B41F53E0A7 /* ShotList */;
@@ -565,6 +659,60 @@
 			};
 			name = Debug;
 		};
+		47E739A9FA58D9149A3BE7BC /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = QNQR296DT7;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ShotListWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.max.ShotList.Widget;
+				PRODUCT_NAME = ShotListWidget;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		9574BB4028F8C5840F280985 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = QNQR296DT7;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ShotListWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.max.ShotList.Widget;
+				PRODUCT_NAME = ShotListWidget;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
 		A4C942FAD9692F89459A6C55 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -629,6 +777,15 @@
 			buildConfigurations = (
 				2DE945DAB3B308DDE86ADF4B /* Debug */,
 				272989059857BE9AA92CE4A7 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		EA67D4A3A16A0CA89A1E0B79 /* Build configuration list for PBXNativeTarget "ShotListWidget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				47E739A9FA58D9149A3BE7BC /* Debug */,
+				9574BB4028F8C5840F280985 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
