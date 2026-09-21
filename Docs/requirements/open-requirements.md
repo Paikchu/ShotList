@@ -374,9 +374,9 @@
 
 ### R-13 · 用户在主屏上想一步开拍时，应能添加小号（2×2）桌面小组件，点一下直接进入「快速拍摄」
 
-**验证状态：** 待验证
+**验证状态：** 模拟器实测（除下列未验证项）；真机上的添加与点击、签名、录制后落到描述页待真机实测
 
-**代码位置：** 待实现。现状：project.yml 只有 ShotList 与 ShotListTests 两个 target，没有小组件扩展；ShotList/Info.plist 没有 URL scheme；快速拍摄只在 App 内——ShotList/Views/ShotListView.swift · `quickShoot()`（[R-11](#r-11)，长按加号的卡片调用它）、ShotList/Views/RootTabView.swift · `TabView` 标签选择
+**代码位置：** ShotListWidget/QuickShootWidget.swift · `QuickShootWidget`（`supportedFamilies([.systemSmall])`、`widgetURL`）；ShotList/Support/QuickShootLink.swift · `QuickShootLink`（应用与小组件两个 target 共用的链接约定）；ShotList/Support/ModalPresentation.swift · `isActive` / `waitUntilIdle`；ShotList/Views/RootTabView.swift · `quickShootRequest`（第 16 行）与 `onOpenURL`（第 67 行）；ShotList/Views/ShotListView.swift · `quickShootRequest` 绑定与 `init`（第 12、38 行）、`onChange(of: quickShootRequest, initial: true)`（第 104 行）、`quickShootFromWidget()`（第 442 行）；project.yml · `ShotListWidget` target、应用的 `CFBundleURLTypes` 与对小组件的依赖；未改动 ShotList/Views/ShotFlowModifier.swift、CameraCaptureView.swift、ClipOptionsSheet.swift
 
 **预期结果：** 主屏可以添加「分镜助手」的小号（2×2 格）小组件，画面是 2×2 宫格图标加「快速拍摄」。点一下：应用打开（冷启动或从后台回来），停在「分镜」标签，在当前影片末尾新建一个空镜头并直接出现它的相机取景页，中间不经过镜头面板；之后的收尾（拍完落到描述页、取消撤销空镜头）与 R-11 完全一致。
 
@@ -429,10 +429,29 @@
 8. 收尾之后正常从图标打开应用：不会再自己弹相机。
 9. 失败判据：点小组件后停在启动页或分镜页、相机没弹出；先弹出镜头面板；小组件库里出现小号以外的尺寸；相机开着时被替换成新相机，或多出没人要的空镜头；收起镜头面板后丢了刚写的字；之后正常打开应用又弹出相机；点了小组件画面被卡在半路（外观变深色、页面不动）。
 
-**实现状态：** 进行中
+**实现状态：** 已实现，待真机验收
 
-**实现说明：** 待实现；完成后记录小组件与应用如何约定链接、弹层如何判定「空下来」，以及对周边功能的取舍。
+**实现说明：**
 
-**验证结果：** 待验证；完成后记录环境、逐步观察结果与验证限制。
+- **小组件：** 新 target `ShotListWidget`（`app-extension`，包标识 `com.max.ShotList.Widget`，作为 ShotList 的依赖随应用嵌入）。`StaticConfiguration` + `TimelineProvider`（只放一条、`policy: .never`），`supportedFamilies([.systemSmall])`；画面是 `square.grid.2x2`（强调色，`widgetAccentable`）加「快速拍摄」，`containerBackground(.fill.tertiary)`。强调色资源单独放一份（取值与应用相同）。小组件 target 的默认隔离设为 `nonisolated`：WidgetKit 的协议要求是非隔离的，应用 target 的默认是主协程。
+- **链接：** `QuickShootLink`（scheme `shotlist`、host `quick-shoot`）同时编入两个 target，小组件 `widgetURL(QuickShootLink.url)`，应用的 Info.plist 注册 URL scheme。
+- **收链接：** `RootTabView.onOpenURL` 把标签切到「分镜」并置位 `quickShootRequest`（`@State`，以 Binding 传给 `ShotListView`）。`ShotListView` 用 `onChange(of:initial:)` 收下并立刻清零；`initial: true` 是为「这一页刚创建」——`TabView` 懒创建页面，应用停在历史 / 导出标签时收到链接就是这种情形。
+- **开拍前的处理：** `quickShootFromWidget()` 先收起 `sheet`（镜头面板）、`isEditingTemplate`（模板页）、`isShowingQuickCard`（卡片），等 400 毫秒（冷启动的转场与弹层收起，同卡片收起后再开相机），再用 `ModalPresentation.waitUntilIdle()` 最多等 2 秒——沿视图控制器树看有没有谁在呈现别的控制器（sheet、全屏页、弹窗、popover、系统选片都算），空了才调用原有的 `quickShoot()`，否则放弃这次请求。不在 SwiftUI 里逐个判断，是因为弹层状态分散在各页（分镜页的确认弹窗，`ShotFlowModifier` 的相机 / 选片 / 导入错误，历史页自己的一套），漏掉一个就会让相机在别的弹层上呈现被系统丢掉、`cover` 卡住（R-11 踩过）。
+- **取舍：** 确认弹窗、改名弹窗开着时点小组件，等不到界面空下来就放弃，不代用户点「取消」；相机、播放页开着时同样不切换。
 
-**实现 commit：** 待提交；完成后填写实际实现提交的完整 SHA。
+**验证结果：**
+
+环境：独立新建的 iPhone 17 / iOS 26.5 模拟器（ShotList-R13，没动其他任务在用的模拟器），Xcode 27.0，Debug 构建成功、无新增告警（仅一条 appintentsmetadataprocessor 的「无 AppIntents 依赖，跳过元数据提取」提示）；另用 `generic/platform=iOS`、关闭签名做了一次真机 SDK 构建，通过。没有跑单元测试（按仓库规范只做集成验证）。影片含 3 个镜头（无片段）；模拟器没有摄像头，相机页停在「需要访问摄像头」前置页或「相机不可用」页。以下都是在模拟器主屏上真实点击小组件，并用落盘的 `films.json` 核对镜头数：
+
+- **验收 2：** 小组件库里「分镜助手」下只有一个「快速拍摄」，没有尺寸分页点（只有一种尺寸）；添加后占主屏 2×2 格，画面是宫格图标加「快速拍摄」。
+- **验收 3：** `simctl terminate` 杀掉应用后点小组件：应用启动、停在分镜页、出现相机页；镜头数 3 → 4，期间没有镜头面板。
+- **验收 4：** 应用在后台停在历史标签时点小组件：回到应用后切到分镜标签并出现相机页。另：杀掉应用时停在历史标签（冷启动会恢复该标签），点小组件——分镜页此前从未创建，同样切到分镜并进相机（`initial: true` 这条路径）。
+- **验收 5：** 打开镜头 1 的面板、在内容框输入文字（键盘开着），回主屏点小组件：面板收起、进入相机；取消后回到分镜页，镜头 1 的内容「widgettest」还在（落盘核对），镜头数回到 3。另：长按加号展开的快速拍摄卡片开着时点小组件，同样收起卡片并进相机。
+- **验收 6：** 相机页开着时回主屏再点小组件：回到原来的相机页，镜头数保持 4（没有新增），没有第二个相机；点「取消」后镜头数回到 3，之后小组件仍能正常进相机（`cover` 没有卡住）。
+- **验收 7（前半）：** 各次相机页点「取消」，回到分镜页、空镜头撤销（镜头数 3）、没有面板弹出。
+- **验收 8：** 收尾后直接点应用图标打开：停在分镜页，不弹相机，镜头数不变。
+- **回归（R-11）：** 长按加号仍展开「快速拍摄」卡片。
+
+**未验证：** ① 真机：小组件在真机主屏上的添加与点击；新增小组件包标识的签名与配置文件（首次需要 Xcode 自动签名注册 `com.max.ShotList.Widget`）；录制一段点「使用」后落到描述页（验收 7 后半）。② 经小组件走「导入」落到描述页——本条没有重跑，这一段与 R-11 是同一条路径（点小组件之后调用的就是 `quickShoot()`），没有改动。③ 深色与着色（Tinted）主屏下小组件的外观。④ VoiceOver 对小组件的朗读。⑤ 确认弹窗开着时点小组件的放弃分支（代码级确认）。以上待真机走查后补记，通过后再移入已交付。
+
+**实现 commit：** 4f19fb81633fea08a4b964c48fe75c7819f64d29
