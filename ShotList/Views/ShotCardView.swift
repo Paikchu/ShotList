@@ -3,6 +3,9 @@ import SwiftUI
 /// 分镜卡片 —— 需求里的「可点击添加视频的模块」。
 ///
 /// 整张卡片是一个 `Button`，点击后弹出拍摄 / 导入 / 片段管理。
+/// 还没拍的镜头上，虚线加号是另一个独立的点击目标（`onCapture`），点它直接进这个镜头的相机；
+/// 它不能嵌在卡片那个 `Button` 的标签里（内层按钮会被外层吞掉或双触发），
+/// 所以是叠在卡片之上、与缩略图位重合的一层（见 `captureTarget`）。
 /// 卡片上只保留编号与分镜内容，时长压在缩略图上、条数标在缩略图左上角，
 /// 拍摄时间、总时长、状态徽标都不在这里重复，避免一行字旁边挂三四个标签。
 /// 还没拍的镜头也不写「点击拍摄或导入视频」——虚线框加号与可点的整卡已经说明可以加视频，
@@ -31,11 +34,23 @@ struct ShotCardView: View {
     var displayClip: ShotClip? = nil
     /// 覆盖角标条数的口径（如「只数当天拍下的几条」）；传 `nil` 时数全部片段。
     var takeCountOverride: Int? = nil
+    /// 直接拍这个镜头。只对还没有视频的镜头生效（虚线加号成为独立点击目标，
+    /// 并在无障碍里多一个「拍摄」操作）；传 `nil` 则加号与整卡一样只是打开面板。
+    var onCapture: (() -> Void)? = nil
     var onTap: () -> Void
 
     /// 实际展示的片段：外部指定优先，否则回落到最近一条
     private var effectiveClip: ShotClip? { displayClip ?? shot.latestClip }
     private var effectiveTakeCount: Int { takeCountOverride ?? shot.clipCount }
+
+    /// 缩略图走到虚线加号那一支的条件是 `url == nil`（`ClipThumbnailView.isRecorded`），
+    /// 这里用同一个判据，加号在哪儿出现、哪儿可点永远一致。
+    private var captureAction: (() -> Void)? { clipURL == nil ? onCapture : nil }
+
+    /// 卡片内容与卡片边缘的距离；叠在上面的拍摄点击目标要按它对齐缩略图。
+    private static let contentInset = SLSpacing.medium
+    /// 无障碍字号下缩略图改为上下布局时的尺寸
+    private static let stackedThumbnailSize = CGSize(width: 148, height: 100)
 
     var accessibilityDescription: String {
         var parts = ["镜头 \(shot.number)"]
@@ -54,7 +69,7 @@ struct ShotCardView: View {
     var body: some View {
         Button(action: onTap) {
             content
-                .padding(SLSpacing.medium)
+                .padding(Self.contentInset)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
                     Color(.secondarySystemGroupedBackground),
@@ -74,13 +89,38 @@ struct ShotCardView: View {
         .accessibilityLabel(accessibilityDescription)
         .accessibilityHint(shot.accessibilityActionHint)
         .accessibilityAddTraits(.isButton)
+        .accessibilityActions {
+            // 卡片对读屏是一个合并的按钮，加号不会单独被读到；用自定义操作补上，默认操作仍是打开面板
+            if let captureAction {
+                Button("拍摄", action: captureAction)
+            }
+        }
+        .overlay(alignment: typeSize.isAccessibilitySize ? .topLeading : .leading) {
+            if let captureAction {
+                captureTarget(action: captureAction)
+            }
+        }
+    }
+
+    /// 叠在缩略图位置上的透明点击目标，大小与位置跟 `content` 里的缩略图重合。
+    /// 对读屏隐藏——它的功能由卡片上的「拍摄」自定义操作承担，不多出一个元素。
+    private func captureTarget(action: @escaping () -> Void) -> some View {
+        let size = typeSize.isAccessibilitySize ? Self.stackedThumbnailSize : SLSize.thumbnail
+        return Button(action: action) {
+            Color.clear
+                .frame(width: size.width, height: size.height)
+                .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(ThumbnailCaptureButtonStyle())
+        .padding(Self.contentInset)
+        .accessibilityHidden(true)
     }
 
     @ViewBuilder
     private var content: some View {
         if typeSize.isAccessibilitySize {
             VStack(alignment: .leading, spacing: SLSpacing.medium) {
-                thumbnail(size: CGSize(width: 148, height: 100))
+                thumbnail(size: Self.stackedThumbnailSize)
                 details
             }
         } else {

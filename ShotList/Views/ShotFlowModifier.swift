@@ -238,7 +238,8 @@ struct ShotFlowModifier: ViewModifier {
         finishQuickShoot()
     }
 
-    /// 列表直接进相机。请求来自加号菜单，此刻没有别的弹层，不必排队。
+    /// 列表直接进相机。请求来自列表本身（加号卡片、未拍镜头的虚线加号），
+    /// 此刻列表上没有别的弹层，不必排队。
     private func startCapture(_ request: ShotCaptureRequest) {
         guard let shot = store.shot(withID: request.shotID) else { return }
         quickShotID = request.isQuick ? shot.id : nil
