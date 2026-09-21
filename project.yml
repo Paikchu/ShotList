@@ -77,6 +77,48 @@ targets:
         NSCameraUsageDescription: 用于录制分镜视频。
         NSMicrophoneUsageDescription: 用于录制视频的现场声音。
         NSPhotoLibraryUsageDescription: 用于从相册导入视频。
+        # 桌面小组件的「快速拍摄」用它打开应用（见 QuickShootLink.swift）
+        CFBundleURLTypes:
+          - CFBundleURLName: com.max.ShotList
+            CFBundleURLSchemes:
+              - shotlist
+    dependencies:
+      - target: ShotListWidget
+  ShotListWidget:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: ShotListWidget
+        excludes:
+          - "Info.plist"
+      # 应用与小组件共用的链接约定
+      - path: ShotList/Support/QuickShootLink.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.max.ShotList.Widget
+        PRODUCT_NAME: ShotListWidget
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        TARGETED_DEVICE_FAMILY: "1"
+        DEVELOPMENT_TEAM: QNQR296DT7
+        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
+        SKIP_INSTALL: YES
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_USER_SCRIPT_SANDBOXING: YES
+        # WidgetKit 的协议要求是非隔离的；小组件里没有需要主协程的状态
+        SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
+    info:
+      path: ShotListWidget/Info.plist
+      properties:
+        CFBundleDisplayName: 分镜助手
+        CFBundleName: ShotListWidget
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
   ShotListTests:
     type: bundle.unit-test
     platform: iOS
