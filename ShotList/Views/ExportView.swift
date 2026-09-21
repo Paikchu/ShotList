@@ -138,8 +138,8 @@ struct ExportView: View {
             .accessibilityLabel("格式")
             .accessibilityValue(transcodeOption.title)
 
-            if let progress = export.progress {
-                buildProgress(progress)
+            if export.isBuilding {
+                buildProgress
             }
 
             if store.recordedCount == 0 {
@@ -181,19 +181,52 @@ struct ExportView: View {
         .padding(.vertical, SLSpacing.small)
     }
 
-    /// 转码一段素材要几十秒，进度得说明「动到哪了」——
-    /// 只有一个转圈的话，包越大越像卡死。
-    private func buildProgress(_ progress: ExportProgress) -> some View {
-        VStack(alignment: .leading, spacing: SLSpacing.tiny) {
-            ProgressView(value: progress.fraction)
+    /// 打包进度 + 「停止」。
+    ///
+    /// 转码一段素材要几十秒，进度得说明「动到哪了」——只有一个转圈的话，包越大越像卡死；
+    /// 素材多、选了转码时整个过程是分钟级，用户得有办法直接停下，而不是只能等或者退出应用。
+    ///
+    /// 两种时候没有进度可报，改写一行「转圈 + 文字」：原片直接复制的阶段，以及点了「停止」之后——
+    /// 当前那一段转码要先做完才会真的停下（见 `ExportSession.isStopping`），
+    /// 这段时间写「停止中」并收起按钮，免得点了没反应又点。
+    private var buildProgress: some View {
+        HStack(spacing: SLSpacing.medium) {
+            Group {
+                if let progress = export.progress {
+                    VStack(alignment: .leading, spacing: SLSpacing.tiny) {
+                        ProgressView(value: progress.fraction)
+                        Text(progress.text)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    HStack(spacing: SLSpacing.small) {
+                        ProgressView().controlSize(.small)
+                        Text(progressLabel)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(progressLabel)
+            .accessibilityValue(export.progress.map { "已完成 \(Int($0.fraction * 100))%" } ?? "")
 
-            Text(progress.text)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            if !export.isStopping {
+                // 列表行里的按钮要用有边框的样式，点击才只落在按钮上而不是整行
+                Button("停止") {
+                    Haptics.impact(.light)
+                    export.stop()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(progress.text)
-        .accessibilityValue("已完成 \(Int(progress.fraction * 100))%")
+    }
+
+    private var progressLabel: String {
+        export.isStopping ? "停止中" : (export.progress?.text ?? "打包中")
     }
 
     private func resultSection(_ package: ExportPackage) -> some View {
