@@ -122,22 +122,43 @@ struct CameraCaptureView: View {
 
     // MARK: - 分支内容
 
+    /// 取景层是否该在场：有相机权限、不在说明页、会话已就绪。
+    private var showsCaptureLayer: Bool {
+        guard authorization != .denied, authorization != .restricted, !showsPrePermission else { return false }
+        return recorder.status == .ready
+    }
+
+    /// 取景层在回看期间**不撤**，回看盖在它上面，它只是藏起来。
+    ///
+    /// 撤掉取景层会摘预览层的会话，那是一次同步等待采集图重建的会话配置提交，
+    /// 刚录完时要几秒（见 `CameraRecorder.releasePreviewLayer`）；
+    /// 回到取景重拍时还得再挂一遍。取景层一直在，暂停 / 恢复会话就只是队列上的事，
+    /// 不会碰主线程。
     @ViewBuilder
     private var content: some View {
-        if let reviewURL {
-            reviewScreen(url: reviewURL)
-        } else if authorization == .denied || authorization == .restricted {
-            permissionDeniedScreen
-        } else if showsPrePermission {
-            prePermissionScreen
-        } else {
-            switch recorder.status {
-            case .ready:
+        ZStack {
+            if showsCaptureLayer {
                 captureScreen
-            case .unavailable(let message):
-                unavailableScreen(message: message)
-            case .idle, .configuring:
-                loadingScreen
+                    .opacity(reviewURL == nil ? 1 : 0)
+                    .allowsHitTesting(reviewURL == nil)
+                    .accessibilityHidden(reviewURL != nil)
+            }
+
+            if let reviewURL {
+                reviewScreen(url: reviewURL)
+            } else if authorization == .denied || authorization == .restricted {
+                permissionDeniedScreen
+            } else if showsPrePermission {
+                prePermissionScreen
+            } else {
+                switch recorder.status {
+                case .ready:
+                    EmptyView()
+                case .unavailable(let message):
+                    unavailableScreen(message: message)
+                case .idle, .configuring:
+                    loadingScreen
+                }
             }
         }
     }

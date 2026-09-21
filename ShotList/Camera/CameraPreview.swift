@@ -37,7 +37,7 @@ struct CameraPreview: UIViewRepresentable {
     }
 
     static func dismantleUIView(_ uiView: CameraPreviewView, coordinator: ()) {
-        uiView.previewLayer.session = nil
+        CameraRecorder.releasePreviewLayer(uiView.previewLayer)
     }
 }
 

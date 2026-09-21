@@ -305,9 +305,28 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
         previewAngleObservation = nil
         captureAngleObservation = nil
         rotationCoordinator = nil
-        previewLayer?.session = nil
+        if let layer = previewLayer { Self.releasePreviewLayer(layer) }
         previewLayer = nil
     }
+
+    /// 把预览层从会话上摘下来，摘的动作放到后台线程做。
+    ///
+    /// `AVCaptureVideoPreviewLayer.session = nil` 不是一句普通赋值：它会触发一次会话配置提交
+    /// （`_commitConfigurationAndSkipWait:` → `_buildAndRunGraph:skipWait:`），并在**调用线程**上
+    /// 同步等采集图重建完成。真机实测（iPhone 17 Pro Max、iOS 27.0，1080p30 HEVC，防抖 `.auto`
+    /// 实际选到 cinematicExtendedEnhanced），刚录完一条就摘，这一步耗时约 9 秒，
+    /// 放在主线程上就是「点停止之后整个界面冻结 9 秒」。
+    ///
+    /// 图层由闭包持有到摘完为止，它最后一次释放也落在后台线程，不会在视图销毁时再回主线程补一次。
+    nonisolated static func releasePreviewLayer(_ layer: AVCaptureVideoPreviewLayer) {
+        nonisolated(unsafe) let layer = layer
+        previewTeardownQueue.async { layer.session = nil }
+    }
+
+    private nonisolated static let previewTeardownQueue = DispatchQueue(
+        label: "com.max.ShotList.camera.preview-teardown",
+        qos: .userInitiated
+    )
 
     // MARK: - 录制
 
