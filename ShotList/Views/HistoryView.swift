@@ -18,6 +18,8 @@ struct HistoryView: View {
     @SceneStorage("root.selectedTab") private var selectedTabRaw: String = RootTabView.TabSelection.shots.rawValue
 
     @State private var sheet: ShotSheet?
+    /// 未拍镜头的虚线加号：交给 `shotFlow` 直接开相机（与分镜页一致）
+    @State private var captureRequest: ShotCaptureRequest?
     /// 默认看「全部」：进历史页就是想看这部影片一共拍了些什么。
     @State private var filter: Filter = .all
 
@@ -63,7 +65,7 @@ struct HistoryView: View {
             // 标题与右侧内容同行（inlineLarge），不单独占一行；三页起始位置一致
             .toolbarTitleDisplayMode(.inlineLarge)
         }
-        .shotFlow(sheet: $sheet)
+        .shotFlow(sheet: $sheet, captureRequest: $captureRequest)
     }
 
     // MARK: - 数据
@@ -199,7 +201,11 @@ struct HistoryView: View {
     private func card(for shot: Shot) -> some View {
         ShotCardView(
             shot: shot,
-            clipURL: store.clipURL(for: shot)
+            clipURL: store.clipURL(for: shot),
+            onCapture: {
+                Haptics.impact(.light)
+                captureRequest = ShotCaptureRequest(shotID: shot.id)
+            }
         ) {
             Haptics.impact(.light)
             sheet = .options(shot)

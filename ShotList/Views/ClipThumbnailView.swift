@@ -4,7 +4,8 @@ import UIKit
 /// 分镜卡片左侧的视频位。
 ///
 /// - 已拍：显示视频首帧，右下角压一条时长，同一个镜头拍了多条时左上角标注条数；
-/// - 未拍：显示虚线框 + 加号，提示这里可以添加视频。
+/// - 未拍：显示虚线框 + 加号，提示这里可以添加视频；
+///   在分镜卡片上这个加号是独立的「拍摄」点击目标，由 `ShotCardView` 叠一层在它上面（这里只管画）。
 ///
 /// 角标一律用 `overlay(alignment:)` 叠在画面上，而不是在 `ZStack` 里用
 /// 无限画幅对齐 —— 首帧是 `scaledToFill` 铺满的，会比外框高出一截，
@@ -126,6 +127,18 @@ struct ThumbnailChip<Content: View>: View {
             .padding(.vertical, 2)
             .background(.black.opacity(0.55), in: Capsule())
             .padding(4)
+    }
+}
+
+/// 未拍镜头缩略图位上的「拍摄」点击目标：自己不画东西，按下时在虚线框上盖一层浅色作反馈。
+struct ThumbnailCaptureButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(
+                Color.accentColor.opacity(configuration.isPressed ? 0.18 : 0),
+                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+            )
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 

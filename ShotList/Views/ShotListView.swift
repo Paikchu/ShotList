@@ -155,7 +155,12 @@ struct ShotListView: View {
                 shot: shot,
                 clipURL: store.clipURL(for: shot),
                 showsNumber: false,
-                isNew: shot.id == flashID
+                isNew: shot.id == flashID,
+                onCapture: {
+                    // 未拍镜头的虚线加号：不经过镜头面板，直接进这个镜头的相机
+                    Haptics.impact(.light)
+                    captureRequest = ShotCaptureRequest(shotID: shot.id)
+                }
             ) {
                 Haptics.impact(.light)
                 sheet = .options(shot)
