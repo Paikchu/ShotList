@@ -24,6 +24,7 @@ struct ShotListView: View {
     @State private var isEditingTitle = false
     @State private var titleDraft = ""
     @State private var isConfirmingRemake = false
+    @State private var isConfirmingDelete = false
     @State private var isEditingTemplate = false
     /// 影片菜单里的「剪辑风格」页。调试参数 `-preselectStylePage` 让它在启动后自己弹出（见 `openPreselectedStyle`）。
     @State private var isEditingStyle = false
@@ -64,7 +65,8 @@ struct ShotListView: View {
             .filmActionDialogs(
                 isEditingTitle: $isEditingTitle,
                 titleDraft: $titleDraft,
-                isConfirmingRemake: $isConfirmingRemake
+                isConfirmingRemake: $isConfirmingRemake,
+                isConfirmingDelete: $isConfirmingDelete
             )
             .alert("删除镜头？", isPresented: deletionBinding, presenting: pendingDeletion) { shot in
                 Button("删除", role: .destructive) { store.delete(shot) }
@@ -400,7 +402,8 @@ struct ShotListView: View {
                 titleDraft: $titleDraft,
                 isConfirmingRemake: $isConfirmingRemake,
                 isEditingTemplate: $isEditingTemplate,
-                isEditingStyle: $isEditingStyle
+                isEditingStyle: $isEditingStyle,
+                isConfirmingDelete: $isConfirmingDelete
             ) {
                 Label("影片", systemImage: "ellipsis.circle")
             }

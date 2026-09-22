@@ -25,6 +25,7 @@ struct FilmBar: View {
     @State private var isEditingTitle = false
     @State private var titleDraft = ""
     @State private var isConfirmingRemake = false
+    @State private var isConfirmingDelete = false
 
     /// 白条自身的实际高度（含内边距），用来把悬浮面板锚在它的下沿。
     @State private var cardHeight: CGFloat = 0
@@ -66,7 +67,8 @@ struct FilmBar: View {
         .filmActionDialogs(
             isEditingTitle: $isEditingTitle,
             titleDraft: $titleDraft,
-            isConfirmingRemake: $isConfirmingRemake
+            isConfirmingRemake: $isConfirmingRemake,
+            isConfirmingDelete: $isConfirmingDelete
         )
     }
 
@@ -130,6 +132,10 @@ struct FilmBar: View {
 
                 actionRow(title: "新建影片", systemImage: "film.stack") {
                     isConfirmingRemake = true
+                }
+
+                actionRow(title: "删除影片", systemImage: "trash", isDestructive: true) {
+                    isConfirmingDelete = true
                 }
             }
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
@@ -211,9 +217,11 @@ struct FilmBar: View {
     private func actionRow(
         title: String,
         systemImage: String,
+        isDestructive: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
-        Button {
+        let tint: Color = isDestructive ? .red : .primary
+        return Button {
             Haptics.impact(.light)
             isExpanded = false
             action()
@@ -221,13 +229,13 @@ struct FilmBar: View {
             HStack(spacing: SLSpacing.small) {
                 Image(systemName: systemImage)
                     .font(.subheadline)
-                    .foregroundStyle(Color.primary)
+                    .foregroundStyle(tint)
                     .frame(width: 20)
                     .accessibilityHidden(true)
 
                 Text(title)
                     .font(.body)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(tint)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(minHeight: SLSize.minTouchTarget)
@@ -364,6 +372,7 @@ struct FilmSwitcherMenu<MenuLabel: View>: View {
     @Binding var isConfirmingRemake: Bool
     @Binding var isEditingTemplate: Bool
     @Binding var isEditingStyle: Bool
+    @Binding var isConfirmingDelete: Bool
 
     @ViewBuilder var label: () -> MenuLabel
 
@@ -410,6 +419,13 @@ struct FilmSwitcherMenu<MenuLabel: View>: View {
                 // 只写动作，后果交给确认弹层
                 Label("新建影片", systemImage: "film.stack")
             }
+
+            Button(role: .destructive) {
+                Haptics.impact(.light)
+                isConfirmingDelete = true
+            } label: {
+                Label("删除影片", systemImage: "trash")
+            }
         } label: {
             label()
         }
@@ -441,6 +457,7 @@ private struct FilmActionDialogs: ViewModifier {
     @Binding var isEditingTitle: Bool
     @Binding var titleDraft: String
     @Binding var isConfirmingRemake: Bool
+    @Binding var isConfirmingDelete: Bool
 
     @State private var isPickingTemplate = false
 
@@ -466,6 +483,12 @@ private struct FilmActionDialogs: ViewModifier {
             .sheet(isPresented: $isPickingTemplate) {
                 FilmTemplatePicker { template in remake(from: template) }
             }
+            .alert("删除影片？", isPresented: $isConfirmingDelete) {
+                Button("删除", role: .destructive) { deleteFilm() }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text(deleteFilmMessage)
+            }
     }
 
     private func commitTitle() {
@@ -479,10 +502,21 @@ private struct FilmActionDialogs: ViewModifier {
         Haptics.success()
     }
 
+    private func deleteFilm() {
+        store.deleteCurrentFilm()
+        Haptics.warning()
+    }
+
     /// 「新建影片」不会覆盖当前影片，只用一句话说清「东西去哪了」。
     private var remakeMessage: String {
         guard let film = store.currentFilm, film.hasTitle else { return "当前影片将保留在影片库。" }
         return "《\(film.trimmedTitle)》将保留在影片库。"
+    }
+
+    /// 说清镜头与视频会一起删除、且无法恢复；当前影片没有镜头时不提镜头数。
+    private var deleteFilmMessage: String {
+        guard let film = store.currentFilm, !film.shots.isEmpty else { return "无法恢复。" }
+        return "\(film.shots.count) 个镜头与视频将被删除，无法恢复。"
     }
 }
 
@@ -490,13 +524,15 @@ extension View {
     func filmActionDialogs(
         isEditingTitle: Binding<Bool>,
         titleDraft: Binding<String>,
-        isConfirmingRemake: Binding<Bool>
+        isConfirmingRemake: Binding<Bool>,
+        isConfirmingDelete: Binding<Bool>
     ) -> some View {
         modifier(
             FilmActionDialogs(
                 isEditingTitle: isEditingTitle,
                 titleDraft: titleDraft,
-                isConfirmingRemake: isConfirmingRemake
+                isConfirmingRemake: isConfirmingRemake,
+                isConfirmingDelete: isConfirmingDelete
             )
         )
     }
