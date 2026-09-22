@@ -48,6 +48,7 @@
 | ☑ | P2-53 | [应用内没有任何删除整部影片的入口，影片记录只增不减](#p2-53) |
 | ☑ | P2-55 | [快速拍摄在相机页改走「导入」后取消选片，新建的空镜头不会被撤销](#p2-55) |
 | ☑ | P2-56 | [批量添加入口移除后，ShotStore.addShots(count:) 只剩测试在调用](#p2-56) |
+| ☑ | P2-58 | [选片器关闭时的快速拍摄收尾依赖两个 onChange 的执行顺序，顺序颠倒时导入会被静默丢弃](#p2-58) |
 
 ☑ 修复并验证通过；☒ 经实测无需修复而关闭（没有修复提交，条目内写明依据与重开条件）。
 
@@ -1627,3 +1628,45 @@
 **验证结果：** 环境：Xcode 27.0。`xcodebuild -scheme ShotList -destination 'generic/platform=iOS Simulator' -configuration Debug build` → `BUILD SUCCEEDED`，无新增告警；另跑 `xcodebuild -scheme ShotList -destination 'id=<模拟器>' build-for-testing` 确认改动后的 `ShotStoreTests.swift` 仍能正常编译（`TEST BUILD SUCCEEDED`），未运行测试。全仓检索 `grep -rn "addShots" ShotList ShotListTests ShotListWidget` 无任何结果，确认接口与其测试已一并删除、没有遗留引用。
 
 **修复 commit：** 1a6318a9b141cb45c5d5d690164dc091ef14bb18
+
+<a id="p2-58"></a>
+
+### P2-58 · 选片器关闭时的快速拍摄收尾依赖两个 onChange 的执行顺序，顺序颠倒时导入会被静默丢弃
+
+**验证状态：** 模拟器实测（iPhone 17 Pro Max / iOS 26.5）；「回调顺序颠倒」本身在当前系统上无法人为触发，其鲁棒性由推迟执行的构造保证，见验证结果
+
+**代码位置：** ShotList/Views/ShotFlowModifier.swift · `.onChange(of: pickerItems)`（第 144–156 行）、`.onChange(of: isPickerPresented)`（第 157–165 行，第 163 行 `pickerTarget = nil`、第 164 行 `finishQuickShoot()`）、`finishQuickShoot()`（第 300–310 行）；ShotList/Models/ShotStore.swift · `addClip`（第 614 行 `targetMissing`）
+
+**问题详情**
+
+**预期行为：** 用户在选片器里选中视频时，无论系统先通知「选择变了」还是先通知「选片器关了」，导入都照常进行；只有真正取消选片时才撤销快速拍摄新建的空镜头。
+
+**实际行为：** [P2-55](resolved-issues.md#p2-55) 的修复新增了 `.onChange(of: isPickerPresented)`：选片器一关就把 `pickerTarget` 置空并调用 `finishQuickShoot()`。它能正确区分「选中」与「取消」，完全依赖一个前提——选中视频时 `.onChange(of: pickerItems)` 必须**先于**它执行，先清空 `quickShotID`、取走 `pickerTarget` 开始导入。这个先后顺序是 SwiftUI 的实现细节，没有写进文档。一旦顺序颠倒：
+
+1. **普通导入**（镜头面板里的「导入」）：第 163 行先把 `pickerTarget` 置空，随后 `pickerItems` 的 handler 在 `guard let target = pickerTarget` 处直接返回——**选中的视频被静默丢弃**，没有任何提示。这一句对修复 P2-55 本身并不需要，却把影响面扩大到了所有导入。
+2. **快速拍摄接力的导入**：`finishQuickShoot()` 先执行，此时 `quickShotID` 仍在、镜头还没有片段，于是 `store.delete(shot)` 把镜头删掉；随后导入因 `ShotStore.addClip` 找不到目标镜头而失败，提示「镜头已被删除」。
+
+**根因证据：** 第 157–165 行在选片器关闭的同一次更新里同步做出「是否取消」的判断，而判断所依据的 `quickShotID` / `pickerTarget` 要等另一个 `onChange` 执行后才是最终值。
+
+**影响范围与定级依据：** P2-55 修复时已在 iOS 26.5 模拟器上实测两条路径都正常，说明当前系统里 `pickerItems` 的回调先执行，**目前不会触发**；风险在于系统版本变化后回调顺序改变，届时所有导入都可能静默失效。属于有明确影响的实现缺陷，定为 P2。
+
+**复现方法**
+
+1. 代码级验证：在 `.onChange(of: isPickerPresented)` 与 `.onChange(of: pickerItems)` 里各加一条带时间戳的探针，模拟器上选中一段视频，确认当前的执行顺序是 `pickerItems` 在先。
+2. 顺序颠倒的推演：把第 157–165 行的逻辑挪到 `pickerItems` 的 handler 之前执行（或临时交换两个 `onChange` 的读写时机），观察普通导入被丢弃、快速拍摄导入报「镜头已被删除」。
+3. 预期正确结果：两种顺序下导入都照常进行，只有取消选片时才撤销空镜头。
+4. 验证完成后移除探针。
+
+**修复状态：** 已修复
+
+**修复说明：** 去掉 `.onChange(of: isPickerPresented)` 里的 `pickerTarget = nil`，并把 `finishQuickShoot()` 改为 `DispatchQueue.main.async` 推迟到下一轮主线程执行。前者是修复 P2-55 用不到、却会在顺序颠倒时让**所有**导入静默丢弃的那一句——陈旧的 `pickerTarget` 本来就无害：下次呈现选片器前由 `drainQueue` 重新赋值，`pickerItems` 的 guard 也要求非空选择。后者让「是否取消」的判断总在同一次更新的全部 `onChange` 回调之后执行：选中视频时 `pickerItems` 的回调必然已清空 `quickShotID`，`finishQuickShoot()` 是空操作；取消时 `quickShotID` 仍在，照常撤销空镜头。只改这一个 handler，P2-55 的行为不变。
+
+**验证结果：** 环境：Xcode 27.0，iPhone 17 Pro Max 模拟器 / iOS 26.5（无摄像头，相机页走「需要访问摄像头 → 导入」），`ffmpeg` 生成 3 秒测试视频并 `simctl addmedia` 加入相册。在两个 `onChange` 与推迟块里各加一条带标记的临时 `NSLog`，用 `log stream` 记录实际执行顺序；三条路径均通过界面实际操作完成（长按加号的真实手势在本次可以触发，未使用启动参数探针）：
+
+1. **快速拍摄 → 导入 → 取消选片**：列表保持原来的 6 个镜头，没有残留空镜头（P2-55 行为保持）。顺序：`dismiss-sync(target=1, quick=1)` → `dismiss-deferred(quick=1)` → 撤销；`pickerTarget` 不再被置空。
+2. **快速拍摄 → 导入 → 选中视频**：新建「镜头 07」并带上 0:03 片段（片段 1 · 3 秒），描述页自动打开且光标在「内容」框。顺序：`pickerItems(count=1, target=1, quick=1)` → `dismiss-sync(target=0, quick=0)` → `pickerItems(count=0)`（回调里清空选择） → `dismiss-deferred(quick=0)`，推迟块排在最后、读到的是最终状态。
+3. **镜头面板普通「导入」（原先那句 `pickerTarget = nil` 威胁的路径）**：镜头 4 从虚线加号变为带 0:03 片段。顺序：`pickerItems(target=1, quick=0)` → `dismiss-sync` → `dismiss-deferred(quick=0)`，收尾为空操作。
+
+当前系统上「选择变了」先于「选片器关了」通知，所以旧写法也能跑通；本修复消除的是对这一先后顺序的依赖。**验证限制**：无法在当前系统上人为制造「顺序颠倒」，这部分的正确性来自构造——推迟块在本次更新的全部回调之后执行，上面三组日志都显示它排在最后。临时 `NSLog` 探针已全部移除（`grep -n "PROBE58\|NSLog" ShotList/Views/ShotFlowModifier.swift` 无结果），移除后 `generic/platform=iOS Simulator` 构建 `BUILD SUCCEEDED`、无新增告警。模拟器里的「夏日vlog」测试影片因此多了镜头 07、镜头 4 多了一段片段，属于种子测试数据，可用 `Tools/seed-simulator.py` 重置。
+
+**修复 commit：** 406ee2933fb5bb63fbc8292948c903c9a16abd4b
