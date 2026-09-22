@@ -87,10 +87,10 @@
 5. 预期正确结果：两条路径写入的上限一致，都按码率放宽。
 6. 验证完成后移除探针。
 
-**修复状态：** 未修复
+**修复状态：** 待验证
 
-**修复说明：** 待修复；最小改法是把首次配置路径上的 `updateMaximumFileSize()` 挪到外层 `commitConfiguration()` 之后（例如 `configureIfNeeded` 返回成功后、`start()` 里 `startRunning()` 之前再调一次），让它读到已提交的格式；`applyFormatLocked` 内部那次调用保留给单独改画质的路径。
+**修复说明：** 按最小改法实现：`start()` 里 `configureIfNeeded` 返回 `.success` 之后、`configureAudioSession()` / `session.startRunning()` 之前，加一次 `self.updateMaximumFileSize()`；这一步已经在外层 `commitConfiguration()`（`configureIfNeeded` 的 `defer`）执行之后，能读到已提交的格式。`applyFormatLocked` 内部那次调用原样保留，给单独改画质（`applyCaptureSettings`）与切摄像头（`switchCamera`）两条路径用——那两条路径本来就不在嵌套配置块里，不受影响。新增调用与原有调用一样只在 `sessionQueue` 上执行。`configureIfNeeded` 已配置过（`isConfigured` 为真）时也会走到这次新增调用，属于对同一份已生效格式的重复估算，结果不变，无副作用。
 
-**验证结果：** 待验证；需真机按上面的探针步骤确认推断是否成立，再决定是否修复。
+**验证结果：** 代码级确认：已读代码确认新调用点在外层 `commitConfiguration()` 之后、`sessionQueue` 内执行。Debug 构建 `BUILD SUCCEEDED`，无新增告警。**未验证**：本环境模拟器没有摄像头，`configureIfNeeded` 会直接返回 `.failure(CameraError.noCameraAvailable)`，`switch` 走不到本次改动所在的 `.success` 分支，因此完全没有机会触发这次改动，复现方法第 1–4 步的探针数值均未能在此环境验证；`outputSettings(for:)` 在嵌套配置块内的确切返回值这一推断本身仍未证实，需要真机按原复现方法确认。
 
-**修复 commit：** 待提交；完成后填写实际修复提交的完整 SHA。
+**修复 commit：** a9a9d13dcc65ae2948f19274817f5e8d8b8a193e
