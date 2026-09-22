@@ -1,6 +1,6 @@
 # 分镜助手 · 已修复记录
 
-更新日期：2026-09-21。已修复问题保留编号、详情、复现步骤、验证结果和修复提交以便追溯；经实测无需修复而关闭的条目同样保留在此，标 ☒。按优先级及编号排序。未关闭问题见 [open-issues](open-issues.md)。
+更新日期：2026-09-22。已修复问题保留编号、详情、复现步骤、验证结果和修复提交以便追溯；经实测无需修复而关闭的条目同样保留在此，标 ☒。按优先级及编号排序。未关闭问题见 [open-issues](open-issues.md)。
 
 ## 汇总 Checklist
 
@@ -44,6 +44,7 @@
 | ☑ | P2-49 | [体积上限随画质放宽后磁盘可能被录满，而写满时仍然只是「自己停了」且没有任何说明](#p2-49) |
 | ☑ | P2-50 | [录制失败时残缺的临时视频不会被删除，一直占着磁盘到下次启动](#p2-50) |
 | ☑ | P2-51 | [打包途中输入变化使结果被丢弃后，切换影片仍显示「需重新打包」，而新影片从未打过包](#p2-51) |
+| ☑ | P2-52 | [片段文件已不在磁盘上时点播放，进入一块没有任何出口的黑屏，只能强杀应用](#p2-52) |
 
 ☑ 修复并验证通过；☒ 经实测无需修复而关闭（没有修复提交，条目内写明依据与重开条件）。
 
@@ -1463,3 +1464,48 @@
 **修复 commit：** 712dace4a8d892c8cfd6e50655960f9e470d6901
 
 **来源：** 验证 [R-2](../requirements/delivered-requirements.md#r-2) 时发现，属于独立根因（`isStale` 只清于成功打包），按 AGENTS.md 单独编号。
+
+<a id="p2-52"></a>
+
+### P2-52 · 片段文件已不在磁盘上时点播放，进入一块没有任何出口的黑屏，只能强杀应用
+
+**验证状态：** 模拟器实测（临时探针强制 `clipURL(for:)` 返回 nil）
+
+**代码位置：** ShotList/Views/ShotFlowModifier.swift · `fullScreenCover` 的 `.player` 分支（第 107–117 行，第 116 行 `Color.black.ignoresSafeArea()`）；ShotList/Views/ClipPlayerScreen.swift（关闭按钮只在这里面）；ShotList/Views/ClipOptionsSheet.swift · `clipRow`（第 298 行起，片段行的播放按钮）
+
+**问题详情**
+
+**预期行为：** 要播放的片段文件不存在时，要么不进入播放页，要么进入后能看到原因并关掉。
+
+**实际行为：** `.player` 分支在 `store.clipURL(for: clip)` 为 nil 时渲染 `Color.black.ignoresSafeArea()`。关闭按钮（`xmark`）写在 `ClipPlayerScreen` 里面，这个 else 分支里**一个可点的元素都没有**；而 `fullScreenCover` 不支持下滑关闭。用户看到的是一整屏黑色，点哪里都没有反应，只能从多任务界面强杀应用。
+
+**根因证据：**
+
+- `ShotFlowModifier.swift:108-117`：`if let url = store.clipURL(for: clip) { ClipPlayerScreen(...) } else { Color.black.ignoresSafeArea() }`，else 分支没有任何按钮或 `dismiss`；
+- `ClipPlayerScreen.swift:14/32/34`：`@Environment(\.dismiss)` 与关闭按钮只存在于正常分支的视图里；
+- `store.clipURL(for:)` 只认 `existingClipFileNames` 缓存，文件不在时返回 nil；而 `ClipOptionsSheet.clipRow` 按 `live.clips`（JSON 记录）逐条画行，记录在、文件不在时这一行照样可点（缩略图此时已显示 `video.slash`）。
+
+**影响范围与定级依据：** 前提是「JSON 里还有记录、文件已经不在磁盘上」——`reconcileClipsWithDisk` 每次切回前台都会清理这类记录，所以触发窗口窄；但一旦触发，界面完全卡死、没有任何出口，属于局部场景下的严重交互异常。不丢数据、重启后恢复，定为 P2。**未实测**：没有在模拟器上构造这一状态验证实际表现。
+
+**复现方法**
+
+1. 隔离测试数据：模拟器上准备一部测试影片，给某个镜头导入一段视频（不要使用用户真实素材）。
+2. 代码级验证：在 `ShotFlowModifier` 的 `.player` 分支临时加探针，强制让 `store.clipURL(for: clip)` 返回 nil（或在应用运行期间从模拟器容器里删除该片段文件，并阻止 `refreshStorageStats()` 在此之前运行）。
+3. 打开该镜头的面板，点「片段」里那一条的播放。
+4. 观察：进入整屏黑色，没有关闭按钮，下滑无效。预期正确结果：不进入播放页并提示文件不存在，或播放页给出说明与关闭按钮。
+5. 验证完成后移除探针与隔离数据。
+
+**修复状态：** 已修复
+
+**修复说明：** 在 `ShotFlowModifier.optionsSheet(for:)` 的 `onPlay` 回调里，排队 `.player` 之前先判断 `store.clipURL(for: clip) != nil`：文件已不在磁盘上时不再进播放页，改为关掉镜头面板并弹出提示「视频文件不存在，无法播放」。原先只服务导入失败的 `importError`/`导入失败` 弹层泛化为 `flowError`/「操作未完成」，两类失败共用同一条提示通道。`fullScreenCover` 的 `.player` else 分支不再是裸的 `Color.black.ignoresSafeArea()`，改为 `missingClipScreen`：黑底上加一个与 `ClipPlayerScreen` 关闭按钮同款式的圆形 `xmark` 按钮，点击把 `cover` 置 nil 关闭整屏——即使以后别的路径漏检、带着 nil URL 落进这个分支，也有出口。
+
+**验证结果：** 环境：Xcode 27.0，独立启动的 iPhone 17 Pro Max / iOS 26.5 模拟器（`BF450796-F6EF-49BB-906E-0532203E4CEB`），`Tools/seed-simulator.py` 写入《夏日vlog》等两部演示影片（镜头 1 有 3 段片段）。Debug 构建 `BUILD SUCCEEDED`，无新增告警。
+
+验证方式：在 `ShotStore.clipURL(for:)` 顶部临时加一行按启动参数 `-debugForceMissingClip` 强制返回 nil 的探针（对应复现方法第 2 步的等效做法，覆盖全部片段而不必真的从容器删文件/赛跑 `refreshStorageStats()`），验证完立即移除：
+
+1. 用该参数启动 App，打开镜头 01 的面板，点第 1 条片段的播放：面板关闭，立即弹出「操作未完成 / 视频文件不存在，无法播放。」，**没有**进入黑屏；点「好」后回到正常可交互的分镜列表——与修复前的「整屏黑色、点哪里都没反应」相比，行为已改变，问题描述的异常消失。
+2. 额外用第二个临时探针（同样验证完移除）在 `onPlay` 的 guard 上加一个 `-debugForcePlayerFallback` 旁路，让 `.player` 即使在 URL 为 nil 时也被排队，专门触达 `fullScreenCover` 的兜底分支：画面确认为黑底 + 右上角圆形 `xmark` 按钮（无 `ClipPlayerScreen` 的视频与文字，符合预期），点击按钮后正确关闭整屏、回到正常分镜列表，没有卡死。
+
+两个临时探针均已在提交前移除（`git diff` 确认 `ShotList/Models/ShotStore.swift` 无残留改动）。未覆盖：真实的「外部删除文件后 `existingClipFileNames` 缓存滞后」时序竞态本身未在磁盘层面复现（如复现方法所述触发窗口很窄），但探针直接构造了 `clipURL` 返回 nil 这一根因条件，修复逻辑与触发方式无关，因此不影响验证结论。
+
+**修复 commit：** 3d2a66f2ebfde0fd45592342ed4c177670fa5b00
