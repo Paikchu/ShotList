@@ -1,6 +1,6 @@
 # 分镜助手 · 未关闭问题
 
-更新日期：2026-09-22。共 **4 项未修复**：**P0 0 项、P1 0 项、P2 4 项**。保留原问题编号，按优先级及编号排序。
+更新日期：2026-09-22。共 **3 项未修复**：**P0 0 项、P1 0 项、P2 3 项**。保留原问题编号，按优先级及编号排序。
 
 未修复问题保留在优先级分组；完成项移至 [resolved-issues](resolved-issues.md)，保留验证和修复提交以便追溯。复现状态沿用已有审查证据；涉及文件破坏或故障注入的步骤使用隔离测试数据。
 
@@ -9,7 +9,6 @@
 | 完成 | 编号 | 问题标题 |
 |:--:|---|---|
 | ☐ | P2-54 | [会话侧拒绝开始录制时，录制按钮只是闪一下又复原，不回调也不提示](#p2-54) |
-| ☐ | P2-55 | [快速拍摄在相机页改走「导入」后取消选片，新建的空镜头不会被撤销](#p2-55) |
 | ☐ | P2-56 | [批量添加入口移除后，ShotStore.addShots(count:) 只剩测试在调用](#p2-56) |
 | ☐ | P2-57 | [首次进相机时体积上限可能仍停在 600 MB，P2-36 的按码率放宽只在改过画质或切过摄像头之后才生效](#p2-57) |
 
@@ -57,39 +56,6 @@
 **验证结果：** 代码级确认：已读代码确认失败分支现在会调用 `handler(.failure(CameraError.recordingNotReady))`，且 `CameraCaptureView` 的现有 `.failure` 分支未改动、能原样接住。Debug 构建 `BUILD SUCCEEDED`，无新增告警。**未验证**：本环境模拟器没有摄像头，`CameraRecorder.status` 到不了 `.ready`（`start()` 在 `configureIfNeeded` 处就会转入 `.unavailable`），`startRecording` 顶部的 `guard status == .ready` 会先一步拦下，根本进不到本次改动的会话侧校验分支，因此复现方法第 1、2 步的实际按钮行为与回看页表现均未能在此环境验证，需要真机确认。
 
 **修复 commit：** 32f793cb7dfb643fdde9e86fb16204f7f19598e2
-
-<a id="p2-55"></a>
-
-### P2-55 · 快速拍摄在相机页改走「导入」后取消选片，新建的空镜头不会被撤销
-
-**验证状态：** 代码级确认（未在模拟器实测）
-
-**代码位置：** ShotList/Views/ShotFlowModifier.swift · `drainQueue()`（第 221–239 行，第 231 行 `quickShotID = nil`）、`.onChange(of: pickerItems)`（第 141–150 行）、`finishQuickShoot()`（第 253–263 行）；ShotList/Views/CameraCaptureView.swift · `requestImport()`（第 519 行）及其入口（第 376、392、403 行）
-
-**问题详情**
-
-**预期行为：** 快速拍摄会先新建一个空镜头再开相机；用户最终没有拍到、也没有导入任何片段就离开时，这个空镜头应被撤销（`finishQuickShoot` 的注释：「点了快速拍摄又退出」是取消，不该在列表末尾留一个没人要的空镜头）。
-
-**实际行为：** 在相机页点「导入」时，`drainQueue()` 走 `queuedImportShot` 分支，把「是否接着开描述页」记进 `pickerOpensDescription` 后**立刻清空 `quickShotID`**，收尾改由导入完成后接管。但用户若在系统选片器里点取消，`pickerItems` 保持为空，`.onChange(of: pickerItems)` 的 `guard !newValue.isEmpty` 直接返回，导入流程从未开始；`quickShotID` 又已经是 nil，`finishQuickShoot()` 永远不会撤销这个镜头。结果列表末尾多出一个没有内容、没有片段的镜头。
-
-**根因证据：** `ShotFlowModifier.swift:230-231` 在选片器呈现**之前**就清空了 `quickShotID`；选片被取消这条路径上没有任何回调去补做 `finishQuickShoot()` 的撤销逻辑。
-
-**影响范围与定级依据：** 相机页的「导入」按钮出现在未授权摄像头、首次请求权限、相机不可用三种页面上（`CameraCaptureView.swift:376/392/403`），模拟器没有摄像头，走的正是「相机不可用 → 导入」这条路，因此在模拟器上可稳定触发。后果是列表里多一个空镜头，用户可以手动删除，定为 P2。**未实测**。
-
-**复现方法**
-
-1. 在模拟器上（没有摄像头）打开分镜页，长按右上角加号，点「快速拍摄」。
-2. 相机页显示「相机不可用」，点「导入」。
-3. 在系统选片器里点取消。
-4. 观察分镜列表末尾：多出一个空镜头。预期正确结果：列表恢复到快速拍摄之前的样子。
-
-**修复状态：** 未修复
-
-**修复说明：** 待修复；把 `quickShotID` 的清空推迟到导入真正开始（`onChange(of: pickerItems)` 拿到非空选择）时，并在选片器关闭且未选择任何内容时（`isPickerPresented` 变回 false 而 `pickerItems` 仍为空）调用 `finishQuickShoot()` 做撤销。
-
-**验证结果：** 待验证；本轮仅做代码级确认。
-
-**修复 commit：** 待提交；完成后填写实际修复提交的完整 SHA。
 
 <a id="p2-56"></a>
 
