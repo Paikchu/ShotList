@@ -50,13 +50,13 @@
 3. 观察：录制按钮短暂进入录制态并伴随震动，随即复原，界面无任何提示，回看页不会出现。
 4. 预期正确结果：给出一句说明（例如「上一段还在保存，请稍候」），或在上一段收尾期间禁用录制按钮；completion 以失败回调通知调用方。
 
-**修复状态：** 未修复
+**修复状态：** 待验证
 
-**修复说明：** 待修复；失败分支应调用 `handler(.failure(...))`（或新增一个「未能开始」的结果），由 `CameraCaptureView` 按现有的错误提示通道展示；也可在 `movieOutput` 收尾期间把录制按钮置为不可用，从源头避免乐观置位后再回滚。改动落在真机录制路径上，需真机验证。
+**修复说明：** 会话侧校验失败分支（`CameraRecorder.swift`）在清空 `completion` 之前先取出它，再以 `.failure(CameraError.recordingNotReady)` 调用；新增的 `CameraError.recordingNotReady` 描述「上一段还在保存，请稍候再试。」。`CameraCaptureView.toggleRecording()` 的 `.failure(let error):` 分支已有 `errorMessage = "录制失败：\(error.localizedDescription)"`，不需要改动就能接住这条新错误，走现成的「操作未完成」提示弹层展示。未采用「收尾期间禁用按钮」的替代方案：回调已能让调用方区分「没开始」与「还在录」，改动范围更小。
 
-**验证结果：** 待验证；本轮仅做代码级确认。
+**验证结果：** 代码级确认：已读代码确认失败分支现在会调用 `handler(.failure(CameraError.recordingNotReady))`，且 `CameraCaptureView` 的现有 `.failure` 分支未改动、能原样接住。Debug 构建 `BUILD SUCCEEDED`，无新增告警。**未验证**：本环境模拟器没有摄像头，`CameraRecorder.status` 到不了 `.ready`（`start()` 在 `configureIfNeeded` 处就会转入 `.unavailable`），`startRecording` 顶部的 `guard status == .ready` 会先一步拦下，根本进不到本次改动的会话侧校验分支，因此复现方法第 1、2 步的实际按钮行为与回看页表现均未能在此环境验证，需要真机确认。
 
-**修复 commit：** 待提交；完成后填写实际修复提交的完整 SHA。
+**修复 commit：** 32f793cb7dfb643fdde9e86fb16204f7f19598e2
 
 <a id="p2-55"></a>
 
