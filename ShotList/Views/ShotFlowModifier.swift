@@ -87,7 +87,8 @@ struct ShotFlowModifier: ViewModifier {
     @State private var pickerItems: [PhotosPickerItem] = []
 
     @State private var importBatch: ImportBatch?
-    @State private var importError: String?
+    /// 这套流程里各种失败的说明：导入失败、片段文件已不在磁盘上等。
+    @State private var flowError: String?
 
     func body(content: Content) -> some View {
         content
@@ -113,7 +114,9 @@ struct ShotFlowModifier: ViewModifier {
                             url: url
                         )
                     } else {
-                        Color.black.ignoresSafeArea()
+                        // 兜底：正常路径在 onPlay 里已经拦掉了文件不存在的情况，
+                        // 这里只是防止以后别的路径漏检，落进来时也要有出口（P2-52）。
+                        missingClipScreen
                     }
                 }
             }
@@ -148,10 +151,10 @@ struct ShotFlowModifier: ViewModifier {
                 pickerOpensDescription = false
                 Task { await importMovies(items, into: target, opensDescription: opensDescription) }
             }
-            .alert("导入失败", isPresented: importErrorBinding) {
+            .alert("操作未完成", isPresented: flowErrorBinding) {
                 Button("好", role: .cancel) {}
             } message: {
-                Text(importError ?? "")
+                Text(flowError ?? "")
             }
             .overlay(alignment: .bottom) {
                 if let batch = importBatch {
@@ -176,6 +179,13 @@ struct ShotFlowModifier: ViewModifier {
             },
             onPlay: { clip in
                 let live = current(shot)
+                // 片段记录还在、文件已经不在磁盘上时不进播放页（P2-52），
+                // 否则 fullScreenCover 只能呈现一块没有出口的黑屏。
+                guard store.clipURL(for: clip) != nil else {
+                    sheet = nil
+                    flowError = "视频文件不存在，无法播放。"
+                    return
+                }
                 queuedCover = .player(
                     shot: live,
                     clip: clip,
@@ -184,6 +194,31 @@ struct ShotFlowModifier: ViewModifier {
                 sheet = nil
             }
         )
+    }
+
+    /// `.player` 的兜底分支：文件已经不在磁盘上时，至少给一个能关掉的出口。
+    private var missingClipScreen: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            VStack {
+                HStack {
+                    Spacer()
+                    Button {
+                        cover = nil
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.headline)
+                            .foregroundStyle(.white)
+                            .frame(width: SLSize.minTouchTarget, height: SLSize.minTouchTarget)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
+                    .accessibilityLabel("关闭")
+                }
+                .padding(.horizontal, SLSpacing.medium)
+                .padding(.top, SLSpacing.small)
+                Spacer()
+            }
+        }
     }
 
     private func importingIndicator(_ batch: ImportBatch) -> some View {
@@ -210,10 +245,10 @@ struct ShotFlowModifier: ViewModifier {
         store.shot(withID: shot.id) ?? shot
     }
 
-    private var importErrorBinding: Binding<Bool> {
+    private var flowErrorBinding: Binding<Bool> {
         Binding(
-            get: { importError != nil },
-            set: { presented in if !presented { importError = nil } }
+            get: { flowError != nil },
+            set: { presented in if !presented { flowError = nil } }
         )
     }
 
@@ -299,7 +334,7 @@ struct ShotFlowModifier: ViewModifier {
             }
         } else {
             Haptics.error()
-            importError = importFailureMessage(failures, of: items.count)
+            flowError = importFailureMessage(failures, of: items.count)
         }
     }
 
