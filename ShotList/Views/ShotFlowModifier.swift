@@ -149,7 +149,19 @@ struct ShotFlowModifier: ViewModifier {
                 pickerItems = []
                 pickerTarget = nil
                 pickerOpensDescription = false
+                // 导入真正开始了：这个镜头不再是「待收尾的快速拍摄」，
+                // 撤销与否交给导入结果处理（P2-55）。
+                quickShotID = nil
                 Task { await importMovies(items, into: target, opensDescription: opensDescription) }
+            }
+            .onChange(of: isPickerPresented) { _, isPresented in
+                guard !isPresented else { return }
+                // 选片器关闭：如果刚才选中过内容，上面那个 onChange 已经把
+                // quickShotID 清空，这里的 finishQuickShoot() 是空操作；
+                // 没有选择、直接取消时 quickShotID 还在，据此撤销这次快速拍摄
+                // 新建的空镜头（P2-55）。非快速拍摄的普通导入同样是空操作。
+                pickerTarget = nil
+                finishQuickShoot()
             }
             .alert("操作未完成", isPresented: flowErrorBinding) {
                 Button("好", role: .cancel) {}
@@ -261,9 +273,9 @@ struct ShotFlowModifier: ViewModifier {
         }
         if let shot = queuedImportShot {
             queuedImportShot = nil
-            // 快速拍摄在相机里改走导入：收尾交给选片之后的导入（`importMovies`）
+            // 快速拍摄在相机里改走导入：quickShotID 留到选片真正开始导入时才清空
+            // （见 `onChange(of: pickerItems)`），选片器被取消时还能据此撤销空镜头（P2-55）。
             pickerOpensDescription = shot.id == quickShotID
-            quickShotID = nil
             DispatchQueue.main.async {
                 pickerTarget = shot
                 isPickerPresented = true
