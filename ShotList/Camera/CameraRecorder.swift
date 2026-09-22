@@ -353,14 +353,17 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
 
         sessionQueue.async { [weak self] in
             guard let self else { return }
-            // 会话侧确认能录。确认不了就把刚才乐观置位的界面状态回滚回去。
+            // 会话侧确认能录。确认不了就把刚才乐观置位的界面状态回滚回去，
+            // 并把失败结果回传给调用方，由它按现有的错误提示通道展示（P2-54）。
             guard !self.movieOutput.isRecording,
                   self.movieOutput.connection(with: .video) != nil else {
                 self.onMain {
                     self.isRecording = false
                     self.stopTimer()
                     self.elapsed = 0
+                    let handler = self.completion
                     self.completion = nil
+                    handler?(.failure(CameraError.recordingNotReady))
                 }
                 return
             }
@@ -1106,6 +1109,8 @@ enum CameraError: LocalizedError {
     case noCameraAvailable
     case cannotAddInput
     case cannotAddOutput
+    /// 会话侧确认能录时校验失败：多数是上一段还没收尾（见 `startRecording`）。
+    case recordingNotReady
 
     var errorDescription: String? {
         switch self {
@@ -1115,6 +1120,8 @@ enum CameraError: LocalizedError {
             return "无法启用摄像头。"
         case .cannotAddOutput:
             return "无法启用视频录制。"
+        case .recordingNotReady:
+            return "上一段还在保存，请稍候再试。"
         }
     }
 }
