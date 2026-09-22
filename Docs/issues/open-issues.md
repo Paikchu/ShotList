@@ -1,6 +1,6 @@
 # 分镜助手 · 未关闭问题
 
-更新日期：2026-09-22。共 **3 项未修复**：**P0 0 项、P1 0 项、P2 3 项**。保留原问题编号，按优先级及编号排序。
+更新日期：2026-09-22。共 **2 项未修复**：**P0 0 项、P1 0 项、P2 2 项**。保留原问题编号，按优先级及编号排序。
 
 未修复问题保留在优先级分组；完成项移至 [resolved-issues](resolved-issues.md)，保留验证和修复提交以便追溯。复现状态沿用已有审查证据；涉及文件破坏或故障注入的步骤使用隔离测试数据。
 
@@ -9,7 +9,6 @@
 | 完成 | 编号 | 问题标题 |
 |:--:|---|---|
 | ☐ | P2-54 | [会话侧拒绝开始录制时，录制按钮只是闪一下又复原，不回调也不提示](#p2-54) |
-| ☐ | P2-56 | [批量添加入口移除后，ShotStore.addShots(count:) 只剩测试在调用](#p2-56) |
 | ☐ | P2-57 | [首次进相机时体积上限可能仍停在 600 MB，P2-36 的按码率放宽只在改过画质或切过摄像头之后才生效](#p2-57) |
 
 ☐ 未修复；☑ 修复并验证通过。
@@ -56,38 +55,6 @@
 **验证结果：** 代码级确认：已读代码确认失败分支现在会调用 `handler(.failure(CameraError.recordingNotReady))`，且 `CameraCaptureView` 的现有 `.failure` 分支未改动、能原样接住。Debug 构建 `BUILD SUCCEEDED`，无新增告警。**未验证**：本环境模拟器没有摄像头，`CameraRecorder.status` 到不了 `.ready`（`start()` 在 `configureIfNeeded` 处就会转入 `.unavailable`），`startRecording` 顶部的 `guard status == .ready` 会先一步拦下，根本进不到本次改动的会话侧校验分支，因此复现方法第 1、2 步的实际按钮行为与回看页表现均未能在此环境验证，需要真机确认。
 
 **修复 commit：** 32f793cb7dfb643fdde9e86fb16204f7f19598e2
-
-<a id="p2-56"></a>
-
-### P2-56 · 批量添加入口移除后，ShotStore.addShots(count:) 只剩测试在调用
-
-**验证状态：** 代码级确认（全仓检索调用点）
-
-**代码位置：** ShotList/Models/ShotStore.swift · `addShots(count:)`（第 427 行）；ShotListTests/ShotStoreTests.swift（第 51、183 行）
-
-**问题详情**
-
-**预期行为：** 生产代码里的公开写入接口都有实际调用方；需求删除一个功能时，相应的接口一并移除。
-
-**实际行为：** [R-11](../requirements/delivered-requirements.md#r-11)（`772ea00 feat(R-11): 长按加号去掉批量添加，只保留「快速拍摄」`，2026-09-20）按需求移除了「一次添加 3 / 5 / 10 个镜头」，但 `ShotStore.addShots(count:)` 保留了下来。现在它在生产代码中零调用点，只有 `ShotStoreTests` 的两处断言在用。
-
-**根因证据：** `grep -rn "\.addShots" ShotList ShotListWidget` 无结果；`grep -rn "addShots" ShotListTests` 命中第 51、183 行。
-
-**影响范围与维护成本：** 不影响任何用户可见行为。代价是 `ShotStore` 保留一条没有入口的写路径：它和 `addShot` / `insertShot` 走同一套 `normalize()` + `persist()`，今后改动编号或文件名规则时仍需同步维护它和它的测试，而它已经不对应任何功能。定为 P2（有明确维护成本的无用代码）。
-
-**复现方法**
-
-1. 在仓库根目录执行 `grep -rn "\.addShots" ShotList ShotListWidget`，确认无结果。
-2. 执行 `grep -rn "addShots" ShotListTests`，确认只剩测试调用。
-3. 预期正确结果：功能移除后接口与其测试一并删除，或该接口重新有调用方。
-
-**修复状态：** 未修复
-
-**修复说明：** 待修复；删除 `addShots(count:)` 与 `ShotStoreTests` 中对应的两处断言。两处分别测的是「读不出记录（`loadError`）」与「写盘失败（`saveError`）」时写入被拦截；同一块里紧挨着的 `XCTAssertNil(…addShot())`（第 50、182 行）已覆盖同类拦截，删除后覆盖不减。
-
-**验证结果：** 待验证；本轮为全仓检索确认。
-
-**修复 commit：** 待提交；完成后填写实际修复提交的完整 SHA。
 
 <a id="p2-57"></a>
 

@@ -47,6 +47,7 @@
 | ☑ | P2-52 | [片段文件已不在磁盘上时点播放，进入一块没有任何出口的黑屏，只能强杀应用](#p2-52) |
 | ☑ | P2-53 | [应用内没有任何删除整部影片的入口，影片记录只增不减](#p2-53) |
 | ☑ | P2-55 | [快速拍摄在相机页改走「导入」后取消选片，新建的空镜头不会被撤销](#p2-55) |
+| ☑ | P2-56 | [批量添加入口移除后，ShotStore.addShots(count:) 只剩测试在调用](#p2-56) |
 
 ☑ 修复并验证通过；☒ 经实测无需修复而关闭（没有修复提交，条目内写明依据与重开条件）。
 
@@ -1594,3 +1595,35 @@
 2. 对照（成功导入路径，确认未破坏既有功能）：重新触发快速拍摄 → 同一入口点「导入」→ 这次选中相册里的占位视频并确认：新建的「镜头 06」保留、片段列表显示 1 段 0:01 的片段，且自动弹出该镜头的面板并把光标聚焦到内容输入框（`opensDescription` 生效）——与「导入成功后接着开描述页」的既有路径完全一致，未被本次改动破坏。
 
 **修复 commit：** 6bc3ea38cdc6abf28b275334309d8f9dd7cc327f
+
+<a id="p2-56"></a>
+
+### P2-56 · 批量添加入口移除后，ShotStore.addShots(count:) 只剩测试在调用
+
+**验证状态：** 代码级确认（全仓检索调用点）
+
+**代码位置：** ShotList/Models/ShotStore.swift · `addShots(count:)`（原第 427 行，已删除）；ShotListTests/ShotStoreTests.swift（原第 51、183 行，两处断言已删除）
+
+**问题详情**
+
+**预期行为：** 生产代码里的公开写入接口都有实际调用方；需求删除一个功能时，相应的接口一并移除。
+
+**实际行为：** [R-11](../requirements/delivered-requirements.md#r-11)（`772ea00 feat(R-11): 长按加号去掉批量添加，只保留「快速拍摄」`，2026-09-20）按需求移除了「一次添加 3 / 5 / 10 个镜头」，但 `ShotStore.addShots(count:)` 保留了下来。现在它在生产代码中零调用点，只有 `ShotStoreTests` 的两处断言在用。
+
+**根因证据：** `grep -rn "\.addShots" ShotList ShotListWidget` 无结果；`grep -rn "addShots" ShotListTests` 命中第 51、183 行。
+
+**影响范围与维护成本：** 不影响任何用户可见行为。代价是 `ShotStore` 保留一条没有入口的写路径：它和 `addShot` / `insertShot` 走同一套 `normalize()` + `persist()`，今后改动编号或文件名规则时仍需同步维护它和它的测试，而它已经不对应任何功能。定为 P2（有明确维护成本的无用代码）。
+
+**复现方法**
+
+1. 在仓库根目录执行 `grep -rn "\.addShots" ShotList ShotListWidget`，确认无结果。
+2. 执行 `grep -rn "addShots" ShotListTests`，确认只剩测试调用。
+3. 预期正确结果：功能移除后接口与其测试一并删除，或该接口重新有调用方。
+
+**修复状态：** 已修复
+
+**修复说明：** 删除 `ShotStore.addShots(count:)` 与 `ShotStoreTests` 中对应的两处断言（原第 51、183 行）。两处分别测的是「读不出记录（`loadError`）」与「写盘失败（`saveError`）」时写入被拦截；同一块里紧挨着的 `XCTAssertNil(…addShot())`（第 50、182 行，保留）已覆盖同类拦截，删除后覆盖不减。只删这两行断言，没有新增任何测试。
+
+**验证结果：** 环境：Xcode 27.0。`xcodebuild -scheme ShotList -destination 'generic/platform=iOS Simulator' -configuration Debug build` → `BUILD SUCCEEDED`，无新增告警；另跑 `xcodebuild -scheme ShotList -destination 'id=<模拟器>' build-for-testing` 确认改动后的 `ShotStoreTests.swift` 仍能正常编译（`TEST BUILD SUCCEEDED`），未运行测试。全仓检索 `grep -rn "addShots" ShotList ShotListTests ShotListWidget` 无任何结果，确认接口与其测试已一并删除、没有遗留引用。
+
+**修复 commit：** 1a6318a9b141cb45c5d5d690164dc091ef14bb18
