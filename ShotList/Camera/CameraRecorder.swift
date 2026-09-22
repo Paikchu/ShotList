@@ -194,6 +194,11 @@ nonisolated final class CameraRecorder: NSObject, ObservableObject, @unchecked S
             guard let self else { return }
             switch self.configureIfNeeded(position: target, preferred: preferred) {
             case .success:
+                // 首次配置发生在 configureIfNeeded 内部尚未提交的外层配置块中，
+                // applyFormatLocked 内部读到的输出设置可能还没跟上刚提交的格式，
+                // 体积上限因此可能仍停在兜底值；这里在外层配置确认提交之后，
+                // 按最终生效的格式重新估算一次（P2-57）。
+                self.updateMaximumFileSize()
                 self.configureAudioSession()
                 if !self.session.isRunning { self.session.startRunning() }
                 // 会话跑起来之后才调焦距：虚拟摄像头要会话在跑才肯换那颗镜头
