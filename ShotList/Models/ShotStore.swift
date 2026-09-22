@@ -510,18 +510,6 @@ final class ShotStore: ObservableObject {
         return persist() ? shot : nil
     }
 
-    /// 一次性批量新建多个空白分镜，对应「一次录完 1、2、3、4 号镜头」的场景
-    @discardableResult
-    func addShots(count: Int) -> [Shot] {
-        guard loadError == nil, currentFilmIndex != nil else { return [] }
-        guard count > 0 else { return [] }
-        let start = shots.count
-        let created = (0..<count).map { Shot(number: start + $0 + 1) }
-        mutateCurrentFilm { $0.shots.append(contentsOf: created) }
-        normalize()
-        return persist() ? created : []
-    }
-
     /// 在某个镜头后面插入一个新镜头。
     ///
     /// 编号即位置，所以插入之后的所有镜头编号都会 +1，`normalize()` 会一并把
