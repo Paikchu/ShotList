@@ -430,8 +430,8 @@ final class ExportPackageBuilderTests: XCTestCase {
         XCTAssertTrue(guide.contains("剪辑风格.md"))
         XCTAssertTrue(guide.contains("本片有那份文件，开始前先读它。"))
         XCTAssertTrue(guide.contains("剪辑风格：见同目录「剪辑风格.md」"))
-        // 汇总节顺延为第四节，编号不与新增的风格节撞车
-        XCTAssertTrue(guide.contains("## 四、汇总"))
+        // 处理规则移进 AGENTS.md 之后指南只剩两节正文，汇总是第三节
+        XCTAssertTrue(guide.contains("## 三、汇总"))
 
         let readme = try exportedText(fm, "导出说明.txt")
         XCTAssertTrue(readme.contains("剪辑风格.md"))

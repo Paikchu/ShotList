@@ -98,6 +98,12 @@ nonisolated struct ExportRequest: Sendable, Equatable {
     /// 同样归到 request：导出期间用户在风格页改了这段描述，这份产物就不再对应当前设定。
     /// 留空表示这部片子没有特别要求，包里不会出现那个文件。
     let stylePrompt: String
+    /// 影片 ID，写进 `manifest.json`。重新导出后剪辑侧靠它认出是同一部片子。
+    let filmID: UUID?
+    /// 这部影片绑定的模板。它的标签决定了内容里哪几行是要上屏的字（见 `ExportLabels`）。
+    let boundTemplate: ExportTemplate?
+    /// 模板库里的全部模板：镜头内容可以套用任意一份，标签不止来自绑定的那份。
+    let templates: [ExportTemplate]
 
     init(
         shots: [Shot],
@@ -105,7 +111,10 @@ nonisolated struct ExportRequest: Sendable, Equatable {
         scope: ExportScope,
         option: ExportTranscodeOption,
         filmTitle: String,
-        stylePrompt: String = ""
+        stylePrompt: String = "",
+        filmID: UUID? = nil,
+        boundTemplate: ExportTemplate? = nil,
+        templates: [ExportTemplate] = []
     ) {
         self.shots = shots
         self.clipsDirectory = clipsDirectory
@@ -113,6 +122,9 @@ nonisolated struct ExportRequest: Sendable, Equatable {
         self.option = option
         self.filmTitle = filmTitle
         self.stylePrompt = stylePrompt
+        self.filmID = filmID
+        self.boundTemplate = boundTemplate
+        self.templates = templates
     }
 }
 
@@ -318,11 +330,12 @@ nonisolated enum ExportPackageBuilder {
         availableCapacity: (URL) throws -> Int64? = availableCapacity,
         transcode: @Sendable (URL, URL, ExportTranscodeOption) async throws -> Void = {
             try await MediaTranscode.export(source: $0, to: $1, option: $2)
-        }
+        },
+        probe: @Sendable (URL) async -> ClipMediaInfo = { await MediaProbe.probe($0) }
     ) async throws -> ExportPackage {
         do {
             return try await buildChecked(request, run: run, fileManager: fileManager,
-                                          availableCapacity: availableCapacity, transcode: transcode)
+                                          availableCapacity: availableCapacity, transcode: transcode, probe: probe)
         } catch {
             throw exportFailure(error)
         }
@@ -331,7 +344,8 @@ nonisolated enum ExportPackageBuilder {
     private static func buildChecked(
         _ request: ExportRequest, run: ExportRun, fileManager: FileManager,
         availableCapacity: (URL) throws -> Int64?,
-        transcode: @Sendable (URL, URL, ExportTranscodeOption) async throws -> Void
+        transcode: @Sendable (URL, URL, ExportTranscodeOption) async throws -> Void,
+        probe: @Sendable (URL) async -> ClipMediaInfo
     ) async throws -> ExportPackage {
 
         let shots = request.shots
@@ -403,9 +417,13 @@ nonisolated enum ExportPackageBuilder {
 
         var totalDuration: TimeInterval = 0
         var manifest: [ManifestRow] = []
+        // 给剪辑工具读的那一份：逐镜内容原文 + 每条素材的实测参数，落盘为 manifest.json
+        var manifestShots: [ExportManifest.ShotEntry] = []
+        var packagedBytes: Int64 = 0
 
         for shot in included {
             try run.checkCancellation()
+            var clipEntries: [ExportManifest.ClipEntry] = []
 
             let available = shot.clips.enumerated().filter { _, clip in
                 let url = clipsDirectory.appendingPathComponent(clip.fileName, isDirectory: false)
@@ -414,6 +432,11 @@ nonisolated enum ExportPackageBuilder {
 
             guard let latest = available.map(\.element).latestByRecordedAt else {
                 manifest.append(ManifestRow(pendingShot: shot))
+                manifestShots.append(
+                    ExportManifest.ShotEntry(
+                        id: shot.id, number: shot.number, status: "notShot", note: shot.trimmedNote, clips: []
+                    )
+                )
                 continue
             }
 
@@ -491,7 +514,34 @@ nonisolated enum ExportPackageBuilder {
                         isMain: isMain
                     )
                 )
+
+                // 读**落盘后**的那份文件：选了转码时，剪辑侧拿到的是转码结果，参数要对得上它。
+                // 读不出来不影响打包，字段留空即可（见 `MediaProbe`）。
+                let info = await probe(destination)
+                let bytes = (try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init)
+                packagedBytes += bytes ?? 0
+                clipEntries.append(
+                    ExportManifest.ClipEntry(
+                        id: clip.id,
+                        take: takeIndex,
+                        role: isMain ? "main" : "alternate",
+                        path: exportedPath,
+                        addedAt: clip.recordedAt,
+                        capturedAt: info.capturedAt,
+                        duration: info.duration,
+                        sizeBytes: bytes,
+                        video: info.video,
+                        audio: info.audio,
+                        preferredAudioIndex: info.preferredAudioIndex
+                    )
+                )
             }
+
+            manifestShots.append(
+                ExportManifest.ShotEntry(
+                    id: shot.id, number: shot.number, status: "recorded", note: shot.trimmedNote, clips: clipEntries
+                )
+            )
         }
 
         // 清单行是按**磁盘可用性**判的（`available.isEmpty` → 写一条无文件的行）。
@@ -519,6 +569,23 @@ nonisolated enum ExportPackageBuilder {
             to: folder
         )
         try Self.writeStylePrompt(stylePrompt, filmTitle: filmTitle, to: folder)
+
+        // 给 AI 剪辑工具的两份：事实（manifest.json）与任务说明（AGENTS.md / CLAUDE.md）。
+        // 规则只写在说明里一处，指南只留逐镜内容，免得两份规则打架。
+        let machineManifest = ExportManifest(
+            schemaVersion: 1,
+            package: ExportManifest.PackageInfo(exportedAt: now, scope: scope.rawValue, format: option.rawValue),
+            film: ExportManifest.FilmInfo(
+                id: request.filmID,
+                title: filmTitle.trimmingCharacters(in: .whitespacesAndNewlines),
+                template: request.boundTemplate.map { ExportManifest.TemplateInfo(name: $0.name, content: $0.content) },
+                labels: ExportLabels.used(in: included, boundTemplate: request.boundTemplate, templates: request.templates),
+                hasStylePrompt: !stylePrompt.isEmpty
+            ),
+            shots: manifestShots
+        )
+        try Self.writeMachineManifest(machineManifest, to: folder)
+        try Self.writeAgentBrief(machineManifest, filmTitle: filmTitle, sourceBytes: packagedBytes, to: folder)
 
         let zipURL = try Self.zip(folder: folder, folderName: folderName, fileManager: fileManager)
         let size = (try? zipURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).flatMap { Int64($0) } ?? 0
@@ -764,6 +831,32 @@ nonisolated enum ExportPackageBuilder {
         try text.data(using: .utf8)?.write(to: url, options: .atomic)
     }
 
+    /// 生成「manifest.json」：给剪辑工具按字段读的事实表。
+    ///
+    /// 文件名用英文：剪辑侧的脚本要按固定路径读它，中文名在 zip 里没有 UTF-8 标志位，
+    /// 某些解压工具解出来是乱码。
+    private static func writeMachineManifest(_ manifest: ExportManifest, to folder: URL) throws {
+        let url = folder.appendingPathComponent("manifest.json", isDirectory: false)
+        try manifest.jsonData().write(to: url, options: .atomic)
+    }
+
+    /// 生成「AGENTS.md」与「CLAUDE.md」：粗剪任务说明，以及让旧版 Claude Code 也能自动读到它的引入文件。
+    private static func writeAgentBrief(
+        _ manifest: ExportManifest,
+        filmTitle: String,
+        sourceBytes: Int64,
+        to folder: URL
+    ) throws {
+        let brief = ExportAgentBrief.markdown(
+            manifest: manifest,
+            filmDisplayTitle: filmDisplayTitle(filmTitle),
+            sourceBytes: sourceBytes
+        )
+        try Data(brief.utf8).write(to: folder.appendingPathComponent("AGENTS.md", isDirectory: false), options: .atomic)
+        try Data(ExportAgentBrief.claudeImport.utf8)
+            .write(to: folder.appendingPathComponent("CLAUDE.md", isDirectory: false), options: .atomic)
+    }
+
     /// 按 CSV 规则转义一个字段。
     ///
     /// 逗号、引号、换行都必须整体加引号：分镜内容支持多行输入，
@@ -812,8 +905,10 @@ nonisolated enum ExportPackageBuilder {
         * \(singleName)          主素材（每个镜头最新一条），数字为镜头编号；多条时带片段序号，如 \(multiName)
         * 备用片段/               更早的片段，如 \(alternateName)
         * 分镜清单.csv            各镜头的文字内容与片段信息
-        * 分镜文字内容指南.md      文字内容与文件名对照，供 AI 使用
+        * 分镜文字内容指南.md      文字内容与文件名对照
         * 剪辑风格.md             剪辑要求
+        * AGENTS.md / CLAUDE.md   粗剪任务说明，交给 AI 剪辑工具
+        * manifest.json           逐镜内容与素材参数，给工具读
         * 导出说明.txt            本文件
 
         导入剪映
@@ -921,13 +1016,12 @@ nonisolated enum ExportPackageBuilder {
         影片：\(filmDisplayTitle(filmTitle))
 
         本文件是「分镜助手」导出包的文字分镜表：把每个分镜的文字内容与同目录下的
-        视频文件名绑定在一起。AI 剪辑工具可以直接按本文件处理视频，无需再问用户
-        「哪段视频对应哪个镜头」。
+        视频文件名绑定在一起，给人对照着看。每个镜头有一段**内容**：用户自己写的文字，
+        在第「二」节逐镜原样给出，通常按行写成「标签：内容」。
 
-        每个镜头有一段**内容**：用户自己写的文字，在第「三」节逐镜原样给出。
-        内容通常按行写成「标签：内容」，标签由用户定（常见的有描述、字幕、上方角标、
-        转场），按字面理解即可；它们不是固定字段。没有标签的一句话按「描述」理解，
-        只作处理依据。
+        **AI 剪辑工具请读同目录的「AGENTS.md」**：怎么剪、要交哪些产物、怎么自检都写在那里，
+        每条素材的精确参数（时长、尺寸、帧率、HDR、音轨）在「manifest.json」里。
+        本文件与那两份不一致时，以那两份为准。
 
         ## 剪辑风格看哪
 
@@ -938,7 +1032,7 @@ nonisolated enum ExportPackageBuilder {
         ## 一、素材与分镜的对应关系
 
         - 视频文件名由「影片标题-分镜号-片段序号」组成，例如 \(singleName)；
-          片名后面的**两位数字就是分镜编号**，与「三、镜头清单」一一对应。
+          片名后面的**两位数字就是分镜编号**，与「二、镜头清单」一一对应。
         - 编号后面还有数字时，那是片段序号：同一个分镜拍了好几条，文件名形如
           \(takeNames)，数字越大拍得越晚；只拍一条的分镜就是 \(singleName)，
           不带片段序号。
@@ -950,37 +1044,7 @@ nonisolated enum ExportPackageBuilder {
           不需要替换时不要导入它们。
         - 未拍摄的镜头没有对应文件，按编号跳过，不占时间线。
 
-        ## 二、按分镜处理视频的规则
-
-        每个镜头带一段内容，是用户写给你的要求：
-
-        1. 按编号从小到大排列片段，编号顺序就是成片顺序；不要按文件名、
-           文件大小或修改时间重新排序。
-        2. 每个镜头只取一条素材：默认取主素材，需要替换时才到「备用片段」里
-           挑同编号的其它片段。
-        3. 内容里说明**拍的是什么、这一段怎么处理**的部分（例如「描述」「转场」）
-           只用来决定怎么处理这段素材：挑哪一段画面、从哪起止、怎么衔接。
-           它们**不是**要显示在屏幕上的字，不要拿去当字幕。
-        4. 内容里写明**要显示在屏幕上**的部分（例如「字幕」「上方角标」）是用户写定的
-           完整文字，**原样使用**，一个字都不要增删改：不扩写、不精简、不总结、
-           不换同义词、不调语序。内容里没写某一项，就是这一镜没有，**不要自己补一条**。
-        5. 「时长」是该条素材的实际长度，用来估算成片节奏；不要臆造未提供的时长。
-        6. 每个镜头的处理边界就是它自己的那段素材，不要把相邻镜头的内容并进一段。
-        7. 标注「未拍摄」的镜头没有素材，直接跳过；若必须补齐，保留同样编号的空位。
-        8. 画幅、节奏、时长与文字图层的位置样式一律按「剪辑风格.md」执行，
-           不要自己另定一套——那是影片级的，整部片子只有一套。
-
-        ### 屏幕上的字怎么用
-
-        - 字幕类的内容直接当一句话使用，内容里的换行就是要在这一处换行。
-        - 角标类的内容就是**最终要显示的字**（例如「热量缺口：1758千卡」），照它显示即可，
-          不要自己前后拼词、也不要推算或换算其中的数字。
-        - 标签后面才是要显示的字，标签本身（「字幕：」「上方角标：」）不显示。
-        - 断行与字号上限按「剪辑风格.md」里写的来；超宽由你折行，
-          但**不要为了塞进去而删字或改字**。
-        - 遇到看不懂的标签，按用户写的原文处理，不要擅自解释成别的要求。
-
-        ## 三、镜头清单
+        ## 二、镜头清单
 
         """
 
@@ -1019,7 +1083,7 @@ nonisolated enum ExportPackageBuilder {
         }
 
         text += """
-        ## 四、汇总
+        ## 三、汇总
 
         - 影片：\(filmDisplayTitle(filmTitle))
         - 导出范围：\(scope.title)
