@@ -318,7 +318,15 @@ struct ExportView: View {
             scope: scope,
             option: transcodeOption,
             filmTitle: store.currentFilm?.exportTitleToken ?? "",
-            stylePrompt: stylePrompt
+            stylePrompt: stylePrompt,
+            filmID: store.currentFilmID,
+            // 模板的标签决定内容里哪几行是要上屏的字：绑定的那份写进 manifest，
+            // 整个库都带上——镜头内容可以套用任意一份模板。
+            boundTemplate: ExportTemplate(
+                name: store.boundTemplate?.displayName ?? Film.defaultTemplateName,
+                content: store.shotTemplate
+            ),
+            templates: store.templates.map { ExportTemplate(name: $0.displayName, content: $0.effectiveContent) }
         )
         // 影片同样是这次导出的输入：切换影片后，这份结果就不再属于「刚刚生成的导出包」
         let filmID = store.currentFilmID
