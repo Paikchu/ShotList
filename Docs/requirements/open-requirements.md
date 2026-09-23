@@ -26,9 +26,9 @@
 
 ### R-15 · 用户把导出包交给 AI agent 时，包里应带上粗剪任务说明与素材参数，agent 不用追问就能剪出成片和中间工程文件
 
-**验证状态：** 隔离测试实测（任务说明草案已在 9.18Vlog 导出包的副本上试剪通过，见[试剪记录](../export/试剪记录-9.18Vlog.md)）；App 侧待实现
+**验证状态：** 模拟器实测（导出包内容已逐项核对）；「新会话 agent 按 AGENTS.md 独立完成粗剪」这一步待验证，见验证结果
 
-**代码位置：** 待实现。预计 ShotList/Support/ExportPackageBuilder.swift · `buildChecked`（每条素材落盘后读参数）、`writeTextGuide`（瘦身为逐镜内容）、新增 `AGENTS.md` / `CLAUDE.md` / `manifest.json` 三个写入函数；素材参数读取用 AVFoundation，与 `MediaTranscode` 一样单独成文件。说明正文、第 4 节生成规则与 manifest 字段见[粗剪任务说明模板](../export/粗剪任务说明模板.md)
+**代码位置：** ShotList/Support/MediaProbe.swift（新增）· `MediaProbe.probe` / `ClipMediaInfo` / `VideoTrackInfo` / `AudioTrackInfo`；ShotList/Support/ExportManifest.swift（新增）· `ExportManifest` / `ExportTemplate` / `ExportLabels`；ShotList/Support/ExportAgentBrief.swift（新增）· `markdown(manifest:filmDisplayTitle:sourceBytes:)` 与第 4 节的 `facts`；ShotList/Support/ExportPackageBuilder.swift · `ExportRequest`（`filmID` / `boundTemplate` / `templates`）、`buildChecked`（`probe` 注入与逐条落盘后读参数）、`writeMachineManifest` / `writeAgentBrief`、`writeTextGuide`（瘦身）、`writeReadme`；ShotList/Views/ExportView.swift · `build()`。说明正文、第 4 节生成规则与 manifest 字段见[粗剪任务说明模板](../export/粗剪任务说明模板.md)
 
 **预期结果：** 导出包根目录新增 `AGENTS.md`（粗剪任务说明）、`CLAUDE.md`（只有一行 `@AGENTS.md`）、`manifest.json`（逐镜内容原文与素材实测参数）。在解压后的目录里新开一个 Claude Code 会话，只说「按 AGENTS.md 完成粗剪」，agent 全程不提问，产出说明第 3 节列出的全部文件，并通过第 7 节的验收。
 
@@ -84,10 +84,27 @@
 5. 观察结果：agent 全程不提问；`输出/` 下说明第 3 节的文件齐全；说明第 7 节的验收全部通过；人工看 `中间/抽检/成片抽帧.jpg`：文字完整、字高约 4.4% 屏高、各镜颜色一致、未拍的镜头没有出现；`剪辑报告.md` 写明了取舍与降级。
 6. 失败判据：agent 要追问才能继续；成片里 HDR 镜头发灰；有素材因 APAC 音轨报错；上屏文字与分镜原文有任何增删改；工程文件读回的切点与决策表不一致；`manifest.json` 与 ffprobe 实测不符；第 4 节列出了本包并不存在的情况。
 
-**实现状态：** 未开始
+**实现状态：** 待验证
 
-**实现说明：** 待实现。说明正文已按试剪结果改过一版，发现的问题与待确认规则见[试剪记录](../export/试剪记录-9.18Vlog.md)。
+**实现说明：** 三个新文件各管一件事：`MediaProbe` 用 AVFoundation 读一条素材的参数（时长、编码、位深、编码宽高与旋转、显示宽高、平均帧率、是否可变帧率、HDR 传递函数、逐条音轨与该用哪条），任何一项读不出来都只留空、不抛错；`ExportManifest` 是落盘结构与标签规则（`ExportLabels` 只认模板里出现过的标签，内容里其它带冒号的句子不算标签）；`ExportAgentBrief` 生成说明正文。
 
-**验证结果：** 待验证。
+几个实现上的取舍：
 
-**实现 commit：** 待提交。
+- **读落盘后的文件**，不是原始素材：选了转码时剪辑侧拿到的是转码结果，参数必须对得上它。
+- **`null` 要写出来**：合成的编码器会跳过 `nil`，剪辑侧分不清「没读到」和「这版没有这个字段」，所以三个带可选字段的结构都手写了 `encode(to:)`。
+- **第 4 节按包里全部素材算**，不只看主素材：备用片段也会被换上时间线，它的音轨顺序、动态范围未必与主素材一样。标注方式为整镜一致时写镜头号、否则写到条（`01-2`）——实测同一个镜头的三条素材分别是 HDR 4K、SDR 1080p 单声道、HDR 4K，只写镜头号会自相矛盾。
+- **可变帧率的判据取千分之一**：平均帧率与最快一帧的差距实测只有 59.88 对 59.94，按百分之几判会漏掉。
+- 指南瘦身后只剩「剪辑风格看哪」「一、素材与分镜的对应关系」「二、镜头清单」「三、汇总」，既有测试里断言「## 四、汇总」的那一处随之更新。
+
+**验证结果：** 环境：Xcode 27.0，新建的独立模拟器 `R-15-verify`（iPhone 17 / iOS 27.0，没动其他任务在用的模拟器）；素材用真实的 iPhone 原片（HLG HDR + APAC 空间音轨、SDR 1080p 单声道、0.72 秒短素材）灌进《夏日vlog》：5 个镜头，镜头 1 有 3 条，镜头 4、5 未拍。Debug 构建成功，无新增告警；既有测试 106 项全部通过。
+
+在导出页选「全部」「原片」打包，把包解压后逐项核对：
+
+- 包内新增 `AGENTS.md`、`CLAUDE.md`（内容就是 `@AGENTS.md`）、`manifest.json`；`导出说明.txt` 的目录里也列出了它们。
+- `manifest.json` 与 `ffprobe` 实测逐字段一致（时长、编码宽高、显示宽高、位深、HDR、逐条音轨与声道、文件大小）：`01-1` 的第一条音轨是 `apac`、`preferredAudioIndex` 为 1；`01-2` 是 SDR 1080p 单声道；未拍的 04、05 是 `status: notShot`、`clips: []`；`note` 保留了换行；`addedAt`（2026-09-23T08:50:59+08:00）与素材自带的 `capturedAt`（2026-09-18T08:08:07+08:00）分别给出。
+- `AGENTS.md` 第 4 节只列本包存在的情况，且标注到条：「01-1、01-3、02、03 是 HLG HDR，01-2 是 SDR」「01-2 是 30 fps，其余 60 fps；01-1、01-3、02 是可变帧率」「01-1 的第一条音轨是 apac…；01-2 只有单声道」「短素材：02 只有 0.72 秒」「未拍 2（04、05）」「01 有备用片段（共 2 条）」；上屏标签为「描述」「字幕」「上方角标」（模板里的「转场」没被用到，未列出）。
+- `分镜文字内容指南.md` 已无处理规则，只剩逐镜内容与素材对照，并指向 `AGENTS.md` 与 `manifest.json`。
+
+**未验证：** 验收方法第 4、5 步——在解压目录新开一个没有本次上下文的 Claude Code 会话，只说「按 AGENTS.md 完成粗剪」，看它是否全程不提问并通过说明第 7 节的验收。说明正文的可执行性此前已用同一份草案在 9.18Vlog 包上走过一遍（见[试剪记录](../export/试剪记录-9.18Vlog.md)），但那次是写说明的人自己执行的，不能替代这一步。另外 VoiceOver 与真机未走查——本需求不改界面。
+
+**实现 commit：** 2c6db447c93ac231e64c8ea2400e3ec8c726bca1
