@@ -156,12 +156,14 @@ struct ShotFlowModifier: ViewModifier {
             }
             .onChange(of: isPickerPresented) { _, isPresented in
                 guard !isPresented else { return }
-                // 选片器关闭：如果刚才选中过内容，上面那个 onChange 已经把
-                // quickShotID 清空，这里的 finishQuickShoot() 是空操作；
-                // 没有选择、直接取消时 quickShotID 还在，据此撤销这次快速拍摄
-                // 新建的空镜头（P2-55）。非快速拍摄的普通导入同样是空操作。
-                pickerTarget = nil
-                finishQuickShoot()
+                // 选片器关闭：选中过内容时上面那个 onChange 会清空 quickShotID，
+                // 这里的 finishQuickShoot() 就是空操作；直接取消时 quickShotID 还在，
+                // 据此撤销快速拍摄新建的空镜头（P2-55）。非快速拍摄的导入同样是空操作。
+                //
+                // 推迟到下一轮再判断：「选择变了」与「选片器关了」谁先通知是系统的实现细节，
+                // 同一次更新里 pickerItems 的回调无论先后都要先跑完（P2-58）。
+                // 这里也不碰 pickerTarget——它由 pickerItems 的回调取走，提前置空会让导入被丢弃。
+                DispatchQueue.main.async { finishQuickShoot() }
             }
             .alert("操作未完成", isPresented: flowErrorBinding) {
                 Button("好", role: .cancel) {}
