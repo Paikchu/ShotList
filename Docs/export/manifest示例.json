@@ -1,0 +1,614 @@
+{
+  "schemaVersion": 1,
+  "package": {
+    "exportedAt": "2026-09-18T20:23:59+08:00",
+    "scope": "recordedOnly",
+    "format": "original"
+  },
+  "film": {
+    "id": "<影片 UUID>",
+    "title": "9.18Vlog",
+    "template": null,
+    "labels": [
+      "下方字幕",
+      "正上方字幕"
+    ],
+    "hasStylePrompt": true
+  },
+  "shots": [
+    {
+      "id": "<shot-01 的 UUID>",
+      "number": 1,
+      "status": "recorded",
+      "note": "下方字幕： 今日体重113.2KG",
+      "clips": [
+        {
+          "id": "<clip-01-1 的 UUID>",
+          "take": 1,
+          "role": "main",
+          "path": "9.18Vlog-01.mov",
+          "addedAt": "2026-09-18T10:02+08:00",
+          "capturedAt": "2026-09-18T10:02:09+08:00",
+          "duration": 2.42,
+          "sizeBytes": 23918359,
+          "video": {
+            "codec": "hevc",
+            "bitDepth": 10,
+            "codedSize": [
+              3840,
+              2160
+            ],
+            "rotation": -90,
+            "displaySize": [
+              2160,
+              3840
+            ],
+            "fps": 59.876,
+            "variableFrameRate": true,
+            "hdr": "HLG",
+            "dolbyVisionProfile": 8
+          },
+          "audio": [
+            {
+              "index": 0,
+              "codec": "aac",
+              "channels": 2,
+              "sampleRate": 48000
+            },
+            {
+              "index": 1,
+              "codec": "apac",
+              "channels": 4,
+              "sampleRate": 48000
+            }
+          ],
+          "preferredAudioIndex": 0
+        }
+      ]
+    },
+    {
+      "id": "<shot-02 的 UUID>",
+      "number": 2,
+      "status": "recorded",
+      "note": "下方字幕： 今日体重113.2KG",
+      "clips": [
+        {
+          "id": "<clip-02-1 的 UUID>",
+          "take": 1,
+          "role": "main",
+          "path": "9.18Vlog-02.mov",
+          "addedAt": "2026-09-18T06:43+08:00",
+          "capturedAt": null,
+          "duration": 2.498,
+          "sizeBytes": 2674588,
+          "video": {
+            "codec": "hevc",
+            "bitDepth": 8,
+            "codedSize": [
+              1920,
+              1080
+            ],
+            "rotation": -90,
+            "displaySize": [
+              1080,
+              1920
+            ],
+            "fps": 30.0,
+            "variableFrameRate": false,
+            "hdr": null,
+            "dolbyVisionProfile": null
+          },
+          "audio": [
+            {
+              "index": 0,
+              "codec": "aac",
+              "channels": 1,
+              "sampleRate": 48000
+            }
+          ],
+          "preferredAudioIndex": 0
+        }
+      ]
+    },
+    {
+      "id": "<shot-03 的 UUID>",
+      "number": 3,
+      "status": "recorded",
+      "note": "下方字幕： 椰香脆鸡堡 500 大卡\n正上方字幕： 热量缺口1500大卡",
+      "clips": [
+        {
+          "id": "<clip-03-1 的 UUID>",
+          "take": 1,
+          "role": "main",
+          "path": "9.18Vlog-03.mov",
+          "addedAt": "2026-09-18T07:48+08:00",
+          "capturedAt": "2026-09-18T07:48:20+08:00",
+          "duration": 3.867,
+          "sizeBytes": 26505862,
+          "video": {
+            "codec": "hevc",
+            "bitDepth": 10,
+            "codedSize": [
+              2160,
+              3840
+            ],
+            "rotation": 0,
+            "displaySize": [
+              2160,
+              3840
+            ],
+            "fps": 59.974,
+            "variableFrameRate": false,
+            "hdr": "HLG",
+            "dolbyVisionProfile": 8
+          },
+          "audio": [
+            {
+              "index": 0,
+              "codec": "aac",
+              "channels": 2,
+              "sampleRate": 48000
+            },
+            {
+              "index": 1,
+              "codec": "apac",
+              "channels": 4,
+              "sampleRate": 48000
+            }
+          ],
+          "preferredAudioIndex": 0
+        }
+      ]
+    },
+    {
+      "id": "<shot-04 的 UUID>",
+      "number": 4,
+      "status": "recorded",
+      "note": "下方字幕： 自重引体2×2激活一下\n正上方字幕： 热量缺口1500大卡",
+      "clips": [
+        {
+          "id": "<clip-04-1 的 UUID>",
+          "take": 1,
+          "role": "main",
+          "path": "9.18Vlog-04.mov",
+          "addedAt": "2026-09-18T08:11+08:00",
+          "capturedAt": "2026-09-18T08:08:07+08:00",
+          "duration": 5.057,
+          "sizeBytes": 52936100,
+          "video": {
+            "codec": "hevc",
+            "bitDepth": 10,
+            "codedSize": [
+              3840,
+              2160
+            ],
+            "rotation": -90,
+            "displaySize": [
+              2160,
+              3840
+            ],
+            "fps": 59.881,
+            "variableFrameRate": true,
+            "hdr": "HLG",
+            "dolbyVisionProfile": 8
+          },
+          "audio": [
+            {
+              "index": 0,
+              "codec": "apac",
+              "channels": 4,
+              "sampleRate": 48000
+            },
+            {
+              "index": 1,
+              "codec": "aac",
+              "channels": 2,
+              "sampleRate": 48000
+            }
+          ],
+          "preferredAudioIndex": 1
+        }
+      ]
+    },
+    {
+      "id": "<shot-05 的 UUID>",
+      "number": 5,
+      "status": "recorded",
+      "note": "下方字幕： 辅助引体 62KG✖️8✖️4\n正上方字幕： 热量缺口1500大卡",
+      "clips": [
+        {
+          "id": "<clip-05-1 的 UUID>",
+          "take": 1,
+          "role": "main",
+          "path": "9.18Vlog-05.mov",
+          "addedAt": "2026-09-18T08:13+08:00",
+          "capturedAt": "2026-09-18T08:12:57+08:00",
+          "duration": 6.14,
+          "sizeBytes": 64369999,
+          "video": {
+            "codec": "hevc",
+            "bitDepth": 10,
+            "codedSize": [
+              3840,
+              2160
+            ],
+            "rotation": -90,
+            "displaySize": [
+              2160,
+              3840
+            ],
+            "fps": 59.967,
+            "variableFrameRate": false,
+            "hdr": "HLG",
+            "dolbyVisionProfile": 8
+          },
+          "audio": [
+            {
+              "index": 0,
+              "codec": "apac",
+              "channels": 4,
+              "sampleRate": 48000
+            },
+            {
+              "index": 1,
+              "codec": "aac",
+              "channels": 2,
+              "sampleRate": 48000
+            }
+          ],
+          "preferredAudioIndex": 1
+        }
+      ]
+    },
+    {
+      "id": "<shot-06 的 UUID>",
+      "number": 6,
+      "status": "recorded",
+      "note": "下方字幕：高位下拉 58KG✖️8✖️4\n正上方字幕： 热量缺口1500大卡",
+      "clips": [
+        {
+          "id": "<clip-06-1 的 UUID>",
+          "take": 1,
+          "role": "main",
+          "path": "9.18Vlog-06.mov",
+          "addedAt": "2026-09-18T08:36+08:00",
+          "capturedAt": "2026-09-18T08:25:22+08:00",
+          "duration": 7.412,
+          "sizeBytes": 78460550,
+          "video": {
+            "codec": "hevc",
+            "bitDepth": 10,
+            "codedSize": [
+              3840,
+              2160
+            ],
+            "rotation": -90,
+            "displaySize": [
+              2160,
+              3840
+            ],
+            "fps": 59.745,
+            "variableFrameRate": true,
+            "hdr": "HLG",
+            "dolbyVisionProfile": 8
+          },
+          "audio": [
+            {
+              "index": 0,
+              "codec": "apac",
+              "channels": 4,
+              "sampleRate": 48000
+            },
+            {
+              "index": 1,
+              "codec": "aac",
+              "channels": 2,
+              "sampleRate": 48000
+            }
+          ],
+          "preferredAudioIndex": 1
+        }
+      ]
+    },
+    {
+      "id": "<shot-07 的 UUID>",
+      "number": 7,
+      "status": "recorded",
+      "note": "下方字幕： 二头弯举15KG✖️5✖️4\n正上方字幕： 热量缺口1867大卡",
+      "clips": [
+        {
+          "id": "<clip-07-1 的 UUID>",
+          "take": 1,
+          "role": "main",
+          "path": "9.18Vlog-07.mov",
+          "addedAt": "2026-09-18T08:37+08:00",
+          "capturedAt": "2026-09-18T08:34:32+08:00",
+          "duration": 8.967,
+          "sizeBytes": 62740889,
+          "video": {
+            "codec": "hevc",
+            "bitDepth": 10,
+            "codedSize": [
+              3840,
+              2160
+            ],
+            "rotation": -90,
+            "displaySize": [
+              2160,
+              3840
+            ],
+            "fps": 58.155,
+            "variableFrameRate": true,
+            "hdr": "HLG",
+            "dolbyVisionProfile": 8
+          },
+          "audio": [
+            {
+              "index": 0,
+              "codec": "apac",
+              "channels": 4,
+              "sampleRate": 48000
+            },
+            {
+              "index": 1,
+              "codec": "aac",
+              "channels": 2,
+              "sampleRate": 48000
+            }
+          ],
+          "preferredAudioIndex": 1
+        }
+      ]
+    },
+    {
+      "id": "<shot-08 的 UUID>",
+      "number": 8,
+      "status": "recorded",
+      "note": "下方字幕： \n练后跑\n佳明课表跑步43分钟\n正上方字幕： 热量缺口2500大卡",
+      "clips": [
+        {
+          "id": "<clip-08-1 的 UUID>",
+          "take": 1,
+          "role": "main",
+          "path": "9.18Vlog-08.mov",
+          "addedAt": "2026-09-18T09:44+08:00",
+          "capturedAt": "2026-09-18T09:40:37+08:00",
+          "duration": 0.718,
+          "sizeBytes": 6790445,
+          "video": {
+            "codec": "hevc",
+            "bitDepth": 10,
+            "codedSize": [
+              3840,
+              2160
+            ],
+            "rotation": -90,
+            "displaySize": [
+              2160,
+              3840
+            ],
+            "fps": 59.861,
+            "variableFrameRate": true,
+            "hdr": "HLG",
+            "dolbyVisionProfile": 8
+          },
+          "audio": [
+            {
+              "index": 0,
+              "codec": "aac",
+              "channels": 2,
+              "sampleRate": 48000
+            },
+            {
+              "index": 1,
+              "codec": "apac",
+              "channels": 4,
+              "sampleRate": 48000
+            }
+          ],
+          "preferredAudioIndex": 0
+        }
+      ]
+    },
+    {
+      "id": "<shot-09 的 UUID>",
+      "number": 9,
+      "status": "recorded",
+      "note": "下方字幕： \n速溶咖啡小饮料\n正上方字幕： 热量缺口2400大卡",
+      "clips": [
+        {
+          "id": "<clip-09-1 的 UUID>",
+          "take": 1,
+          "role": "main",
+          "path": "9.18Vlog-09.mov",
+          "addedAt": "2026-09-18T10:05+08:00",
+          "capturedAt": "2026-09-18T10:05:20+08:00",
+          "duration": 1.507,
+          "sizeBytes": 11501899,
+          "video": {
+            "codec": "hevc",
+            "bitDepth": 10,
+            "codedSize": [
+              3840,
+              2160
+            ],
+            "rotation": -90,
+            "displaySize": [
+              2160,
+              3840
+            ],
+            "fps": 54.545,
+            "variableFrameRate": true,
+            "hdr": "HLG",
+            "dolbyVisionProfile": 8
+          },
+          "audio": [
+            {
+              "index": 0,
+              "codec": "apac",
+              "channels": 4,
+              "sampleRate": 48000
+            },
+            {
+              "index": 1,
+              "codec": "aac",
+              "channels": 2,
+              "sampleRate": 48000
+            }
+          ],
+          "preferredAudioIndex": 1
+        }
+      ]
+    },
+    {
+      "id": "<shot-10 的 UUID>",
+      "number": 10,
+      "status": "recorded",
+      "note": "下方字幕： \n西红柿鸡蛋 加 口水鸡 \n正上方字幕： 热量缺口1400大卡",
+      "clips": [
+        {
+          "id": "<clip-10-1 的 UUID>",
+          "take": 1,
+          "role": "main",
+          "path": "9.18Vlog-10.mov",
+          "addedAt": "2026-09-18T19:28+08:00",
+          "capturedAt": "2026-09-18T10:27:58+08:00",
+          "duration": 5.36,
+          "sizeBytes": 56754545,
+          "video": {
+            "codec": "hevc",
+            "bitDepth": 10,
+            "codedSize": [
+              3840,
+              2160
+            ],
+            "rotation": -90,
+            "displaySize": [
+              2160,
+              3840
+            ],
+            "fps": 59.888,
+            "variableFrameRate": true,
+            "hdr": "HLG",
+            "dolbyVisionProfile": 8
+          },
+          "audio": [
+            {
+              "index": 0,
+              "codec": "aac",
+              "channels": 2,
+              "sampleRate": 48000
+            },
+            {
+              "index": 1,
+              "codec": "apac",
+              "channels": 4,
+              "sampleRate": 48000
+            }
+          ],
+          "preferredAudioIndex": 0
+        }
+      ]
+    },
+    {
+      "id": "<shot-11 的 UUID>",
+      "number": 11,
+      "status": "recorded",
+      "note": "下方字幕： \n傍晚登山远眺一下\n正上方字幕： 热量缺口1600大卡",
+      "clips": [
+        {
+          "id": "<clip-11-1 的 UUID>",
+          "take": 1,
+          "role": "main",
+          "path": "9.18Vlog-11.mov",
+          "addedAt": "2026-09-18T19:29+08:00",
+          "capturedAt": "2026-09-18T18:04:39+08:00",
+          "duration": 3.835,
+          "sizeBytes": 25392802,
+          "video": {
+            "codec": "hevc",
+            "bitDepth": 10,
+            "codedSize": [
+              3840,
+              2160
+            ],
+            "rotation": -90,
+            "displaySize": [
+              2160,
+              3840
+            ],
+            "fps": 59.974,
+            "variableFrameRate": false,
+            "hdr": "HLG",
+            "dolbyVisionProfile": 8
+          },
+          "audio": [
+            {
+              "index": 0,
+              "codec": "aac",
+              "channels": 2,
+              "sampleRate": 48000
+            },
+            {
+              "index": 1,
+              "codec": "apac",
+              "channels": 4,
+              "sampleRate": 48000
+            }
+          ],
+          "preferredAudioIndex": 0
+        }
+      ]
+    },
+    {
+      "id": "<shot-12 的 UUID>",
+      "number": 12,
+      "status": "recorded",
+      "note": "下方字幕： \n晚餐盐水牛肉\n正上方字幕： 热量缺口1300大卡",
+      "clips": [
+        {
+          "id": "<clip-12-1 的 UUID>",
+          "take": 1,
+          "role": "main",
+          "path": "9.18Vlog-12.mov",
+          "addedAt": "2026-09-18T20:21+08:00",
+          "capturedAt": "2026-09-18T20:21:26+08:00",
+          "duration": 4.8,
+          "sizeBytes": 50277754,
+          "video": {
+            "codec": "hevc",
+            "bitDepth": 10,
+            "codedSize": [
+              3840,
+              2160
+            ],
+            "rotation": -90,
+            "displaySize": [
+              2160,
+              3840
+            ],
+            "fps": 59.979,
+            "variableFrameRate": false,
+            "hdr": "HLG",
+            "dolbyVisionProfile": 8
+          },
+          "audio": [
+            {
+              "index": 0,
+              "codec": "aac",
+              "channels": 2,
+              "sampleRate": 48000
+            },
+            {
+              "index": 1,
+              "codec": "apac",
+              "channels": 4,
+              "sampleRate": 48000
+            }
+          ],
+          "preferredAudioIndex": 0
+        }
+      ]
+    }
+  ]
+}
